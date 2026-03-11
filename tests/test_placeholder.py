@@ -8,7 +8,7 @@ from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherApp, cli
 
 
 def test_default_model_constant():
-    assert DEFAULT_MODEL == "gpt-4o"
+    assert DEFAULT_MODEL == "4-claude"
 
 
 def test_default_system_constant():
