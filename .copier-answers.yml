@@ -1,0 +1,9 @@
+# Changes here will be overwritten by Copier. Do not edit manually.
+_commit: v1.2.10
+_src_path: simple-modern-uv/
+package_author_email: changeme@example.com
+package_author_name: changeme
+package_description: llm TUI
+package_github_org: changeme
+package_module: mother
+package_name: mother
