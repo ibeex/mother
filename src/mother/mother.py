@@ -12,7 +12,7 @@ from textual.widgets import Footer, Header, Markdown, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 from textual.worker import Worker, WorkerState
 
-DEFAULT_MODEL = "4-claude"
+DEFAULT_MODEL = "gpt-5"
 
 DEFAULT_SYSTEM = (
     "Formulate all responses as if you where the sentient AI named Mother from the Alien movies."
@@ -162,11 +162,18 @@ class MotherApp(App[None]):
     def send_prompt(self, prompt: str, response: Response) -> None:
         """Get the response in a thread, maintaining conversation history."""
         self.call_from_thread(response.update, "*Thinking...*")
-        llm_response = self.conversation.prompt(prompt, system=self.system_prompt)
-        full_text = ""
-        for chunk in llm_response:
-            full_text += chunk
-            self.call_from_thread(response.update, full_text)
+        try:
+            llm_response = self.conversation.prompt(prompt, system=self.system_prompt)
+            full_text = ""
+            for chunk in llm_response:
+                full_text += chunk
+                self.call_from_thread(response.update, full_text)
+        except Exception as exc:
+            error_text = f"**Error:** {exc}"
+            self.call_from_thread(response.update, error_text)
+            response._raw = error_text
+            response._cursor = 0
+            return
         response._raw = full_text
         response._cursor = 0
 
