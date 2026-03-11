@@ -30,7 +30,7 @@ class Response(Markdown):
     BINDINGS = [
         ("j", "cursor_down", "Next block"),
         ("k", "cursor_up", "Prev block"),
-        ("c", "copy_block", "Copy block"),
+        ("c", "copy_block", "Copy"),
     ]
     can_focus = True
 
@@ -64,16 +64,16 @@ class Response(Markdown):
             self._cursor -= 1
             self._refresh_highlight()
 
+    def _block_text(self, block: MarkdownBlock) -> str:
+        if isinstance(block, MarkdownFence):
+            return block.code
+        return block.source or self._raw
+
     def action_copy_block(self) -> None:
-        blocks = self._blocks()
-        if not blocks:
-            text = self._raw
-        else:
-            block = blocks[self._cursor]
-            if isinstance(block, MarkdownFence):
-                text = block._content.plain  # pyright: ignore[reportAttributeAccessIssue]
-            else:
-                text = getattr(block, "source", self._raw)
+        text = self.screen.get_selected_text()
+        if not text:
+            blocks = self._blocks()
+            text = self._block_text(blocks[self._cursor]) if blocks else self._raw
         try:
             pyperclip.copy(text)
         except Exception:
