@@ -2,10 +2,12 @@ __all__ = (
     "DEFAULT_MODEL",
     "DEFAULT_SYSTEM",
     "MotherApp",
+    "MotherConfig",
     "Prompt",
     "Response",
     "cli",
-    "main",
+    "load_config",
 )
 
-from .mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherApp, Prompt, Response, cli, main
+from .config import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherConfig, load_config
+from .mother import MotherApp, Prompt, Response, cli
