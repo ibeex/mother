@@ -12,7 +12,7 @@ def test_app_starts_in_conversational_mode():
 
 def test_agent_mode_toggle_via_palette():
     """Agent mode is toggled via the command palette (AgentModeProvider), not a key binding."""
-    from mother.mother import AgentModeProvider
+    from mother.model_picker import AgentModeProvider
 
     assert AgentModeProvider in MotherApp.COMMANDS
 

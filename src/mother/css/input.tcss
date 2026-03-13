@@ -1,0 +1,4 @@
+TextArea {
+    height: 6;
+    border: tall $primary;
+}

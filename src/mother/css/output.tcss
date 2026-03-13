@@ -1,0 +1,29 @@
+ShellOutput {
+    height: auto;
+    border: wide $accent;
+    background: $accent 10%;
+    color: $text;
+    margin: 1;
+    margin-right: 4;
+    margin-left: 4;
+    padding: 1 2 0 2;
+}
+
+ShellOutput:focus {
+    border: wide $warning;
+}
+
+ToolOutput {
+    height: auto;
+    border: wide $secondary;
+    background: $secondary 10%;
+    color: $text;
+    margin: 1;
+    margin-right: 4;
+    margin-left: 4;
+    padding: 1 2 0 2;
+}
+
+ToolOutput:focus {
+    border: wide $warning;
+}

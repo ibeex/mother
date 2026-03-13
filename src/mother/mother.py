@@ -1,315 +1,45 @@
 """Mother TUI chatbot — a Textual interface for chatting with an LLM."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime
+from pathlib import Path, PurePath
 from typing import ClassVar, cast, override
 
 import click
 import llm
-import pyperclip
-from llm.models import Conversation, Model, Tool, ToolCall, ToolResult
+from llm.models import (
+    AfterCallSync,
+    BeforeCallSync,
+    Conversation,
+    Model,
+    Tool,
+    ToolCall,
+    ToolDef,
+    ToolResult,
+)
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
-from textual.command import Hit, Provider
-from textual.containers import Container, Vertical, VerticalScroll
-from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, Markdown, OptionList, TextArea
-from textual.widgets.markdown import MarkdownBlock, MarkdownFence
-from textual.widgets.option_list import Option
+from textual.containers import VerticalScroll
+from textual.widgets import Footer, Header, TextArea
 from textual.worker import Worker, WorkerState
 
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
+from mother.model_picker import AgentModeProvider, ModelPickerScreen, ModelProvider
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
 from mother.user_commands import ShellCommand, parse_user_input
+from mother.widgets import Prompt, Response, ShellOutput, ToolOutput
 
-
-def get_available_models() -> list[tuple[str, str]]:
-    """Return available models for the picker.
-
-    Prefer custom models configured via ``extra-openai-models.yaml`` (they have
-    a custom ``api_base``). If none are configured, fall back to all models.
-    """
-    all_models = list(llm.get_models())
-    preferred_models = [model for model in all_models if getattr(model, "api_base", None)]
-    source_models = preferred_models or all_models
-
-    seen: set[str] = set()
-    available_models: list[tuple[str, str]] = []
-    for model in source_models:
-        model_id = model.model_id
-        if model_id in seen:
-            continue
-        seen.add(model_id)
-        model_name = getattr(model, "model_name", None)
-        label = f"{model_id} — {model_name}" if model_name else model_id
-        available_models.append((model_id, label))
-    return available_models
-
-
-class Prompt(Markdown):
-    """Markdown for the user prompt."""
-
-
-class CopyableOutput(TextArea):
-    """Plain-text output widget with selection-aware copy support."""
-
-    MIN_VISIBLE_LINES: ClassVar[int] = 3
-    MAX_VISIBLE_LINES: ClassVar[int] = 12
-
-    BINDINGS: ClassVar[list[BindingType]] = [
-        ("c", "copy_output", "Copy"),
-    ]
-    can_focus: bool = True
-
-    def __init__(self, text: str = "") -> None:
-        super().__init__(
-            text,
-            read_only=True,
-            show_cursor=True,
-            soft_wrap=False,
-            show_line_numbers=False,
-            highlight_cursor_line=False,
-        )
-        self._raw: str = text
-        self._sync_height(text)
-
-    def _sync_height(self, text: str) -> None:
-        """Size the widget to fit short content without making long output huge."""
-        content_lines = max(1, text.count("\n") + 1)
-        visible_lines = min(max(content_lines, self.MIN_VISIBLE_LINES), self.MAX_VISIBLE_LINES)
-        self.styles.height = visible_lines + 2
-
-    def set_text(self, text: str) -> None:
-        """Update the rendered text while keeping a copyable raw value."""
-        self._raw = text
-        self.text: str = text
-        self._sync_height(text)
-
-    def action_copy_output(self) -> None:
-        text = self.selected_text or self._raw
-        try:
-            pyperclip.copy(text)
-        except Exception:
-            self.app.copy_to_clipboard(text)  # pyright: ignore[reportUnknownMemberType]
-        self.notify("Copied!")
-
-
-class CopyableMarkdown(Markdown):
-    """Markdown widget with focus and block-level copy support."""
-
-    BINDINGS: ClassVar[list[BindingType]] = [
-        ("j", "cursor_down", "Next block"),
-        ("k", "cursor_up", "Prev block"),
-        ("c", "copy_block", "Copy"),
-    ]
-    can_focus: bool = True
-
-    def __init__(self, markdown: str = "") -> None:
-        super().__init__(markdown)
-        self._cursor: int = 0
-        self._raw: str = markdown
-
-    def set_markdown(self, markdown: str):
-        """Update the rendered Markdown while keeping a copyable raw value."""
-        self._raw = markdown
-        return self.update(markdown)
-
-    def reset_state(self, raw: str) -> None:
-        """Reset the raw text and cursor position."""
-        self._raw = raw
-        self._cursor = 0
-
-    def _blocks(self) -> list[MarkdownBlock]:
-        return list(self.query(MarkdownBlock))
-
-    def _refresh_highlight(self) -> None:
-        for i, block in enumerate(self._blocks()):
-            _ = block.set_class(i == self._cursor, "highlight")
-
-    def on_focus(self) -> None:
-        self._refresh_highlight()
-
-    def on_blur(self) -> None:
-        for block in self._blocks():
-            _ = block.remove_class("highlight")
-
-    def action_cursor_down(self) -> None:
-        blocks = self._blocks()
-        if self._cursor < len(blocks) - 1:
-            self._cursor += 1
-            self._refresh_highlight()
-
-    def action_cursor_up(self) -> None:
-        if self._cursor > 0:
-            self._cursor -= 1
-            self._refresh_highlight()
-
-    def _block_text(self, block: MarkdownBlock) -> str:
-        if isinstance(block, MarkdownFence):
-            return block.code
-        return block.source or self._raw
-
-    def action_copy_block(self) -> None:
-        text = self.screen.get_selected_text()
-        if not text:
-            blocks = self._blocks()
-            text = self._block_text(blocks[self._cursor]) if blocks else self._raw
-        try:
-            pyperclip.copy(text)
-        except Exception:
-            self.app.copy_to_clipboard(text)  # pyright: ignore[reportUnknownMemberType]
-        self.notify("Copied!")
-
-
-class ShellOutput(CopyableOutput):
-    """Plain-text widget for direct user shell command output."""
-
-    BORDER_TITLE: ClassVar[str] = "Shell"
-
-
-class ToolOutput(CopyableOutput):
-    """Plain-text widget for agent tool execution traces."""
-
-    BORDER_TITLE: ClassVar[str] = "Tool"
-
-
-class Response(CopyableMarkdown):
-    """Markdown for the reply from the LLM, with block-level copy support."""
-
-    BORDER_TITLE: ClassVar[str] = "Mother"
-
-
-class AgentModeProvider(Provider):
-    """Command palette provider for toggling agent mode."""
-
-    @override
-    async def search(self, query: str) -> AsyncGenerator[Hit, None]:
-        app = cast("MotherApp", self.app)
-        matcher = self.matcher(query)
-        label = "Agent mode: off" if app.agent_mode else "Agent mode: on"
-        score = matcher.match(label)
-        if score > 0 or not query:
-            yield Hit(
-                score or 1.0,
-                matcher.highlight(label),
-                app.action_toggle_agent_mode,
-                help="Toggle agent mode (tool use)",
-            )
-
-
-class ModelProvider(Provider):
-    """Command palette provider for opening the model picker."""
-
-    @override
-    async def search(self, query: str) -> AsyncGenerator[Hit, None]:
-        app = cast("MotherApp", self.app)
-        matcher = self.matcher(query)
-        label = "Models"
-        score = matcher.match(label)
-        if score > 0 or not query:
-            yield Hit(
-                score or 1.0,
-                matcher.highlight(label),
-                app.action_show_models,
-                help=f"Browse and switch models (current: {app.config.model})",
-            )
-
-
-class ModelPickerScreen(ModalScreen[None]):
-    """Modal screen for searching and selecting available models."""
-
-    CSS: ClassVar[str] = """
-    ModelPickerScreen {
-        align: center middle;
-        background: $background 60%;
-    }
-
-    #model-picker {
-        width: 72;
-        height: 24;
-        border: round $primary;
-        background: $surface;
-        padding: 1;
-    }
-
-    #model-query {
-        margin-bottom: 1;
-    }
-
-    #model-options {
-        height: 1fr;
-    }
-    """
-
-    BINDINGS: ClassVar[list[BindingType]] = [("escape", "dismiss", "Close")]
-
-    def __init__(self, current_model: str) -> None:
-        super().__init__()
-        self.current_model: str = current_model
-        self._all_models: list[tuple[str, str]] = get_available_models()
-
-    @override
-    def compose(self) -> ComposeResult:
-        with Container(id="model-picker"):
-            with Vertical():
-                yield Input(placeholder="Search models...", id="model-query")
-                yield OptionList(id="model-options")
-
-    def on_mount(self) -> None:
-        self._refresh_options("")
-        _ = self.query_one(Input).focus()
-
-    def _refresh_options(self, query: str) -> None:
-        option_list = self.query_one(OptionList)
-        normalized_query = query.strip().lower()
-        matching_models = [
-            (model_id, label)
-            for model_id, label in self._all_models
-            if not normalized_query
-            or normalized_query in model_id.lower()
-            or normalized_query in label.lower()
-        ]
-        _ = option_list.clear_options()
-        if not matching_models:
-            _ = option_list.add_option(Option("No models found", disabled=True))
-            option_list.highlighted = None
-            return
-        _ = option_list.add_options(
-            Option(
-                f"★ {label}" if model_id == self.current_model else label,
-                id=model_id,
-            )
-            for model_id, label in matching_models
-        )
-        option_list.highlighted = 0
-
-    def _select_highlighted_model(self) -> None:
-        option_list = self.query_one(OptionList)
-        if option_list.highlighted is None:
-            return
-        option = option_list.get_option_at_index(option_list.highlighted)
-        if option.id is None:
-            return
-        cast("MotherApp", self.app).action_switch_model(option.id)
-        _ = self.dismiss()
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        if event.input.id == "model-query":
-            self._refresh_options(event.value)
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == "model-query":
-            self._select_highlighted_model()
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id == "model-options" and event.option.id is not None:
-            cast("MotherApp", self.app).action_switch_model(event.option.id)
-            _ = self.dismiss()
+CSS_DIR = Path(__file__).resolve().parent / "css"
+APP_CSS_PATHS: list[str | PurePath] = [
+    CSS_DIR / "chat.tcss",
+    CSS_DIR / "output.tcss",
+    CSS_DIR / "input.tcss",
+]
 
 
 class MotherApp(App[None]):
@@ -322,73 +52,7 @@ class MotherApp(App[None]):
     ]
 
     COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}  # pyright: ignore[reportUnannotatedClassAttribute]
-
-    CSS: ClassVar[str] = """
-    Prompt {
-        background: $primary 10%;
-        color: $text;
-        margin: 1;
-        margin-right: 8;
-        padding: 1 2 0 2;
-    }
-
-    Response {
-        border: wide $success;
-        background: $success 10%;
-        color: $text;
-        margin: 1;
-        margin-left: 8;
-        padding: 1 2 0 2;
-    }
-
-    Response:focus {
-        border: wide $warning;
-    }
-
-    MarkdownBlock.highlight {
-        background: $accent 20%;
-    }
-
-    ShellOutput {
-        height: auto;
-        border: wide $accent;
-        background: $accent 10%;
-        color: $text;
-        margin: 1;
-        margin-right: 4;
-        margin-left: 4;
-        padding: 1 2 0 2;
-    }
-
-    ShellOutput:focus {
-        border: wide $warning;
-    }
-
-    ToolOutput {
-        height: auto;
-        border: wide $secondary;
-        background: $secondary 10%;
-        color: $text;
-        margin: 1;
-        margin-right: 4;
-        margin-left: 4;
-        padding: 1 2 0 2;
-    }
-
-    ToolOutput:focus {
-        border: wide $warning;
-    }
-
-    TextArea {
-        height: 6;
-        border: tall $primary;
-    }
-
-    #model-picker {
-        width: 72;
-        height: 24;
-    }
-    """
+    CSS_PATH: ClassVar[str | PurePath | list[str | PurePath] | None] = APP_CSS_PATHS
 
     def __init__(
         self,
@@ -443,6 +107,17 @@ class MotherApp(App[None]):
         sub_title: str = f"{self.config.model} [AGENT]" if self.agent_mode else self.config.model
         self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
 
+    def _flush_pending_context(self, value: str) -> str:
+        """Build prompt with any pending shell output prepended, then clear the queue."""
+        context_parts: list[str] = []
+        for execution in self._pending_executions:
+            if not execution.exclude_from_context:
+                context_parts.append(format_for_context(execution))
+        self._pending_executions.clear()
+        if context_parts:
+            return "\n\n".join(context_parts) + "\n\n" + value
+        return value
+
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
         text_area = self.query_one(TextArea)
@@ -458,18 +133,7 @@ class MotherApp(App[None]):
 
         chat_view = self.query_one("#chat-view")
         text_area.read_only = True
-
-        # Flush any pending shell executions as context before the LLM prompt
-        context_parts: list[str] = []
-        for execution in self._pending_executions:
-            if not execution.exclude_from_context:
-                context_parts.append(format_for_context(execution))
-        self._pending_executions.clear()
-
-        prompt = value
-        if context_parts:
-            prompt = "\n\n".join(context_parts) + "\n\n" + value
-
+        prompt = self._flush_pending_context(value)
         _ = await chat_view.mount(Prompt(value))
         _ = await chat_view.mount(response := Response())
         _ = self.send_prompt(prompt, response)
@@ -552,77 +216,156 @@ class MotherApp(App[None]):
             text_area.read_only = False
             _ = text_area.focus()
 
+    def _stream_response(self, llm_response: Iterable[str], response: Response) -> str:
+        """Stream chunks from an LLM response into the widget; return full text."""
+        full_text = ""
+        for chunk in llm_response:
+            full_text += chunk
+            _ = self.call_from_thread(response.update, full_text)
+        return full_text
+
+    @staticmethod
+    def _tool_call_arguments(tool_call: ToolCall) -> dict[str, object]:
+        """Convert tool call arguments into a regular dictionary."""
+        arguments = cast(
+            dict[object, object],
+            tool_call.arguments,
+        )
+        return {str(key): value for key, value in arguments.items()}
+
+    def _before_tool_call(self, tool: Tool | None, tool_call: ToolCall) -> None:
+        """Show a trace entry when an agent tool call starts."""
+        tool_name = tool.name if tool is not None else tool_call.name
+        arguments = self._tool_call_arguments(tool_call)
+        _ = self.call_from_thread(
+            self._show_tool_started,
+            tool_name,
+            tool_call.tool_call_id,
+            arguments,
+        )
+
+    def _after_tool_call(self, tool: Tool, tool_call: ToolCall, tool_result: ToolResult) -> None:
+        """Update the trace entry when an agent tool call finishes."""
+        arguments = self._tool_call_arguments(tool_call)
+        _ = self.call_from_thread(
+            self._show_tool_finished,
+            tool.name,
+            tool_call.tool_call_id,
+            arguments,
+            tool_result.output,
+        )
+
+    def _get_enabled_tools(self) -> list[ToolDef] | None:
+        """Return the active tool definitions, if any are enabled and available."""
+        tool_registry = get_default_tools(
+            tools_enabled=self.agent_mode,
+            allowlist=self.config.allowlist,
+        )
+        if tool_registry.is_empty():
+            return None
+        return tool_registry.tools()
+
+    def _build_llm_response(
+        self,
+        conversation: Conversation,
+        prompt: str,
+        system: str | None,
+        tools: list[ToolDef] | None,
+        before_tool_call: BeforeCallSync | None,
+        after_tool_call: AfterCallSync | None,
+    ) -> Iterable[str]:
+        """Build the LLM response stream, with tool callbacks when agent mode is active."""
+        if tools is None:
+            prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
+            return prompt_fn(prompt, system=system)
+
+        chain_fn = cast(Callable[..., Iterable[str]], conversation.chain)
+        return chain_fn(
+            prompt,
+            system=system,
+            tools=tools,
+            before_call=before_tool_call,
+            after_call=after_tool_call,
+        )
+
+    @staticmethod
+    def _is_unsupported_tools_error(error: Exception) -> bool:
+        """Return whether the model error indicates tool support is unavailable."""
+        return "does not support tools" in str(error)
+
+    def _request_llm_response(
+        self,
+        conversation: Conversation,
+        prompt: str,
+        system: str | None,
+        tools: list[ToolDef] | None,
+        response: Response,
+    ) -> Iterable[str] | None:
+        """Request an LLM response stream, falling back if the model rejects tools."""
+        before_tool_call: BeforeCallSync | None = None
+        after_tool_call: AfterCallSync | None = None
+        if tools is not None:
+            before_tool_call = self._before_tool_call
+            after_tool_call = self._after_tool_call
+
+        try:
+            return self._build_llm_response(
+                conversation,
+                prompt,
+                system,
+                tools,
+                before_tool_call,
+                after_tool_call,
+            )
+        except Exception as exc:
+            if tools is None or not self._is_unsupported_tools_error(exc):
+                self._show_error(response, f"**Error:** {exc}")
+                return None
+
+        _ = self.call_from_thread(self._disable_agent_mode_unsupported)
+        prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
+        try:
+            return prompt_fn(prompt, system=system)
+        except Exception as exc:
+            self._show_error(response, f"**Error:** {exc}")
+            return None
+
+    def _stream_llm_response(self, llm_response: Iterable[str], response: Response) -> bool:
+        """Stream an LLM response into the widget and finalize the widget state."""
+        try:
+            full_text = self._stream_response(llm_response, response)
+        except Exception as exc:
+            self._show_error(response, f"**Error:** {exc}")
+            return False
+
+        response.reset_state(full_text)
+        return True
+
+    def _show_error(self, response: Response, error_text: str) -> None:
+        """Display an error in the response widget and reset its state."""
+        _ = self.call_from_thread(response.update, error_text)
+        response.reset_state(error_text)
+
     @work(thread=True)
     def send_prompt(self, prompt: str, response: Response) -> None:
         """Get the response in a thread, maintaining conversation history."""
         _ = self.call_from_thread(response.update, "*Thinking...*")
         conversation = self.conversation
         if conversation is None:
-            error_text = "**Error:** Conversation is not initialized."
-            _ = self.call_from_thread(response.update, error_text)
-            response.reset_state(error_text)
+            self._show_error(response, "**Error:** Conversation is not initialized.")
             return
-        tool_registry = get_default_tools(
-            tools_enabled=self.agent_mode, allowlist=self.config.allowlist
+
+        llm_response = self._request_llm_response(
+            conversation=conversation,
+            prompt=prompt,
+            system=self.config.system_prompt,
+            tools=self._get_enabled_tools(),
+            response=response,
         )
-        tools = tool_registry.tools() if not tool_registry.is_empty() else None
-        system = self.config.system_prompt
+        if llm_response is None:
+            return
 
-        def before_tool_call(tool: Tool | None, tool_call: ToolCall) -> None:
-            tool_name = tool.name if tool is not None else tool_call.name
-            arguments: dict[str, object] = cast(dict[str, object], dict(tool_call.arguments))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
-            self.call_from_thread(
-                self._show_tool_started,
-                tool_name,
-                tool_call.tool_call_id,
-                arguments,
-            )
-
-        def after_tool_call(tool: Tool, tool_call: ToolCall, tool_result: ToolResult) -> None:
-            arguments: dict[str, object] = cast(dict[str, object], dict(tool_call.arguments))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
-            self.call_from_thread(
-                self._show_tool_finished,
-                tool.name,
-                tool_call.tool_call_id,
-                arguments,
-                tool_result.output,
-            )
-
-        try:
-            if tools is not None:
-                llm_response = conversation.chain(  # pyright: ignore[reportUnknownMemberType]
-                    prompt,
-                    system=system,
-                    tools=tools,
-                    before_call=before_tool_call,
-                    after_call=after_tool_call,
-                )
-            else:
-                llm_response = conversation.prompt(prompt, system=system)  # pyright: ignore[reportUnknownMemberType]
-            full_text = ""
-            for chunk in llm_response:
-                full_text += chunk
-                _ = self.call_from_thread(response.update, full_text)
-        except Exception as exc:
-            if "does not support tools" in str(exc) and tools is not None:
-                _ = self.call_from_thread(self._disable_agent_mode_unsupported)
-                try:
-                    llm_response = conversation.prompt(prompt, system=system)  # pyright: ignore[reportUnknownMemberType]
-                    full_text = ""
-                    for chunk in llm_response:
-                        full_text += chunk
-                        _ = self.call_from_thread(response.update, full_text)
-                except Exception as exc2:
-                    error_text = f"**Error:** {exc2}"
-                    _ = self.call_from_thread(response.update, error_text)
-                    response.reset_state(error_text)
-                    return
-            else:
-                error_text = f"**Error:** {exc}"
-                _ = self.call_from_thread(response.update, error_text)
-                response.reset_state(error_text)
-                return
-        response.reset_state(full_text)
+        _ = self._stream_llm_response(llm_response, response)
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""
