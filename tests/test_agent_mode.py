@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from mother import MotherApp, MotherConfig
+from mother.widgets import StatusLine
 
 
 def test_app_starts_in_conversational_mode():
@@ -47,6 +48,14 @@ def test_config_tools_enabled_sets_initial_mode():
     config = MotherConfig(tools_enabled=True)
     app = MotherApp(config=config)
     assert app.agent_mode is True
+
+
+def test_statusline_formats_model_and_unknown_context():
+    assert StatusLine.format_status("test-model", False, None) == "test-model · off · ?"
+
+
+def test_statusline_formats_model_and_context_size():
+    assert StatusLine.format_status("test-model", True, 12345) == "test-model · on · 12.3k"
 
 
 def test_send_prompt_no_tools_when_conversational():

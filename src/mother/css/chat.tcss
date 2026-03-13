@@ -1,22 +1,115 @@
-Prompt {
-    background: $primary 10%;
+/* ── Chat container — single outer border ── */
+
+#chat-view {
+    border: wide $primary;
+    margin: 0 1;
+    background: $surface;
+}
+
+/* ── Grouped conversation turn ── */
+
+ConversationTurn {
+    height: auto;
+    margin: 0;
+    border: none;
+    background: transparent;
+}
+
+.turn-section {
+    height: auto;
+    width: 100%;
+}
+
+.turn-section.separated {
+    border-top: solid $primary;
+}
+
+.turn-section.response-section.separated {
+    border-top: solid $success;
+}
+
+TurnLabel {
+    height: 1;
+    width: 100%;
+    padding: 0 1;
+    text-style: bold;
+    background: transparent;
+}
+
+.prompt-title {
+    color: $primary;
+}
+
+.thinking-title {
+    color: $primary;
+}
+
+.response-title {
+    color: $success;
+}
+
+.shell-title {
+    color: $accent;
+}
+
+.tool-title {
+    color: $secondary;
+}
+
+/* ── Grouped (borderless) inner widgets ── */
+
+Prompt.grouped {
+    border: none;
+    background: transparent;
     color: $text;
-    margin: 1;
-    margin-right: 8;
-    padding: 1 2 0 2;
+    margin: 0;
+    padding: 0 1;
+}
+
+Response.grouped {
+    border: none;
+    background: transparent;
+    color: $text;
+    margin: 0;
+    padding: 0 1;
+}
+
+Response.grouped:focus {
+    border: none;
+}
+
+ThinkingOutput.grouped {
+    border: none;
+    background: transparent;
+    color: $text;
+    margin: 0;
+    padding: 0;
+}
+
+ThinkingOutput.grouped:focus {
+    border: none;
+}
+
+/* ── Standalone (non-grouped) widgets ── */
+
+Prompt {
+    border: none;
+    background: transparent;
+    color: $text;
+    margin: 0;
+    padding: 0 1;
 }
 
 Response {
-    border: wide $success;
-    background: $success 10%;
+    border: none;
+    background: transparent;
     color: $text;
-    margin: 1;
-    margin-left: 8;
-    padding: 1 2 0 2;
+    margin: 0;
+    padding: 0 1;
 }
 
 Response:focus {
-    border: wide $warning;
+    border: none;
 }
 
 MarkdownBlock.highlight {

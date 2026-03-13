@@ -19,20 +19,30 @@ from llm.models import (
     ToolResult,
 )
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
 from textual.containers import VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, TextArea
 from textual.worker import Worker, WorkerState
 
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.model_picker import AgentModeProvider, ModelPickerScreen, ModelProvider
+from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
 from mother.user_commands import ShellCommand, parse_user_input
-from mother.widgets import Prompt, Response, ShellOutput, ToolOutput
+from mother.widgets import (
+    ConversationTurn,
+    OutputSection,
+    Response,
+    ShellOutput,
+    StatusLine,
+    ThinkingOutput,
+    ToolOutput,
+)
 
 CSS_DIR = Path(__file__).resolve().parent / "css"
 APP_CSS_PATHS: list[str | PurePath] = [
@@ -49,6 +59,7 @@ class MotherApp(App[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
+        ("ctrl+o", "toggle_thinking_widget", "Thoughts"),
     ]
 
     COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}  # pyright: ignore[reportUnannotatedClassAttribute]
@@ -68,13 +79,15 @@ class MotherApp(App[None]):
         self.conversation: Conversation | None = None
         self._pending_executions: list[BashExecution] = []
         self._tool_outputs: dict[str, ToolOutput] = {}
+        self._last_context_tokens: int | None = None
 
     @override
     def compose(self) -> ComposeResult:
         yield Header()
         with VerticalScroll(id="chat-view"):
-            yield Response("INTERFACE 2037 READY FOR INQUIRY")
+            yield ConversationTurn(response_text="INTERFACE 2037 READY FOR INQUIRY")
         yield TextArea()
+        yield StatusLine(self.config.model, self.agent_mode, self._last_context_tokens)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -82,6 +95,7 @@ class MotherApp(App[None]):
         self.conversation = self.model.conversation()
         _ = self.query_one("#chat-view").anchor()
         self._update_subtitle()
+        self._update_statusline()
 
     def action_show_models(self) -> None:
         """Open the model picker."""
@@ -92,7 +106,9 @@ class MotherApp(App[None]):
         self.config = replace(self.config, model=model_id, tools_enabled=self.agent_mode)
         self.model = llm.get_model(model_id)
         self.conversation = self.model.conversation()
+        self._last_context_tokens = None
         self._update_subtitle()
+        self._update_statusline()
         self.notify(f"Switched to {model_id}", title="Model changed")
 
     def action_toggle_agent_mode(self) -> None:
@@ -100,12 +116,45 @@ class MotherApp(App[None]):
         self.agent_mode = not self.agent_mode
         self._update_subtitle()
         state = "enabled" if self.agent_mode else "disabled"
+        self._update_statusline()
         self.notify(f"Agent mode {state}", title="Agent mode")
+
+    def action_toggle_thinking_widget(self) -> None:
+        """Expand or collapse the latest visible thinking widget."""
+        focused = self.focused
+        if isinstance(focused, ThinkingOutput) and focused.has_content():
+            focused.action_toggle_expanded()
+            return
+
+        thinking_widgets = [widget for widget in self.query(ThinkingOutput) if widget.has_content()]
+        if thinking_widgets:
+            thinking_widgets[-1].action_toggle_expanded()
 
     def _update_subtitle(self) -> None:
         """Update subtitle to show model and agent mode indicator."""
         sub_title: str = f"{self.config.model} [AGENT]" if self.agent_mode else self.config.model
         self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    def _update_statusline(self) -> None:
+        """Update the single-line status bar above the footer."""
+        try:
+            status_line = self.query_one(StatusLine)
+        except (NoMatches, ScreenStackError):
+            return
+        status_line.set_status(
+            model_name=self.config.model,
+            agent_mode=self.agent_mode,
+            context_tokens=self._last_context_tokens,
+        )
+
+    def _refresh_context_size(self) -> None:
+        """Capture the latest context token count, if the provider reports one."""
+        conversation = self.conversation
+        if conversation is None or not conversation.responses:
+            self._last_context_tokens = None
+        else:
+            self._last_context_tokens = conversation.responses[-1].input_tokens
+        _ = self.call_from_thread(self._update_statusline)
 
     def _flush_pending_context(self, value: str) -> str:
         """Build prompt with any pending shell output prepended, then clear the queue."""
@@ -134,15 +183,20 @@ class MotherApp(App[None]):
         chat_view = self.query_one("#chat-view")
         text_area.read_only = True
         prompt = self._flush_pending_context(value)
-        _ = await chat_view.mount(Prompt(value))
-        _ = await chat_view.mount(response := Response())
-        _ = self.send_prompt(prompt, response)
+        turn = ConversationTurn(prompt_text=value, include_thinking=True)
+        _ = await chat_view.mount(turn)
+        thinking_output = turn.thinking_output
+        if thinking_output is None:
+            text_area.read_only = False
+            return
+        _ = self.send_prompt(prompt, turn.response_widget, thinking_output)
 
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
         chat_view = self.query_one("#chat-view")
         shell_widget = ShellOutput(f"Running: {cmd.command}")
-        _ = await chat_view.mount(shell_widget)
+        section = OutputSection("Shell", "shell-title", shell_widget)
+        _ = await chat_view.mount(section)
 
         try:
             result = await execute_bash(cmd.command)
@@ -188,8 +242,9 @@ class MotherApp(App[None]):
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
         self._tool_outputs[key] = widget
+        section = OutputSection("Tool", "tool-title", widget)
         chat_view = self.query_one("#chat-view", VerticalScroll)
-        _ = chat_view.mount(widget)
+        _ = chat_view.mount(section)
         _ = chat_view.scroll_end(animate=False)
 
     def _show_tool_finished(
@@ -205,7 +260,8 @@ class MotherApp(App[None]):
         chat_view = self.query_one("#chat-view", VerticalScroll)
         if widget is None:
             widget = ToolOutput()
-            _ = chat_view.mount(widget)
+            section = OutputSection("Tool", "tool-title", widget)
+            _ = chat_view.mount(section)
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
         _ = chat_view.scroll_end(animate=False)
 
@@ -216,12 +272,52 @@ class MotherApp(App[None]):
             text_area.read_only = False
             _ = text_area.focus()
 
-    def _stream_response(self, llm_response: Iterable[str], response: Response) -> str:
-        """Stream chunks from an LLM response into the widget; return full text."""
+    def _scroll_chat_to_end(self) -> None:
+        """Keep the chat view pinned to the latest streamed content."""
+        chat_view = self.query_one("#chat-view", VerticalScroll)
+        _ = chat_view.scroll_end(animate=False)
+
+    def _update_thinking_output(self, thinking_output: ThinkingOutput, text: str) -> None:
+        """Render streamed reasoning text in the dedicated thinking widget."""
+        thinking_output.set_text(text)
+        self._scroll_chat_to_end()
+
+    def _stream_response(
+        self,
+        llm_response: Iterable[str],
+        response: Response,
+        thinking_output: ThinkingOutput | None = None,
+    ) -> str:
+        """Stream chunks from an LLM response into the visible widgets; return final reply text."""
         full_text = ""
+        if thinking_output is None:
+            for chunk in llm_response:
+                full_text += chunk
+                _ = self.call_from_thread(response.update, full_text)
+            return full_text
+
+        thinking_parser = ThinkTagStreamParser()
+        thinking_text = ""
+
         for chunk in llm_response:
-            full_text += chunk
+            thinking_delta, response_delta = thinking_parser.feed(chunk)
+            if thinking_delta:
+                thinking_text += thinking_delta
+                _ = self.call_from_thread(
+                    self._update_thinking_output, thinking_output, thinking_text
+                )
+            if response_delta:
+                full_text += response_delta
+                _ = self.call_from_thread(response.update, full_text)
+
+        thinking_delta, response_delta = thinking_parser.flush()
+        if thinking_delta:
+            thinking_text += thinking_delta
+            _ = self.call_from_thread(self._update_thinking_output, thinking_output, thinking_text)
+        if response_delta:
+            full_text += response_delta
             _ = self.call_from_thread(response.update, full_text)
+
         return full_text
 
     @staticmethod
@@ -330,15 +426,21 @@ class MotherApp(App[None]):
             self._show_error(response, f"**Error:** {exc}")
             return None
 
-    def _stream_llm_response(self, llm_response: Iterable[str], response: Response) -> bool:
+    def _stream_llm_response(
+        self,
+        llm_response: Iterable[str],
+        response: Response,
+        thinking_output: ThinkingOutput | None = None,
+    ) -> bool:
         """Stream an LLM response into the widget and finalize the widget state."""
         try:
-            full_text = self._stream_response(llm_response, response)
+            full_text = self._stream_response(llm_response, response, thinking_output)
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return False
 
         response.reset_state(full_text)
+        self._refresh_context_size()
         return True
 
     def _show_error(self, response: Response, error_text: str) -> None:
@@ -347,7 +449,12 @@ class MotherApp(App[None]):
         response.reset_state(error_text)
 
     @work(thread=True)
-    def send_prompt(self, prompt: str, response: Response) -> None:
+    def send_prompt(
+        self,
+        prompt: str,
+        response: Response,
+        thinking_output: ThinkingOutput | None = None,
+    ) -> None:
         """Get the response in a thread, maintaining conversation history."""
         _ = self.call_from_thread(response.update, "*Thinking...*")
         conversation = self.conversation
@@ -365,7 +472,7 @@ class MotherApp(App[None]):
         if llm_response is None:
             return
 
-        _ = self._stream_llm_response(llm_response, response)
+        _ = self._stream_llm_response(llm_response, response, thinking_output)
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""

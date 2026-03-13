@@ -1,29 +1,38 @@
 ShellOutput {
     height: auto;
-    border: wide $accent;
-    background: $accent 10%;
+    border: none;
+    background: transparent;
     color: $text;
-    margin: 1;
-    margin-right: 4;
-    margin-left: 4;
-    padding: 1 2 0 2;
+    margin: 0;
+    padding: 0 1;
 }
 
 ShellOutput:focus {
-    border: wide $warning;
+    background: $accent 10%;
 }
 
 ToolOutput {
     height: auto;
-    border: wide $secondary;
-    background: $secondary 10%;
+    border: none;
+    background: transparent;
     color: $text;
-    margin: 1;
-    margin-right: 4;
-    margin-left: 4;
-    padding: 1 2 0 2;
+    margin: 0;
+    padding: 0 1;
 }
 
 ToolOutput:focus {
-    border: wide $warning;
+    background: $secondary 10%;
+}
+
+ThinkingOutput {
+    height: auto;
+    border: none;
+    background: transparent;
+    color: $text;
+    margin: 0;
+    padding: 0 1;
+}
+
+ThinkingOutput:focus {
+    background: $primary 10%;
 }

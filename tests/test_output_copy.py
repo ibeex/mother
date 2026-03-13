@@ -35,10 +35,10 @@ def test_copyable_output_copies_full_text_when_selection_empty():
 def test_copyable_output_grows_to_fit_short_content():
     widget = CopyableOutput("one\ntwo\nthree\nfour")
     assert widget.styles.height is not None
-    assert widget.styles.height.cells == 6
+    assert widget.styles.height.cells == 4
 
 
 def test_copyable_output_caps_height_for_long_content():
     widget = CopyableOutput("\n".join(str(index) for index in range(20)))
     assert widget.styles.height is not None
-    assert widget.styles.height.cells == 14
+    assert widget.styles.height.cells == 12
