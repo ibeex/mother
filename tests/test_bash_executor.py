@@ -74,7 +74,9 @@ def test_execute_uses_start_new_session_instead_of_preexec_fn():
     fake_proc.returncode = 0
     fake_proc.pid = 12345
 
-    with patch("asyncio.create_subprocess_shell", new=AsyncMock(return_value=fake_proc)) as mock_spawn:
+    with patch(
+        "asyncio.create_subprocess_shell", new=AsyncMock(return_value=fake_proc)
+    ) as mock_spawn:
         result = run(execute_bash("echo hello"))
 
     assert result.exit_code == 0

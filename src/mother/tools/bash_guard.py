@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache
 from typing import Literal, Protocol, cast
 
 import llm
@@ -64,8 +64,10 @@ LABEL: Warning
 LABEL: Fatal
 """
 
-_LABEL_RE = re.compile(r"(?im)^LABEL:\s*(OK|Warning|Fatal|Warrning)\s*$")
-_FALLBACK_LABEL_RE = re.compile(r"\b(OK|Warning|Fatal|Warrning)\b", re.IGNORECASE)
+_COMMON_WARNING_TYPO = "Warrning"
+
+_LABEL_RE = re.compile(rf"(?im)^LABEL:\s*(OK|Warning|Fatal|{_COMMON_WARNING_TYPO})\s*$")
+_FALLBACK_LABEL_RE = re.compile(rf"\b(OK|Warning|Fatal|{_COMMON_WARNING_TYPO})\b", re.IGNORECASE)
 
 
 class PromptResponse(Protocol):
@@ -97,7 +99,7 @@ class BashGuardDecision:
         return self.label == "OK" and self.error is None
 
 
-@lru_cache(maxsize=None)
+@cache
 def _get_guard_model(model_name: str) -> PromptModel:
     return cast(PromptModel, llm.get_model(model_name))
 
@@ -106,7 +108,7 @@ def normalize_label(raw_label: str) -> Label | None:
     mapping: dict[str, Label] = {
         "ok": "OK",
         "warning": "Warning",
-        "warrning": "Warning",
+        _COMMON_WARNING_TYPO.lower(): "Warning",
         "fatal": "Fatal",
     }
     return mapping.get(raw_label.strip().lower())

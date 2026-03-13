@@ -38,7 +38,7 @@ def test_bash_tool_warning_blocks_and_copies_to_clipboard():
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
-        tool = make_bash_tool(Path("/tmp"))
+        tool = make_bash_tool(cwd=Path("/tmp"))
         output = tool("touch notes.txt")
     mock_copy.assert_called_once_with("touch notes.txt")
     mock_exec.assert_not_called()
@@ -61,7 +61,7 @@ def test_bash_tool_fatal_blocks_and_copies_to_clipboard():
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
-        tool = make_bash_tool(Path("/tmp"))
+        tool = make_bash_tool(cwd=Path("/tmp"))
         output = tool("rm -rf /")
     mock_copy.assert_called_once_with("rm -rf /")
     mock_exec.assert_not_called()
@@ -82,7 +82,7 @@ def test_bash_tool_guard_error_fails_closed():
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
-        tool = make_bash_tool(Path("/tmp"))
+        tool = make_bash_tool(cwd=Path("/tmp"))
         output = tool("ls -al")
     mock_copy.assert_called_once_with("ls -al")
     mock_exec.assert_not_called()

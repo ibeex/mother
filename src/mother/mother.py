@@ -3,7 +3,7 @@
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from datetime import datetime
-from typing import override
+from typing import Any, override
 
 import click
 import llm
@@ -316,6 +316,8 @@ class MotherApp(App[None]):
         base = config or MotherConfig()
         self.config = apply_cli_overrides(base, model_name, system)
         self.agent_mode: bool = self.config.tools_enabled
+        self.model: Any | None = None
+        self.conversation: Any | None = None
         self._pending_executions: list[BashExecution] = []
 
     @override
@@ -426,21 +428,28 @@ class MotherApp(App[None]):
     def send_prompt(self, prompt: str, response: Response) -> None:
         """Get the response in a thread, maintaining conversation history."""
         self.call_from_thread(response.update, "*Thinking...*")
+        conversation = self.conversation
+        if conversation is None:
+            error_text = "**Error:** Conversation is not initialized."
+            self.call_from_thread(response.update, error_text)
+            response._raw = error_text
+            response._cursor = 0
+            return
         tool_registry = get_default_tools(
             tools_enabled=self.agent_mode, allowlist=self.config.allowlist
         )
-        kwargs: dict = {"system": self.config.system_prompt}
+        kwargs: dict[str, object] = {"system": self.config.system_prompt}
         if not tool_registry.is_empty():
             kwargs["tools"] = tool_registry.tools()
         try:
             if "tools" in kwargs:
-                llm_response = self.conversation.chain(
+                llm_response = conversation.chain(
                     prompt,
                     system=self.config.system_prompt,
                     tools=kwargs["tools"],
                 )
             else:
-                llm_response = self.conversation.prompt(prompt, **kwargs)
+                llm_response = conversation.prompt(prompt, **kwargs)
             full_text = ""
             for chunk in llm_response:
                 full_text += chunk
@@ -449,9 +458,7 @@ class MotherApp(App[None]):
             if "does not support tools" in str(exc) and "tools" in kwargs:
                 self.call_from_thread(self._disable_agent_mode_unsupported)
                 try:
-                    llm_response = self.conversation.prompt(
-                        prompt, system=self.config.system_prompt
-                    )
+                    llm_response = conversation.prompt(prompt, system=self.config.system_prompt)
                     full_text = ""
                     for chunk in llm_response:
                         full_text += chunk

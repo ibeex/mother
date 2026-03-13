@@ -39,8 +39,7 @@ def _format_blocked_command(decision: BashGuardDecision, clipboard_status: str) 
         lines.append(f"Reason: {decision.error}")
     lines.append(clipboard_status)
     lines.append(
-        "If the user wants to override, they can run it manually with `!<command>` "
-        "to include the output in chat context or `!!<command>` to exclude it."
+        "If the user wants to override, they can run it manually with `!<command>` to include the output in chat context or `!!<command>` to exclude it."
     )
     return "\n".join(lines)
 

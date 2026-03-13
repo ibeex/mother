@@ -1,8 +1,8 @@
 """Tests for the mother package."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 from click.testing import CliRunner
 
 from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherApp, MotherConfig, cli, load_config
@@ -92,19 +92,19 @@ def test_cli_custom_system():
 # Config tests
 
 
-def test_load_config_defaults(tmp_path: pytest.FixtureRequest):
-    config_file = tmp_path / "config.toml"  # type: ignore[operator]
-    config = load_config(config_file)  # type: ignore[arg-type]
+def test_load_config_defaults(tmp_path: Path):
+    config_file = tmp_path / "config.toml"
+    config = load_config(config_file)
     assert config.model == DEFAULT_MODEL
     assert config.system_prompt == DEFAULT_SYSTEM
     assert config.tools_enabled is False
-    assert config_file.exists()  # type: ignore[union-attr]
+    assert config_file.exists()
 
 
-def test_load_config_from_file(tmp_path: pytest.FixtureRequest):
-    config_file = tmp_path / "config.toml"  # type: ignore[operator]
-    config_file.write_text('model = "gpt-4o"\ntools_enabled = true\n')  # type: ignore[union-attr]
-    config = load_config(config_file)  # type: ignore[arg-type]
+def test_load_config_from_file(tmp_path: Path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text('model = "gpt-4o"\ntools_enabled = true\n')
+    config = load_config(config_file)
     assert config.model == "gpt-4o"
     assert config.tools_enabled is True
     assert config.system_prompt == DEFAULT_SYSTEM
