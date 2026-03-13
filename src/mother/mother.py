@@ -8,6 +8,7 @@ from typing import Any, override
 import click
 import llm
 import pyperclip
+from llm.models import Tool, ToolCall, ToolResult
 from textual import work
 from textual.app import App, ComposeResult
 from textual.command import Hit, Provider
@@ -20,6 +21,7 @@ from textual.worker import Worker, WorkerState
 
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
+from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
 from mother.user_commands import ShellCommand, parse_user_input
@@ -52,16 +54,53 @@ class Prompt(Markdown):
     """Markdown for the user prompt."""
 
 
-class ShellOutput(Markdown):
-    """Markdown widget for direct user shell command output."""
+class CopyableOutput(TextArea):
+    """Plain-text output widget with selection-aware copy support."""
 
-    BORDER_TITLE = "Shell"
+    MIN_VISIBLE_LINES = 3
+    MAX_VISIBLE_LINES = 12
+
+    BINDINGS = [
+        ("c", "copy_output", "Copy"),
+    ]
+    can_focus = True
+
+    def __init__(self, text: str = "") -> None:
+        super().__init__(
+            text,
+            read_only=True,
+            show_cursor=True,
+            soft_wrap=False,
+            show_line_numbers=False,
+            highlight_cursor_line=False,
+        )
+        self._raw = text
+        self._sync_height(text)
+
+    def _sync_height(self, text: str) -> None:
+        """Size the widget to fit short content without making long output huge."""
+        content_lines = max(1, text.count("\n") + 1)
+        visible_lines = min(max(content_lines, self.MIN_VISIBLE_LINES), self.MAX_VISIBLE_LINES)
+        self.styles.height = visible_lines + 2
+
+    def set_text(self, text: str) -> None:
+        """Update the rendered text while keeping a copyable raw value."""
+        self._raw = text
+        self.text = text
+        self._sync_height(text)
+
+    def action_copy_output(self) -> None:
+        text = self.selected_text or self._raw
+        try:
+            pyperclip.copy(text)
+        except Exception:
+            self.app.copy_to_clipboard(text)
+        self.notify("Copied!")
 
 
-class Response(Markdown):
-    """Markdown for the reply from the LLM, with block-level copy support."""
+class CopyableMarkdown(Markdown):
+    """Markdown widget with focus and block-level copy support."""
 
-    BORDER_TITLE = "Mother"
     BINDINGS = [
         ("j", "cursor_down", "Next block"),
         ("k", "cursor_up", "Prev block"),
@@ -73,6 +112,11 @@ class Response(Markdown):
         super().__init__(markdown)
         self._cursor = 0
         self._raw = markdown
+
+    def set_markdown(self, markdown: str):
+        """Update the rendered Markdown while keeping a copyable raw value."""
+        self._raw = markdown
+        return self.update(markdown)
 
     def _blocks(self) -> list[MarkdownBlock]:
         return list(self.query(MarkdownBlock))
@@ -114,6 +158,24 @@ class Response(Markdown):
         except Exception:
             self.app.copy_to_clipboard(text)
         self.notify("Copied!")
+
+
+class ShellOutput(CopyableOutput):
+    """Plain-text widget for direct user shell command output."""
+
+    BORDER_TITLE = "Shell"
+
+
+class ToolOutput(CopyableOutput):
+    """Plain-text widget for agent tool execution traces."""
+
+    BORDER_TITLE = "Tool"
+
+
+class Response(CopyableMarkdown):
+    """Markdown for the reply from the LLM, with block-level copy support."""
+
+    BORDER_TITLE = "Mother"
 
 
 class AgentModeProvider(Provider):
@@ -286,6 +348,7 @@ class MotherApp(App[None]):
     }
 
     ShellOutput {
+        height: auto;
         border: wide $accent;
         background: $accent 10%;
         color: $text;
@@ -293,6 +356,25 @@ class MotherApp(App[None]):
         margin-right: 4;
         margin-left: 4;
         padding: 1 2 0 2;
+    }
+
+    ShellOutput:focus {
+        border: wide $warning;
+    }
+
+    ToolOutput {
+        height: auto;
+        border: wide $secondary;
+        background: $secondary 10%;
+        color: $text;
+        margin: 1;
+        margin-right: 4;
+        margin-left: 4;
+        padding: 1 2 0 2;
+    }
+
+    ToolOutput:focus {
+        border: wide $warning;
     }
 
     TextArea {
@@ -319,6 +401,7 @@ class MotherApp(App[None]):
         self.model: Any | None = None
         self.conversation: Any | None = None
         self._pending_executions: list[BashExecution] = []
+        self._tool_outputs: dict[str, ToolOutput] = {}
 
     @override
     def compose(self) -> ComposeResult:
@@ -394,7 +477,7 @@ class MotherApp(App[None]):
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
         chat_view = self.query_one("#chat-view")
-        shell_widget = ShellOutput(f"*Running `{cmd.command}`...*")
+        shell_widget = ShellOutput(f"Running: {cmd.command}")
         await chat_view.mount(shell_widget)
 
         try:
@@ -406,7 +489,7 @@ class MotherApp(App[None]):
             output = result.output
             exit_code = result.exit_code
 
-        await shell_widget.update(f"```\n{output}\n```")
+        shell_widget.set_text(output)
 
         execution = BashExecution(
             command=cmd.command,
@@ -416,6 +499,51 @@ class MotherApp(App[None]):
             exclude_from_context=not cmd.include_in_context,
         )
         self._pending_executions.append(execution)
+
+    def _tool_output_key(
+        self,
+        tool_name: str,
+        tool_call_id: str | None,
+        arguments: dict[str, object],
+    ) -> str:
+        """Build a stable key for a tool execution trace widget."""
+        if tool_call_id:
+            return tool_call_id
+        command = arguments.get("command")
+        if isinstance(command, str) and command:
+            return f"{tool_name}:{command}"
+        return tool_name
+
+    def _show_tool_started(
+        self,
+        tool_name: str,
+        tool_call_id: str | None,
+        arguments: dict[str, object],
+    ) -> None:
+        """Mount a widget showing that a tool call has started."""
+        key = self._tool_output_key(tool_name, tool_call_id, arguments)
+        widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
+        self._tool_outputs[key] = widget
+        chat_view = self.query_one("#chat-view", VerticalScroll)
+        chat_view.mount(widget)
+        chat_view.scroll_end(animate=False)
+
+    def _show_tool_finished(
+        self,
+        tool_name: str,
+        tool_call_id: str | None,
+        arguments: dict[str, object],
+        output: str,
+    ) -> None:
+        """Update a tool trace widget when a tool call finishes."""
+        key = self._tool_output_key(tool_name, tool_call_id, arguments)
+        widget = self._tool_outputs.pop(key, None)
+        chat_view = self.query_one("#chat-view", VerticalScroll)
+        if widget is None:
+            widget = ToolOutput()
+            chat_view.mount(widget)
+        widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
+        chat_view.scroll_end(animate=False)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Re-enable input when the worker finishes."""
@@ -441,12 +569,35 @@ class MotherApp(App[None]):
         kwargs: dict[str, object] = {"system": self.config.system_prompt}
         if not tool_registry.is_empty():
             kwargs["tools"] = tool_registry.tools()
+
+        def before_tool_call(tool: Tool | None, tool_call: ToolCall) -> None:
+            tool_name = tool.name if tool is not None else tool_call.name
+            arguments = dict(tool_call.arguments)
+            self.call_from_thread(
+                self._show_tool_started,
+                tool_name,
+                tool_call.tool_call_id,
+                arguments,
+            )
+
+        def after_tool_call(tool: Tool, tool_call: ToolCall, tool_result: ToolResult) -> None:
+            arguments = dict(tool_call.arguments)
+            self.call_from_thread(
+                self._show_tool_finished,
+                tool.name,
+                tool_call.tool_call_id,
+                arguments,
+                tool_result.output,
+            )
+
         try:
             if "tools" in kwargs:
                 llm_response = conversation.chain(
                     prompt,
                     system=self.config.system_prompt,
                     tools=kwargs["tools"],
+                    before_call=before_tool_call,
+                    after_call=after_tool_call,
                 )
             else:
                 llm_response = conversation.prompt(prompt, **kwargs)
