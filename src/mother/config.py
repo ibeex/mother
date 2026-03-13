@@ -22,8 +22,13 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # System prompt sent with every conversation
 # system_prompt = "Formulate all responses as if you were the sentient AI named Mother from the Alien movies."
 
-# Enable tool use (web search, file read, etc.) — not yet implemented
+# Enable agent mode (allows LLM to run shell commands via the bash tool)
 # tools_enabled = false
+
+# Legacy allowlist from the old regex-based bash guard.
+# Retained for backwards compatibility but ignored by the current
+# LLM-based bash guard.
+# allowlist = ["ls", "cat"]
 """
 
 
@@ -32,6 +37,7 @@ class MotherConfig:
     model: str = "gpt-5"
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     tools_enabled: bool = False
+    allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
 
 
 DEFAULT_MODEL = MotherConfig().model
@@ -52,10 +58,13 @@ def load_config(path: Path | None = None) -> MotherConfig:
     with resolved.open("rb") as f:
         data = tomllib.load(f)
 
+    raw_allowlist = data.get("allowlist")
+    allowlist = frozenset(raw_allowlist) if raw_allowlist is not None else MotherConfig().allowlist
     return MotherConfig(
         model=data.get("model", MotherConfig.model),
         system_prompt=data.get("system_prompt", MotherConfig.system_prompt),
         tools_enabled=data.get("tools_enabled", MotherConfig.tools_enabled),
+        allowlist=allowlist,
     )
 
 
@@ -68,4 +77,5 @@ def apply_cli_overrides(
         model=model if model is not None else config.model,
         system_prompt=system if system is not None else config.system_prompt,
         tools_enabled=config.tools_enabled,
+        allowlist=config.allowlist,
     )

@@ -1,6 +1,8 @@
 """Mother TUI chatbot — a Textual interface for chatting with an LLM."""
 
 from collections.abc import AsyncGenerator
+from dataclasses import replace
+from datetime import datetime
 from typing import override
 
 import click
@@ -16,8 +18,11 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 from textual.widgets.option_list import Option
 from textual.worker import Worker, WorkerState
 
+from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.tools import get_default_tools
+from mother.tools.bash_executor import execute_bash
+from mother.user_commands import ShellCommand, parse_user_input
 
 
 def get_available_models() -> list[tuple[str, str]]:
@@ -45,6 +50,12 @@ def get_available_models() -> list[tuple[str, str]]:
 
 class Prompt(Markdown):
     """Markdown for the user prompt."""
+
+
+class ShellOutput(Markdown):
+    """Markdown widget for direct user shell command output."""
+
+    BORDER_TITLE = "Shell"
 
 
 class Response(Markdown):
@@ -103,6 +114,24 @@ class Response(Markdown):
         except Exception:
             self.app.copy_to_clipboard(text)
         self.notify("Copied!")
+
+
+class AgentModeProvider(Provider):
+    """Command palette provider for toggling agent mode."""
+
+    async def search(self, query: str) -> AsyncGenerator[Hit, None]:
+        assert isinstance(self.app, MotherApp)
+        app: MotherApp = self.app
+        matcher = self.matcher(query)
+        label = "Agent mode: off" if app.agent_mode else "Agent mode: on"
+        score = matcher.match(label)
+        if score > 0 or not query:
+            yield Hit(
+                score or 1.0,
+                matcher.highlight(label),
+                app.action_toggle_agent_mode,
+                help="Toggle agent mode (tool use)",
+            )
 
 
 class ModelProvider(Provider):
@@ -224,9 +253,11 @@ class MotherApp(App[None]):
 
     AUTO_FOCUS = "TextArea"
 
-    BINDINGS = [("ctrl+enter", "submit", "Send")]
+    BINDINGS = [
+        ("ctrl+enter", "submit", "Send"),
+    ]
 
-    COMMANDS = App.COMMANDS | {ModelProvider}
+    COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}
 
     CSS = """
     Prompt {
@@ -254,6 +285,16 @@ class MotherApp(App[None]):
         background: $accent 20%;
     }
 
+    ShellOutput {
+        border: wide $accent;
+        background: $accent 10%;
+        color: $text;
+        margin: 1;
+        margin-right: 4;
+        margin-left: 4;
+        padding: 1 2 0 2;
+    }
+
     TextArea {
         height: 6;
         border: tall $primary;
@@ -274,6 +315,8 @@ class MotherApp(App[None]):
         super().__init__()
         base = config or MotherConfig()
         self.config = apply_cli_overrides(base, model_name, system)
+        self.agent_mode: bool = self.config.tools_enabled
+        self._pending_executions: list[BashExecution] = []
 
     @override
     def compose(self) -> ComposeResult:
@@ -287,7 +330,7 @@ class MotherApp(App[None]):
         self.model = llm.get_model(self.config.model)
         self.conversation = self.model.conversation()
         self.query_one("#chat-view").anchor()
-        self.sub_title = self.config.model
+        self._update_subtitle()
 
     def action_show_models(self) -> None:
         """Open the model picker."""
@@ -295,15 +338,25 @@ class MotherApp(App[None]):
 
     def action_switch_model(self, model_id: str) -> None:
         """Switch to a different LLM model and start a fresh conversation."""
-        self.config = MotherConfig(
-            model=model_id,
-            system_prompt=self.config.system_prompt,
-            tools_enabled=self.config.tools_enabled,
-        )
+        self.config = replace(self.config, model=model_id, tools_enabled=self.agent_mode)
         self.model = llm.get_model(model_id)
         self.conversation = self.model.conversation()
-        self.sub_title = model_id
+        self._update_subtitle()
         self.notify(f"Switched to {model_id}", title="Model changed")
+
+    def action_toggle_agent_mode(self) -> None:
+        """Toggle agent mode (enables/disables tool use)."""
+        self.agent_mode = not self.agent_mode
+        self._update_subtitle()
+        state = "enabled" if self.agent_mode else "disabled"
+        self.notify(f"Agent mode {state}", title="Agent mode")
+
+    def _update_subtitle(self) -> None:
+        """Update subtitle to show model and agent mode indicator."""
+        if self.agent_mode:
+            self.sub_title = f"{self.config.model} [AGENT]"
+        else:
+            self.sub_title = self.config.model
 
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
@@ -311,12 +364,56 @@ class MotherApp(App[None]):
         value = text_area.text.strip()
         if not value:
             return
+        text_area.clear()
+
+        parsed = parse_user_input(value)
+        if isinstance(parsed, ShellCommand):
+            await self.run_user_command(parsed)
+            return
+
         chat_view = self.query_one("#chat-view")
         text_area.read_only = True
-        text_area.clear()
+
+        # Flush any pending shell executions as context before the LLM prompt
+        context_parts: list[str] = []
+        for execution in self._pending_executions:
+            if not execution.exclude_from_context:
+                context_parts.append(format_for_context(execution))
+        self._pending_executions.clear()
+
+        prompt = value
+        if context_parts:
+            prompt = "\n\n".join(context_parts) + "\n\n" + value
+
         await chat_view.mount(Prompt(value))
         await chat_view.mount(response := Response())
-        self.send_prompt(value, response)
+        self.send_prompt(prompt, response)
+
+    async def run_user_command(self, cmd: ShellCommand) -> None:
+        """Execute a direct user shell command and display the output."""
+        chat_view = self.query_one("#chat-view")
+        shell_widget = ShellOutput(f"*Running `{cmd.command}`...*")
+        await chat_view.mount(shell_widget)
+
+        try:
+            result = await execute_bash(cmd.command)
+        except Exception as exc:
+            output = f"Error: {exc}"
+            exit_code = None
+        else:
+            output = result.output
+            exit_code = result.exit_code
+
+        await shell_widget.update(f"```\n{output}\n```")
+
+        execution = BashExecution(
+            command=cmd.command,
+            output=output,
+            exit_code=exit_code,
+            timestamp=datetime.now(),
+            exclude_from_context=not cmd.include_in_context,
+        )
+        self._pending_executions.append(execution)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Re-enable input when the worker finishes."""
@@ -329,24 +426,60 @@ class MotherApp(App[None]):
     def send_prompt(self, prompt: str, response: Response) -> None:
         """Get the response in a thread, maintaining conversation history."""
         self.call_from_thread(response.update, "*Thinking...*")
-        tool_registry = get_default_tools()
+        tool_registry = get_default_tools(
+            tools_enabled=self.agent_mode, allowlist=self.config.allowlist
+        )
         kwargs: dict = {"system": self.config.system_prompt}
         if not tool_registry.is_empty():
             kwargs["tools"] = tool_registry.tools()
         try:
-            llm_response = self.conversation.prompt(prompt, **kwargs)
+            if "tools" in kwargs:
+                llm_response = self.conversation.chain(
+                    prompt,
+                    system=self.config.system_prompt,
+                    tools=kwargs["tools"],
+                )
+            else:
+                llm_response = self.conversation.prompt(prompt, **kwargs)
             full_text = ""
             for chunk in llm_response:
                 full_text += chunk
                 self.call_from_thread(response.update, full_text)
         except Exception as exc:
-            error_text = f"**Error:** {exc}"
-            self.call_from_thread(response.update, error_text)
-            response._raw = error_text
-            response._cursor = 0
-            return
+            if "does not support tools" in str(exc) and "tools" in kwargs:
+                self.call_from_thread(self._disable_agent_mode_unsupported)
+                try:
+                    llm_response = self.conversation.prompt(
+                        prompt, system=self.config.system_prompt
+                    )
+                    full_text = ""
+                    for chunk in llm_response:
+                        full_text += chunk
+                        self.call_from_thread(response.update, full_text)
+                except Exception as exc2:
+                    error_text = f"**Error:** {exc2}"
+                    self.call_from_thread(response.update, error_text)
+                    response._raw = error_text
+                    response._cursor = 0
+                    return
+            else:
+                error_text = f"**Error:** {exc}"
+                self.call_from_thread(response.update, error_text)
+                response._raw = error_text
+                response._cursor = 0
+                return
         response._raw = full_text
         response._cursor = 0
+
+    def _disable_agent_mode_unsupported(self) -> None:
+        """Disable agent mode and notify user that the model doesn't support tools."""
+        self.agent_mode = False
+        self._update_subtitle()
+        self.notify(
+            f"{self.config.model} does not support tools — agent mode disabled",
+            title="Agent mode",
+            severity="warning",
+        )
 
 
 @click.command()
