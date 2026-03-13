@@ -3,14 +3,15 @@
 from collections.abc import AsyncGenerator
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, override
+from typing import ClassVar, cast, override
 
 import click
 import llm
 import pyperclip
-from llm.models import Tool, ToolCall, ToolResult
+from llm.models import Conversation, Model, Tool, ToolCall, ToolResult
 from textual import work
 from textual.app import App, ComposeResult
+from textual.binding import BindingType
 from textual.command import Hit, Provider
 from textual.containers import Container, Vertical, VerticalScroll
 from textual.screen import ModalScreen
@@ -57,13 +58,13 @@ class Prompt(Markdown):
 class CopyableOutput(TextArea):
     """Plain-text output widget with selection-aware copy support."""
 
-    MIN_VISIBLE_LINES = 3
-    MAX_VISIBLE_LINES = 12
+    MIN_VISIBLE_LINES: ClassVar[int] = 3
+    MAX_VISIBLE_LINES: ClassVar[int] = 12
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("c", "copy_output", "Copy"),
     ]
-    can_focus = True
+    can_focus: bool = True
 
     def __init__(self, text: str = "") -> None:
         super().__init__(
@@ -74,7 +75,7 @@ class CopyableOutput(TextArea):
             show_line_numbers=False,
             highlight_cursor_line=False,
         )
-        self._raw = text
+        self._raw: str = text
         self._sync_height(text)
 
     def _sync_height(self, text: str) -> None:
@@ -86,7 +87,7 @@ class CopyableOutput(TextArea):
     def set_text(self, text: str) -> None:
         """Update the rendered text while keeping a copyable raw value."""
         self._raw = text
-        self.text = text
+        self.text: str = text
         self._sync_height(text)
 
     def action_copy_output(self) -> None:
@@ -94,43 +95,48 @@ class CopyableOutput(TextArea):
         try:
             pyperclip.copy(text)
         except Exception:
-            self.app.copy_to_clipboard(text)
+            self.app.copy_to_clipboard(text)  # pyright: ignore[reportUnknownMemberType]
         self.notify("Copied!")
 
 
 class CopyableMarkdown(Markdown):
     """Markdown widget with focus and block-level copy support."""
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("j", "cursor_down", "Next block"),
         ("k", "cursor_up", "Prev block"),
         ("c", "copy_block", "Copy"),
     ]
-    can_focus = True
+    can_focus: bool = True
 
     def __init__(self, markdown: str = "") -> None:
         super().__init__(markdown)
-        self._cursor = 0
-        self._raw = markdown
+        self._cursor: int = 0
+        self._raw: str = markdown
 
     def set_markdown(self, markdown: str):
         """Update the rendered Markdown while keeping a copyable raw value."""
         self._raw = markdown
         return self.update(markdown)
 
+    def reset_state(self, raw: str) -> None:
+        """Reset the raw text and cursor position."""
+        self._raw = raw
+        self._cursor = 0
+
     def _blocks(self) -> list[MarkdownBlock]:
         return list(self.query(MarkdownBlock))
 
     def _refresh_highlight(self) -> None:
         for i, block in enumerate(self._blocks()):
-            block.set_class(i == self._cursor, "highlight")
+            _ = block.set_class(i == self._cursor, "highlight")
 
     def on_focus(self) -> None:
         self._refresh_highlight()
 
     def on_blur(self) -> None:
         for block in self._blocks():
-            block.remove_class("highlight")
+            _ = block.remove_class("highlight")
 
     def action_cursor_down(self) -> None:
         blocks = self._blocks()
@@ -156,34 +162,34 @@ class CopyableMarkdown(Markdown):
         try:
             pyperclip.copy(text)
         except Exception:
-            self.app.copy_to_clipboard(text)
+            self.app.copy_to_clipboard(text)  # pyright: ignore[reportUnknownMemberType]
         self.notify("Copied!")
 
 
 class ShellOutput(CopyableOutput):
     """Plain-text widget for direct user shell command output."""
 
-    BORDER_TITLE = "Shell"
+    BORDER_TITLE: ClassVar[str] = "Shell"
 
 
 class ToolOutput(CopyableOutput):
     """Plain-text widget for agent tool execution traces."""
 
-    BORDER_TITLE = "Tool"
+    BORDER_TITLE: ClassVar[str] = "Tool"
 
 
 class Response(CopyableMarkdown):
     """Markdown for the reply from the LLM, with block-level copy support."""
 
-    BORDER_TITLE = "Mother"
+    BORDER_TITLE: ClassVar[str] = "Mother"
 
 
 class AgentModeProvider(Provider):
     """Command palette provider for toggling agent mode."""
 
+    @override
     async def search(self, query: str) -> AsyncGenerator[Hit, None]:
-        assert isinstance(self.app, MotherApp)
-        app: MotherApp = self.app
+        app = cast("MotherApp", self.app)
         matcher = self.matcher(query)
         label = "Agent mode: off" if app.agent_mode else "Agent mode: on"
         score = matcher.match(label)
@@ -199,9 +205,9 @@ class AgentModeProvider(Provider):
 class ModelProvider(Provider):
     """Command palette provider for opening the model picker."""
 
+    @override
     async def search(self, query: str) -> AsyncGenerator[Hit, None]:
-        assert isinstance(self.app, MotherApp)
-        app: MotherApp = self.app
+        app = cast("MotherApp", self.app)
         matcher = self.matcher(query)
         label = "Models"
         score = matcher.match(label)
@@ -217,7 +223,7 @@ class ModelProvider(Provider):
 class ModelPickerScreen(ModalScreen[None]):
     """Modal screen for searching and selecting available models."""
 
-    CSS = """
+    CSS: ClassVar[str] = """
     ModelPickerScreen {
         align: center middle;
         background: $background 60%;
@@ -240,12 +246,12 @@ class ModelPickerScreen(ModalScreen[None]):
     }
     """
 
-    BINDINGS = [("escape", "dismiss", "Close")]
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "dismiss", "Close")]
 
     def __init__(self, current_model: str) -> None:
         super().__init__()
-        self.current_model = current_model
-        self._all_models = get_available_models()
+        self.current_model: str = current_model
+        self._all_models: list[tuple[str, str]] = get_available_models()
 
     @override
     def compose(self) -> ComposeResult:
@@ -256,7 +262,7 @@ class ModelPickerScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self._refresh_options("")
-        self.query_one(Input).focus()
+        _ = self.query_one(Input).focus()
 
     def _refresh_options(self, query: str) -> None:
         option_list = self.query_one(OptionList)
@@ -268,12 +274,12 @@ class ModelPickerScreen(ModalScreen[None]):
             or normalized_query in model_id.lower()
             or normalized_query in label.lower()
         ]
-        option_list.clear_options()
+        _ = option_list.clear_options()
         if not matching_models:
-            option_list.add_option(Option("No models found", disabled=True))
+            _ = option_list.add_option(Option("No models found", disabled=True))
             option_list.highlighted = None
             return
-        option_list.add_options(
+        _ = option_list.add_options(
             Option(
                 f"★ {label}" if model_id == self.current_model else label,
                 id=model_id,
@@ -289,10 +295,8 @@ class ModelPickerScreen(ModalScreen[None]):
         option = option_list.get_option_at_index(option_list.highlighted)
         if option.id is None:
             return
-        assert isinstance(self.app, MotherApp)
-        app: MotherApp = self.app
-        app.action_switch_model(option.id)
-        self.dismiss()
+        cast("MotherApp", self.app).action_switch_model(option.id)
+        _ = self.dismiss()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "model-query":
@@ -304,24 +308,22 @@ class ModelPickerScreen(ModalScreen[None]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         if event.option_list.id == "model-options" and event.option.id is not None:
-            assert isinstance(self.app, MotherApp)
-            app: MotherApp = self.app
-            app.action_switch_model(event.option.id)
-            self.dismiss()
+            cast("MotherApp", self.app).action_switch_model(event.option.id)
+            _ = self.dismiss()
 
 
 class MotherApp(App[None]):
     """Simple app for chatting with an LLM via a conversation."""
 
-    AUTO_FOCUS = "TextArea"
+    AUTO_FOCUS: ClassVar[str | None] = "TextArea"
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
     ]
 
-    COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}
+    COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}  # pyright: ignore[reportUnannotatedClassAttribute]
 
-    CSS = """
+    CSS: ClassVar[str] = """
     Prompt {
         background: $primary 10%;
         color: $text;
@@ -396,10 +398,10 @@ class MotherApp(App[None]):
     ) -> None:
         super().__init__()
         base = config or MotherConfig()
-        self.config = apply_cli_overrides(base, model_name, system)
+        self.config: MotherConfig = apply_cli_overrides(base, model_name, system)
         self.agent_mode: bool = self.config.tools_enabled
-        self.model: Any | None = None
-        self.conversation: Any | None = None
+        self.model: Model | None = None
+        self.conversation: Conversation | None = None
         self._pending_executions: list[BashExecution] = []
         self._tool_outputs: dict[str, ToolOutput] = {}
 
@@ -414,12 +416,12 @@ class MotherApp(App[None]):
     def on_mount(self) -> None:
         self.model = llm.get_model(self.config.model)
         self.conversation = self.model.conversation()
-        self.query_one("#chat-view").anchor()
+        _ = self.query_one("#chat-view").anchor()
         self._update_subtitle()
 
     def action_show_models(self) -> None:
         """Open the model picker."""
-        self.push_screen(ModelPickerScreen(self.config.model))
+        _ = self.push_screen(ModelPickerScreen(self.config.model))
 
     def action_switch_model(self, model_id: str) -> None:
         """Switch to a different LLM model and start a fresh conversation."""
@@ -438,10 +440,8 @@ class MotherApp(App[None]):
 
     def _update_subtitle(self) -> None:
         """Update subtitle to show model and agent mode indicator."""
-        if self.agent_mode:
-            self.sub_title = f"{self.config.model} [AGENT]"
-        else:
-            self.sub_title = self.config.model
+        sub_title: str = f"{self.config.model} [AGENT]" if self.agent_mode else self.config.model
+        self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
 
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
@@ -449,7 +449,7 @@ class MotherApp(App[None]):
         value = text_area.text.strip()
         if not value:
             return
-        text_area.clear()
+        _ = text_area.clear()
 
         parsed = parse_user_input(value)
         if isinstance(parsed, ShellCommand):
@@ -470,15 +470,15 @@ class MotherApp(App[None]):
         if context_parts:
             prompt = "\n\n".join(context_parts) + "\n\n" + value
 
-        await chat_view.mount(Prompt(value))
-        await chat_view.mount(response := Response())
-        self.send_prompt(prompt, response)
+        _ = await chat_view.mount(Prompt(value))
+        _ = await chat_view.mount(response := Response())
+        _ = self.send_prompt(prompt, response)
 
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
         chat_view = self.query_one("#chat-view")
         shell_widget = ShellOutput(f"Running: {cmd.command}")
-        await chat_view.mount(shell_widget)
+        _ = await chat_view.mount(shell_widget)
 
         try:
             result = await execute_bash(cmd.command)
@@ -525,8 +525,8 @@ class MotherApp(App[None]):
         widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
         self._tool_outputs[key] = widget
         chat_view = self.query_one("#chat-view", VerticalScroll)
-        chat_view.mount(widget)
-        chat_view.scroll_end(animate=False)
+        _ = chat_view.mount(widget)
+        _ = chat_view.scroll_end(animate=False)
 
     def _show_tool_finished(
         self,
@@ -541,38 +541,36 @@ class MotherApp(App[None]):
         chat_view = self.query_one("#chat-view", VerticalScroll)
         if widget is None:
             widget = ToolOutput()
-            chat_view.mount(widget)
+            _ = chat_view.mount(widget)
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
-        chat_view.scroll_end(animate=False)
+        _ = chat_view.scroll_end(animate=False)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Re-enable input when the worker finishes."""
         if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             text_area = self.query_one(TextArea)
             text_area.read_only = False
-            text_area.focus()
+            _ = text_area.focus()
 
     @work(thread=True)
     def send_prompt(self, prompt: str, response: Response) -> None:
         """Get the response in a thread, maintaining conversation history."""
-        self.call_from_thread(response.update, "*Thinking...*")
+        _ = self.call_from_thread(response.update, "*Thinking...*")
         conversation = self.conversation
         if conversation is None:
             error_text = "**Error:** Conversation is not initialized."
-            self.call_from_thread(response.update, error_text)
-            response._raw = error_text
-            response._cursor = 0
+            _ = self.call_from_thread(response.update, error_text)
+            response.reset_state(error_text)
             return
         tool_registry = get_default_tools(
             tools_enabled=self.agent_mode, allowlist=self.config.allowlist
         )
-        kwargs: dict[str, object] = {"system": self.config.system_prompt}
-        if not tool_registry.is_empty():
-            kwargs["tools"] = tool_registry.tools()
+        tools = tool_registry.tools() if not tool_registry.is_empty() else None
+        system = self.config.system_prompt
 
         def before_tool_call(tool: Tool | None, tool_call: ToolCall) -> None:
             tool_name = tool.name if tool is not None else tool_call.name
-            arguments = dict(tool_call.arguments)
+            arguments: dict[str, object] = cast(dict[str, object], dict(tool_call.arguments))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
             self.call_from_thread(
                 self._show_tool_started,
                 tool_name,
@@ -581,7 +579,7 @@ class MotherApp(App[None]):
             )
 
         def after_tool_call(tool: Tool, tool_call: ToolCall, tool_result: ToolResult) -> None:
-            arguments = dict(tool_call.arguments)
+            arguments: dict[str, object] = cast(dict[str, object], dict(tool_call.arguments))  # pyright: ignore[reportUnknownArgumentType, reportUnknownMemberType]
             self.call_from_thread(
                 self._show_tool_finished,
                 tool.name,
@@ -591,43 +589,40 @@ class MotherApp(App[None]):
             )
 
         try:
-            if "tools" in kwargs:
-                llm_response = conversation.chain(
+            if tools is not None:
+                llm_response = conversation.chain(  # pyright: ignore[reportUnknownMemberType]
                     prompt,
-                    system=self.config.system_prompt,
-                    tools=kwargs["tools"],
+                    system=system,
+                    tools=tools,
                     before_call=before_tool_call,
                     after_call=after_tool_call,
                 )
             else:
-                llm_response = conversation.prompt(prompt, **kwargs)
+                llm_response = conversation.prompt(prompt, system=system)  # pyright: ignore[reportUnknownMemberType]
             full_text = ""
             for chunk in llm_response:
                 full_text += chunk
-                self.call_from_thread(response.update, full_text)
+                _ = self.call_from_thread(response.update, full_text)
         except Exception as exc:
-            if "does not support tools" in str(exc) and "tools" in kwargs:
-                self.call_from_thread(self._disable_agent_mode_unsupported)
+            if "does not support tools" in str(exc) and tools is not None:
+                _ = self.call_from_thread(self._disable_agent_mode_unsupported)
                 try:
-                    llm_response = conversation.prompt(prompt, system=self.config.system_prompt)
+                    llm_response = conversation.prompt(prompt, system=system)  # pyright: ignore[reportUnknownMemberType]
                     full_text = ""
                     for chunk in llm_response:
                         full_text += chunk
-                        self.call_from_thread(response.update, full_text)
+                        _ = self.call_from_thread(response.update, full_text)
                 except Exception as exc2:
                     error_text = f"**Error:** {exc2}"
-                    self.call_from_thread(response.update, error_text)
-                    response._raw = error_text
-                    response._cursor = 0
+                    _ = self.call_from_thread(response.update, error_text)
+                    response.reset_state(error_text)
                     return
             else:
                 error_text = f"**Error:** {exc}"
-                self.call_from_thread(response.update, error_text)
-                response._raw = error_text
-                response._cursor = 0
+                _ = self.call_from_thread(response.update, error_text)
+                response.reset_state(error_text)
                 return
-        response._raw = full_text
-        response._cursor = 0
+        response.reset_state(full_text)
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""

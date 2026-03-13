@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import tempfile
 from dataclasses import dataclass
-from typing import IO
+from typing import IO, ClassVar
 
 _ANSI_ESCAPE = re.compile(
     r"\x1b\[[0-9;]*[mGKHFJA-Z]|\x1b\[[0-9;]*[a-z]|\x1b\].*?\x07|\x1b[@-Z\\-_]"
@@ -111,9 +111,9 @@ class BashResult:
 class OutputCapture:
     """Rolling buffer with temp file for large output."""
 
-    MAX_LINES = 2000
-    MAX_BYTES = 50 * 1024
-    ROLLING_BYTES = 100 * 1024
+    MAX_LINES: ClassVar[int] = 2000
+    MAX_BYTES: ClassVar[int] = 50 * 1024
+    ROLLING_BYTES: ClassVar[int] = 100 * 1024
 
     def __init__(self) -> None:
         self._chunks: list[str] = []
@@ -134,11 +134,11 @@ class OutputCapture:
             self._temp_file = tf
             self._temp_file_path = tf.name
             for chunk in self._chunks:
-                self._temp_file.write(chunk)
+                _ = self._temp_file.write(chunk)
             self._temp_file.flush()
 
         if self._temp_file is not None:
-            self._temp_file.write(text)
+            _ = self._temp_file.write(text)
             self._temp_file.flush()
 
         self._chunks.append(text)

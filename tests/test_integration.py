@@ -9,7 +9,7 @@ from mother.tools.bash_tool import DEFAULT_ALLOWLIST
 
 def test_config_allowlist_from_toml(tmp_path: Path):
     config_file = tmp_path / "config.toml"
-    config_file.write_text('allowlist = ["ls", "cat", "grep"]\n')
+    _ = config_file.write_text('allowlist = ["ls", "cat", "grep"]\n')
     config = load_config(config_file)
     assert config.allowlist == frozenset({"ls", "cat", "grep"})
 

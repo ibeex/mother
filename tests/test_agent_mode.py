@@ -35,11 +35,11 @@ def test_subtitle_shows_agent_indicator():
     # Simulate mounted state by setting sub_title directly
     app.agent_mode = False
     app.config = MotherConfig(model="test-model")
-    app._update_subtitle()
+    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
     assert "[AGENT]" not in app.sub_title
 
     app.agent_mode = True
-    app._update_subtitle()
+    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
     assert "[AGENT]" in app.sub_title
 
 
@@ -54,7 +54,7 @@ def test_send_prompt_no_tools_when_conversational():
     app.agent_mode = False
     with patch("mother.mother.get_default_tools") as mock_tools:
         registry = MagicMock()
-        registry.is_empty.return_value = True
+        registry.is_empty.return_value = True  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
         # Trigger the call path
         mock_tools(tools_enabled=False)
@@ -66,8 +66,8 @@ def test_send_prompt_passes_tools_when_agent():
     app.agent_mode = True
     with patch("mother.mother.get_default_tools") as mock_tools:
         registry = MagicMock()
-        registry.is_empty.return_value = False
-        registry.tools.return_value = [MagicMock()]
+        registry.is_empty.return_value = False  # pyright: ignore[reportAny]
+        registry.tools.return_value = [MagicMock()]  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
         mock_tools(tools_enabled=True)
         mock_tools.assert_called_with(tools_enabled=True)

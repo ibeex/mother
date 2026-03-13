@@ -54,9 +54,9 @@ def test_cli_default_wiring():
         mock_load.return_value = MotherConfig()
         mock_app = MagicMock()
         mock_app_cls.return_value = mock_app
-        runner.invoke(cli, [])
+        _ = runner.invoke(cli, [])
         mock_app_cls.assert_called_once()
-        mock_app.run.assert_called_once()
+        mock_app.run.assert_called_once()  # pyright: ignore[reportAny]
 
 
 def test_cli_custom_model():
@@ -68,9 +68,9 @@ def test_cli_custom_model():
         mock_load.return_value = MotherConfig()
         mock_app = MagicMock()
         mock_app_cls.return_value = mock_app
-        runner.invoke(cli, ["-m", "gpt-4o-mini"])
+        _ = runner.invoke(cli, ["-m", "gpt-4o-mini"])
         call_kwargs = mock_app_cls.call_args
-        passed_config: MotherConfig = call_kwargs.kwargs["config"]
+        passed_config: MotherConfig = call_kwargs.kwargs["config"]  # pyright: ignore[reportAny]
         assert passed_config.model == "gpt-4o-mini"
 
 
@@ -83,9 +83,9 @@ def test_cli_custom_system():
         mock_load.return_value = MotherConfig()
         mock_app = MagicMock()
         mock_app_cls.return_value = mock_app
-        runner.invoke(cli, ["-s", "Be a pirate."])
+        _ = runner.invoke(cli, ["-s", "Be a pirate."])
         call_kwargs = mock_app_cls.call_args
-        passed_config: MotherConfig = call_kwargs.kwargs["config"]
+        passed_config: MotherConfig = call_kwargs.kwargs["config"]  # pyright: ignore[reportAny]
         assert passed_config.system_prompt == "Be a pirate."
 
 
@@ -103,7 +103,7 @@ def test_load_config_defaults(tmp_path: Path):
 
 def test_load_config_from_file(tmp_path: Path):
     config_file = tmp_path / "config.toml"
-    config_file.write_text('model = "gpt-4o"\ntools_enabled = true\n')
+    _ = config_file.write_text('model = "gpt-4o"\ntools_enabled = true\n')
     config = load_config(config_file)
     assert config.model == "gpt-4o"
     assert config.tools_enabled is True

@@ -1,6 +1,6 @@
 import subprocess
 
-from funlog import log_calls
+from funlog import log_calls  # pyright: ignore[reportMissingTypeStubs]
 from rich import get_console, reconfigure
 from rich import print as rprint
 
@@ -19,7 +19,7 @@ def main():
     errcount += run(["codespell", "--write-changes", *SRC_PATHS, *DOC_PATHS])
     errcount += run(["ruff", "check", "--fix", *SRC_PATHS])
     errcount += run(["ruff", "format", *SRC_PATHS])
-    errcount += run(["basedpyright", "--level", "error", "--stats", *SRC_PATHS])
+    errcount += run(["basedpyright", "--stats", *SRC_PATHS])
 
     rprint()
 
@@ -38,7 +38,7 @@ def run(cmd: list[str]) -> int:
     rprint(f"[bold green]>> {' '.join(cmd)}[/bold green]")
     errcount = 0
     try:
-        subprocess.run(cmd, text=True, check=True)
+        _ = subprocess.run(cmd, text=True, check=True)
     except KeyboardInterrupt:
         rprint("[yellow]Keyboard interrupt - Cancelled[/yellow]")
         errcount = 1

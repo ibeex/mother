@@ -72,7 +72,8 @@ def test_output_capture_rolling_buffer_evicts():
     for _ in range(15):
         cap.add_bytes(chunk)
     # Buffer should be trimmed
-    assert cap._chunks_bytes <= OutputCapture.ROLLING_BYTES + 10 * 1024  # allow one chunk overshoot
+    chunks_bytes: int = cap._chunks_bytes  # pyright: ignore[reportPrivateUsage]
+    assert chunks_bytes <= OutputCapture.ROLLING_BYTES + 10 * 1024  # allow one chunk overshoot
 
 
 def test_output_capture_single_long_line():

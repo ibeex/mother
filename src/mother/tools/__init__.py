@@ -4,19 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import llm
 
 
 class ToolRegistry:
     def __init__(self) -> None:
-        self._tools: list[llm.Tool | type[llm.Toolbox] | Callable[..., Any]] = []
+        self._tools: list[llm.Tool | type[llm.Toolbox] | Callable[..., object]] = []
 
-    def register(self, tool: llm.Tool | type[llm.Toolbox] | Callable[..., Any]) -> None:
+    def register(self, tool: llm.Tool | type[llm.Toolbox] | Callable[..., object]) -> None:
         self._tools.append(tool)
 
-    def tools(self) -> list[llm.Tool | type[llm.Toolbox] | Callable[..., Any]]:
+    def tools(self) -> list[llm.Tool | type[llm.Toolbox] | Callable[..., object]]:
         return list(self._tools)
 
     def is_empty(self) -> bool:

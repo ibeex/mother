@@ -5,6 +5,7 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import cast
 
 CONFIG_DIR = Path.home() / ".config" / "mother"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
@@ -46,7 +47,7 @@ DEFAULT_SYSTEM = MotherConfig().system_prompt
 
 def save_default_config(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
+    _ = path.write_text(_DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
 
 
 def load_config(path: Path | None = None) -> MotherConfig:
@@ -58,12 +59,12 @@ def load_config(path: Path | None = None) -> MotherConfig:
     with resolved.open("rb") as f:
         data = tomllib.load(f)
 
-    raw_allowlist = data.get("allowlist")
+    raw_allowlist = cast(list[str] | None, data.get("allowlist"))
     allowlist = frozenset(raw_allowlist) if raw_allowlist is not None else MotherConfig().allowlist
     return MotherConfig(
-        model=data.get("model", MotherConfig.model),
-        system_prompt=data.get("system_prompt", MotherConfig.system_prompt),
-        tools_enabled=data.get("tools_enabled", MotherConfig.tools_enabled),
+        model=cast(str, data.get("model", MotherConfig.model)),
+        system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
+        tools_enabled=cast(bool, data.get("tools_enabled", MotherConfig.tools_enabled)),
         allowlist=allowlist,
     )
 

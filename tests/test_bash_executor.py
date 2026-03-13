@@ -1,6 +1,7 @@
 """Tests for the async bash subprocess execution engine."""
 
 import asyncio
+from collections.abc import Coroutine
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +10,7 @@ import pytest
 from mother.tools.bash_executor import execute_bash
 
 
-def run(coro):  # type: ignore[no-untyped-def]
+def run[T](coro: Coroutine[None, None, T]) -> T:
     return asyncio.run(coro)
 
 
@@ -31,7 +32,7 @@ def test_execute_stderr_captured():
 
 def test_execute_timeout():
     with pytest.raises(TimeoutError):
-        run(execute_bash("sleep 30", timeout=0.1))
+        _ = run(execute_bash("sleep 30", timeout=0.1))
 
 
 def test_execute_working_directory(tmp_path: Path):
@@ -43,12 +44,12 @@ def test_execute_working_directory(tmp_path: Path):
 def test_execute_invalid_cwd():
     bad_cwd = Path("/nonexistent_dir_that_does_not_exist_xyz")
     with pytest.raises(FileNotFoundError):
-        run(execute_bash("echo hi", cwd=bad_cwd))
+        _ = run(execute_bash("echo hi", cwd=bad_cwd))
 
 
 def test_execute_streaming_callback():
     chunks: list[bytes] = []
-    run(execute_bash("echo streaming", on_data=chunks.append))
+    _ = run(execute_bash("echo streaming", on_data=chunks.append))
     combined = b"".join(chunks)
     assert b"streaming" in combined
 
@@ -80,6 +81,6 @@ def test_execute_uses_start_new_session_instead_of_preexec_fn():
         result = run(execute_bash("echo hello"))
 
     assert result.exit_code == 0
-    _, kwargs = mock_spawn.call_args
+    _, kwargs = mock_spawn.call_args  # pyright: ignore[reportAny]
     assert kwargs["start_new_session"] is True
     assert "preexec_fn" not in kwargs

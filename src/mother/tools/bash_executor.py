@@ -66,13 +66,13 @@ async def execute_bash(
         if timeout is not None:
             async with asyncio.timeout(timeout):
                 await _read_output()
-                await proc.wait()
+                _ = await proc.wait()
         else:
             await _read_output()
-            await proc.wait()
+            _ = await proc.wait()
     except TimeoutError as exc:
         _kill_process_group(proc)
-        await proc.wait()
+        _ = await proc.wait()
         trunc, full_output_path = capture.finalize()
         output = trunc.content
         if output:
