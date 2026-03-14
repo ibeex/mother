@@ -29,6 +29,7 @@ from textual.worker import Worker, WorkerState
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.model_picker import AgentModeProvider, ModelPickerScreen, ModelProvider
+from mother.system_prompt import build_system_prompt
 from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
@@ -383,6 +384,39 @@ class MotherApp(App[None]):
             return None
         return tool_registry.tools()
 
+    @staticmethod
+    def _tool_names(tools: list[ToolDef] | None) -> list[str]:
+        """Extract stable prompt-friendly tool names from tool definitions."""
+        if tools is None:
+            return []
+
+        names: list[str] = []
+        seen: set[str] = set()
+        for tool in tools:
+            raw_name = getattr(tool, "name", None)
+            if not isinstance(raw_name, str) or not raw_name:
+                raw_name = getattr(tool, "__name__", tool.__class__.__name__)
+            if raw_name in seen:
+                continue
+            seen.add(raw_name)
+            names.append(raw_name)
+        return names
+
+    def _build_system_prompt(
+        self,
+        tools: list[ToolDef] | None,
+        *,
+        agent_mode: bool | None = None,
+    ) -> str:
+        """Build the runtime system prompt for the current model turn."""
+        effective_agent_mode = self.agent_mode if agent_mode is None else agent_mode
+        return build_system_prompt(
+            self.config.system_prompt,
+            agent_mode=effective_agent_mode,
+            cwd=Path.cwd(),
+            tool_names=self._tool_names(tools),
+        )
+
     def _build_llm_response(
         self,
         conversation: Conversation,
@@ -402,6 +436,7 @@ class MotherApp(App[None]):
             prompt,
             system=system,
             tools=tools,
+            chain_limit=3,
             before_call=before_tool_call,
             after_call=after_tool_call,
         )
@@ -423,7 +458,18 @@ class MotherApp(App[None]):
         before_tool_call: BeforeCallSync | None = None
         after_tool_call: AfterCallSync | None = None
         if tools is not None:
-            before_tool_call = self._before_tool_call
+            tool_calls_this_turn = 0
+
+            def limited_before_tool_call(tool: Tool | None, tool_call: ToolCall) -> None:
+                nonlocal tool_calls_this_turn
+                if tool_calls_this_turn >= 1:
+                    raise llm.CancelToolCall(
+                        "Only one tool call is allowed per turn. Report findings and wait for the user before continuing."
+                    )
+                tool_calls_this_turn += 1
+                self._before_tool_call(tool, tool_call)
+
+            before_tool_call = limited_before_tool_call
             after_tool_call = self._after_tool_call
 
         try:
@@ -442,8 +488,9 @@ class MotherApp(App[None]):
 
         _ = self.call_from_thread(self._disable_agent_mode_unsupported)
         prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
+        fallback_system = self._build_system_prompt(None, agent_mode=False)
         try:
-            return prompt_fn(prompt, system=system)
+            return prompt_fn(prompt, system=fallback_system)
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return None
@@ -484,11 +531,13 @@ class MotherApp(App[None]):
             self._show_error(response, "**Error:** Conversation is not initialized.")
             return
 
+        tools = self._get_enabled_tools()
+        system = self._build_system_prompt(tools)
         llm_response = self._request_llm_response(
             conversation=conversation,
             prompt=prompt,
-            system=self.config.system_prompt,
-            tools=self._get_enabled_tools(),
+            system=system,
+            tools=tools,
             response=response,
         )
         if llm_response is None:

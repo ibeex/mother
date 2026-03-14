@@ -28,6 +28,8 @@ class _UnsupportedToolsConversation:
     def __init__(self) -> None:
         self.chain_calls: int = 0
         self.prompt_calls: int = 0
+        self.chain_limit: int | None = None
+        self.prompt_systems: list[str | None] = []
 
     def chain(
         self,
@@ -35,6 +37,7 @@ class _UnsupportedToolsConversation:
         *,
         system: str | None = None,
         tools: list[ToolDef] | None = None,
+        chain_limit: int | None = None,
         before_call: object | None = None,
         after_call: object | None = None,
     ) -> Iterable[str]:
@@ -44,11 +47,12 @@ class _UnsupportedToolsConversation:
         _ = before_call
         _ = after_call
         self.chain_calls += 1
+        self.chain_limit = chain_limit
         raise RuntimeError("test-model does not support tools")
 
     def prompt(self, prompt: str, *, system: str | None = None) -> Iterable[str]:
         _ = prompt
-        _ = system
+        self.prompt_systems.append(system)
         self.prompt_calls += 1
         return ["fallback", " response"]
 
@@ -61,12 +65,14 @@ class _FailingConversation:
         *,
         system: str | None = None,
         tools: list[ToolDef] | None = None,
+        chain_limit: int | None = None,
         before_call: object | None = None,
         after_call: object | None = None,
     ) -> Iterable[str]:
         _ = prompt
         _ = system
         _ = tools
+        _ = chain_limit
         _ = before_call
         _ = after_call
         raise RuntimeError("boom")
@@ -109,7 +115,9 @@ def test_request_llm_response_falls_back_when_model_rejects_tools():
     assert list(llm_response) == ["fallback", " response"]
     assert app.agent_mode is False
     assert conversation.chain_calls == 1
+    assert conversation.chain_limit == 3
     assert conversation.prompt_calls == 1
+    assert conversation.prompt_systems == [app._build_system_prompt(None, agent_mode=False)]  # pyright: ignore[reportPrivateUsage]
     assert response.updated_texts == []
     assert response.reset_texts == []
 

@@ -7,12 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from mother.system_prompt import DEFAULT_BASE_SYSTEM
+
 CONFIG_DIR = Path.home() / ".config" / "mother"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 
-_DEFAULT_SYSTEM = (
-    "Formulate all responses as if you were the sentient AI named Mother from the Alien movies."
-)
+_DEFAULT_SYSTEM = DEFAULT_BASE_SYSTEM
 
 _DEFAULT_CONFIG_TEMPLATE = """\
 # Mother TUI configuration
@@ -20,8 +20,9 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # LLM model to use (e.g. "gpt-4o", "gpt-5", "claude-3-5-sonnet-latest")
 # model = "gpt-5"
 
-# System prompt sent with every conversation
-# system_prompt = "Formulate all responses as if you were the sentient AI named Mother from the Alien movies."
+# Base system prompt sent with every conversation.
+# Mother appends runtime context such as date, OS, current directory, mode, and tools.
+# system_prompt = "You are Mother, a concise and helpful assistant."
 
 # Enable agent mode (allows LLM to run shell commands via the bash tool)
 # tools_enabled = false
