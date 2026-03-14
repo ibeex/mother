@@ -20,6 +20,11 @@ class ThinkTagStreamParser:
         self._buffer += chunk
         return self._drain(final=False)
 
+    @property
+    def in_think(self) -> bool:
+        """Return whether the parser is currently inside a ``<think>`` block."""
+        return self._in_think
+
     def flush(self) -> tuple[str, str]:
         """Flush any remaining buffered text at end-of-stream."""
         return self._drain(final=True)

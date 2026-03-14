@@ -277,9 +277,19 @@ class MotherApp(App[None]):
         chat_view = self.query_one("#chat-view", VerticalScroll)
         _ = chat_view.scroll_end(animate=False)
 
+    def _start_thinking_output(self, thinking_output: ThinkingOutput) -> None:
+        """Switch the thinking widget into live streaming mode."""
+        thinking_output.start_streaming()
+        self._scroll_chat_to_end()
+
     def _update_thinking_output(self, thinking_output: ThinkingOutput, text: str) -> None:
         """Render streamed reasoning text in the dedicated thinking widget."""
         thinking_output.set_text(text)
+        self._scroll_chat_to_end()
+
+    def _finish_thinking_output(self, thinking_output: ThinkingOutput) -> None:
+        """Collapse the thinking widget back to its preview after streaming ends."""
+        thinking_output.finish_streaming()
         self._scroll_chat_to_end()
 
     def _stream_response(
@@ -298,14 +308,21 @@ class MotherApp(App[None]):
 
         thinking_parser = ThinkTagStreamParser()
         thinking_text = ""
+        thinking_streaming = False
 
         for chunk in llm_response:
             thinking_delta, response_delta = thinking_parser.feed(chunk)
             if thinking_delta:
                 thinking_text += thinking_delta
+                if not thinking_streaming:
+                    _ = self.call_from_thread(self._start_thinking_output, thinking_output)
+                    thinking_streaming = True
                 _ = self.call_from_thread(
                     self._update_thinking_output, thinking_output, thinking_text
                 )
+            if thinking_streaming and not thinking_parser.in_think:
+                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+                thinking_streaming = False
             if response_delta:
                 full_text += response_delta
                 _ = self.call_from_thread(response.update, full_text)
@@ -313,7 +330,12 @@ class MotherApp(App[None]):
         thinking_delta, response_delta = thinking_parser.flush()
         if thinking_delta:
             thinking_text += thinking_delta
+            if not thinking_streaming:
+                _ = self.call_from_thread(self._start_thinking_output, thinking_output)
+                thinking_streaming = True
             _ = self.call_from_thread(self._update_thinking_output, thinking_output, thinking_text)
+        if thinking_streaming:
+            _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
         if response_delta:
             full_text += response_delta
             _ = self.call_from_thread(response.update, full_text)

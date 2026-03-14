@@ -88,12 +88,25 @@ class ThinkingOutput(CopyableOutput):
 
     def __init__(self, text: str = "") -> None:
         self._expanded: bool = False
+        self._streaming: bool = False
         super().__init__("")
+        self.soft_wrap = True
         self.set_text(text)
 
     def has_content(self) -> bool:
         """Return whether the widget currently contains any thinking text."""
         return bool(self._raw.strip())
+
+    def start_streaming(self) -> None:
+        """Show the full thinking text while it is still streaming in."""
+        self._streaming = True
+        self._refresh_rendered_text()
+
+    def finish_streaming(self) -> None:
+        """Collapse streamed thinking back to the preview once it is complete."""
+        self._streaming = False
+        self._expanded = False
+        self._refresh_rendered_text()
 
     def _preview_text(self) -> str:
         lines = self._raw.splitlines()
@@ -104,9 +117,21 @@ class ThinkingOutput(CopyableOutput):
         return f"{preview}\n… {remaining} more lines. Press Ctrl+O for rest."
 
     def _render_text(self) -> str:
-        if self._expanded:
+        if self._streaming or self._expanded:
             return self._raw
         return self._preview_text()
+
+    def _refresh_rendered_text(self) -> None:
+        rendered = self._render_text()
+        self.text = rendered
+        self._sync_height(rendered)
+        if self._streaming and rendered:
+            lines = rendered.split("\n")
+            self.move_cursor((len(lines) - 1, len(lines[-1])), record_width=False)
+            try:
+                _ = self.scroll_cursor_visible(animate=False)
+            except Exception:
+                pass
 
     @override
     def set_text(self, text: str) -> None:
@@ -117,18 +142,18 @@ class ThinkingOutput(CopyableOutput):
         parent = self.parent
         if parent is not None and parent.has_class("thinking-section"):
             parent.display = visible
-        rendered = self._render_text()
-        self.text = rendered
-        self._sync_height(rendered)
+        self._refresh_rendered_text()
 
     def action_toggle_expanded(self) -> None:
         """Toggle between the preview and the full reasoning text."""
-        if not self.has_content() or len(self._raw.splitlines()) <= self.PREVIEW_LINES:
+        if (
+            self._streaming
+            or not self.has_content()
+            or len(self._raw.splitlines()) <= self.PREVIEW_LINES
+        ):
             return
         self._expanded = not self._expanded
-        rendered = self._render_text()
-        self.text = rendered
-        self._sync_height(rendered)
+        self._refresh_rendered_text()
 
 
 class CopyableMarkdown(Markdown):

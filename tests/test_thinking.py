@@ -27,6 +27,14 @@ class _FakeThinkingOutput:
     def __init__(self) -> None:
         self.display = False
         self.updated_texts: list[str] = []
+        self.started = 0
+        self.finished = 0
+
+    def start_streaming(self) -> None:
+        self.started += 1
+
+    def finish_streaming(self) -> None:
+        self.finished += 1
 
     def set_text(self, text: str) -> None:
         self.updated_texts.append(text)
@@ -56,11 +64,20 @@ def test_think_tag_stream_parser_handles_split_tags():
     assert response == "preface answer"
 
 
-def test_thinking_output_shows_preview_then_full_text():
+def test_thinking_output_wraps_and_shows_full_text_while_streaming_then_collapses():
     lines = [f"line {index}" for index in range(12)]
-    widget = ThinkingOutput("\n".join(lines))
+    widget = ThinkingOutput()
+
+    assert widget.soft_wrap is True
+
+    widget.start_streaming()
+    widget.set_text("\n".join(lines))
 
     assert widget.display is True
+    assert widget.text == "\n".join(lines)
+
+    widget.finish_streaming()
+
     assert "line 0" in widget.text
     assert "line 9" in widget.text
     assert "line 10" not in widget.text
@@ -89,6 +106,8 @@ def test_stream_llm_response_routes_thinking_to_dedicated_widget():
 
     assert success is True
     assert thinking_output.display is True
+    assert thinking_output.started == 1
+    assert thinking_output.finished == 1
     assert thinking_output.updated_texts[-1] == "step 1\nstep 2"
     assert response.updated_texts == ["final ", "final answer"]
     assert response.reset_texts == ["final answer"]
