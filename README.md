@@ -1,22 +1,91 @@
 # mother
 
-👉\[\[\[**This is the initial readme for your
-[simple-modern-uv](https://github.com/jlevy/simple-modern-uv) template.** Fill it in and
-delete this message!
-Below are general setup instructions that you may remove or keep and adapt for your
-project.\]\]\]
+Mother is a local terminal chat interface for LLMs.
 
-* * *
+It supports two modes:
 
-## Project Docs
+- **Chat mode**: conversational answers only
+- **Agent mode**: still conversational, but the model may use tools and then report findings before waiting for your next input
+
+## Features
+
+- terminal-first chat UI
+- model switching
+- optional thinking display
+- agent mode with tool traces
+- guarded local `bash` execution
+- web search via Jina Search
+- web fetching for public pages, APIs, and localhost services
+
+## Tools in agent mode
+
+Current agent tools:
+
+- `bash`: run local shell commands, guarded by the bash safety classifier
+- `web_search`: search the public web using Jina Search
+- `web_fetch`: fetch a known URL using either raw HTTP or Jina reader mode
+
+### `web_search`
+
+`web_search` is for when you **do not know the exact URL yet** and want to discover sources.
+
+Implementation notes:
+
+- uses Jina Search API: `https://s.jina.ai/?q=...`
+- sends the API key from `pass api/jina`
+- returns plain-text search results
+
+If `pass` is not installed or `api/jina` is missing from your password store, search requests will fail with a readable error.
+
+### `web_fetch`
+
+`web_fetch` is for when you **already know the URL** and want to open it.
+
+It supports three modes:
+
+- `auto`: default; chooses the best strategy
+- `raw`: direct `urllib` request
+- `jina`: fetch through Jina reader for plain-text page extraction
+
+How `auto` behaves:
+
+- uses `raw` for localhost URLs
+- uses `raw` for API-style requests with custom method, headers, or body
+- uses `jina` for normal public web pages
+
+Jina fetch behavior:
+
+- first tries without auth
+- if Jina responds with auth/rate-limit style failure, retries once with the API key from `pass api/jina`
+
+Use `raw` mode when you need:
+
+- localhost access
+- exact HTTP behavior
+- custom headers
+- POST/PUT/etc.
+- API calls that should return raw response bodies
+
+## Jina API key setup
+
+Mother expects the Jina API key in your password store at:
+
+```text
+api/jina
+```
+
+Example:
+
+```bash
+pass insert api/jina
+```
+
+Then paste your Jina API key as the first line of the secret.
+
+## Development
 
 For how to install uv and Python, see [installation.md](installation.md).
 
 For development workflows, see [development.md](development.md).
 
 For instructions on publishing to PyPI, see [publishing.md](publishing.md).
-
-* * *
-
-*This project was built from
-[simple-modern-uv](https://github.com/jlevy/simple-modern-uv).*

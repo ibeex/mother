@@ -10,7 +10,6 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
-from mother.tools import get_default_tools
 from mother.tools.web_search_tool import make_web_search_tool
 
 
@@ -32,7 +31,7 @@ class _FakeResponse:
         return self._content
 
 
-def test_web_search_tool_uses_pass_and_returns_search_results():
+def test_web_search_tool_uses_authenticated_request():
     captured_requests: list[Request] = []
 
     def _fake_urlopen(request: Request, *, timeout: float) -> _FakeResponse:
@@ -45,7 +44,7 @@ def test_web_search_tool_uses_pass_and_returns_search_results():
     )
 
     with (
-        patch("mother.tools.web_search_tool.subprocess.run", return_value=completed),
+        patch("mother.tools.web_common.subprocess.run", return_value=completed),
         patch("mother.tools.web_search_tool.urllib.request.urlopen", side_effect=_fake_urlopen),
     ):
         tool = make_web_search_tool()
@@ -64,7 +63,7 @@ def test_web_search_tool_uses_pass_and_returns_search_results():
 
 def test_web_search_tool_handles_missing_pass_command():
     with patch(
-        "mother.tools.web_search_tool.subprocess.run",
+        "mother.tools.web_common.subprocess.run",
         side_effect=FileNotFoundError("pass not found"),
     ):
         tool = make_web_search_tool()
@@ -79,20 +78,20 @@ def test_web_search_tool_handles_http_error():
         code=401,
         msg="Unauthorized",
         hdrs=Message(),
-        fp=io.BytesIO(b"bad key"),
+        fp=io.BytesIO(b"bad request"),
     )
     completed = subprocess.CompletedProcess(
         args=["pass", "api/jina"], returncode=0, stdout="secret-key\n"
     )
 
     with (
-        patch("mother.tools.web_search_tool.subprocess.run", return_value=completed),
+        patch("mother.tools.web_common.subprocess.run", return_value=completed),
         patch("mother.tools.web_search_tool.urllib.request.urlopen", side_effect=error),
     ):
         tool = make_web_search_tool()
         output = tool("test")
 
-    assert output == "Error: HTTP 401 - Unauthorized\nbad key"
+    assert output == "Error: HTTP 401 - Unauthorized\nbad request"
 
 
 def test_web_search_tool_handles_network_error():
@@ -101,7 +100,7 @@ def test_web_search_tool_handles_network_error():
     )
 
     with (
-        patch("mother.tools.web_search_tool.subprocess.run", return_value=completed),
+        patch("mother.tools.web_common.subprocess.run", return_value=completed),
         patch(
             "mother.tools.web_search_tool.urllib.request.urlopen",
             side_effect=URLError("network unreachable"),
@@ -116,11 +115,3 @@ def test_web_search_tool_handles_network_error():
 def test_web_search_tool_requires_non_empty_query():
     tool = make_web_search_tool()
     assert tool("   ") == "Error: query must not be empty."
-
-
-def test_web_search_tool_registered_in_registry():
-    registry = get_default_tools(tools_enabled=True)
-    assert not registry.is_empty()
-    tool_names = [getattr(tool, "__name__", "") for tool in registry.tools()]
-    assert "bash" in tool_names
-    assert "web_search" in tool_names

@@ -22,7 +22,7 @@ DEFAULT_BASE_SYSTEM = "\n".join(
 _TOOL_DESCRIPTIONS: dict[str, str] = {
     "bash": "Execute shell commands on the local machine",
     "web_search": "Search the web for public information",
-    "web_fetch": "Fetch and read web pages",
+    "web_fetch": "Fetch web pages or HTTP endpoints",
 }
 
 

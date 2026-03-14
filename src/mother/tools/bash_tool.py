@@ -53,14 +53,18 @@ def make_bash_tool(
     effective_cwd = cwd if cwd is not None else Path.cwd()
 
     def bash(command: str, timeout: float = 30.0) -> str:
-        """Run a shell command when the guard classifies it as safe.
+        """Run a shell command on the local machine when the safety guard allows it.
+
+        Use this for local inspection and local actions, such as listing files,
+        checking processes, reading command output, or running safe diagnostics.
+        Prefer read-only commands first. Risky or destructive commands may be blocked.
 
         Args:
-            command: The shell command to classify and maybe execute.
-            timeout: Timeout in seconds (default 30).
+            command: Shell command to classify and, if allowed, execute.
+            timeout: Timeout in seconds. Default is 30.
 
         Returns:
-            Combined stdout and stderr as a string, or a guard/error description.
+            Combined stdout and stderr, or a readable guard/error message.
         """
         decision = classify_command(command)
         if not decision.should_run:

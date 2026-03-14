@@ -111,5 +111,5 @@ def test_tool_registered_in_registry():
     registry = get_default_tools(tools_enabled=True)
     assert not registry.is_empty()
     tools = registry.tools()
-    assert len(tools) == 2
+    assert len(tools) == 3
     assert all(callable(tool) for tool in tools)
