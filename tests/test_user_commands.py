@@ -3,7 +3,7 @@
 from datetime import datetime
 
 from mother.bash_execution import BashExecution, format_for_context
-from mother.user_commands import NormalPrompt, ShellCommand, parse_user_input
+from mother.user_commands import NormalPrompt, SaveSessionCommand, ShellCommand, parse_user_input
 
 
 def test_detect_bang_command():
@@ -24,6 +24,18 @@ def test_detect_normal_prompt():
     result = parse_user_input("hello")
     assert isinstance(result, NormalPrompt)
     assert result.text == "hello"
+
+
+def test_detect_save_command():
+    result = parse_user_input("/save")
+    assert isinstance(result, SaveSessionCommand)
+    assert result.command == "/save"
+
+
+def test_detect_export_command():
+    result = parse_user_input(" /export ")
+    assert isinstance(result, SaveSessionCommand)
+    assert result.command == "/export"
 
 
 def test_detect_bang_only():

@@ -151,12 +151,12 @@ def test_stream_llm_response_refreshes_context_size_on_success():
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "_refresh_context_size") as refresh_context_size,
     ):
-        success = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
+        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
             ["hello", " world"],
             cast(Response, cast(object, response)),
         )
 
-    assert success is True
+    assert full_text == "hello world"
     assert response.updated_texts == ["hello", "hello world"]
     assert response.reset_texts == ["hello world"]
     refresh_context_size.assert_called_once_with()
@@ -167,11 +167,11 @@ def test_stream_llm_response_shows_error_when_streaming_fails():
     response = _FakeResponse()
 
     with patch.object(app, "call_from_thread", side_effect=_call_from_thread):
-        success = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
+        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
             _broken_stream(),
             cast(Response, cast(object, response)),
         )
 
-    assert success is False
+    assert full_text is None
     assert response.updated_texts == ["partial", "**Error:** stream failed"]
     assert response.reset_texts == ["**Error:** stream failed"]

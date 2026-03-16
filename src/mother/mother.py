@@ -29,12 +29,13 @@ from textual.worker import Worker, WorkerState
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.model_picker import AgentModeProvider, ModelPickerScreen, ModelProvider
+from mother.session import SessionManager
 from mother.system_prompt import build_system_prompt
 from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
-from mother.user_commands import ShellCommand, parse_user_input
+from mother.user_commands import SaveSessionCommand, ShellCommand, parse_user_input
 from mother.widgets import (
     ConversationTurn,
     OutputSection,
@@ -61,6 +62,7 @@ class MotherApp(App[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
         ("ctrl+o", "toggle_thinking_widget", "Thoughts"),
+        ("ctrl+s", "save_session", "Save"),
     ]
 
     COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}  # pyright: ignore[reportUnannotatedClassAttribute]
@@ -71,6 +73,7 @@ class MotherApp(App[None]):
         config: MotherConfig | None = None,
         model_name: str | None = None,
         system: str | None = None,
+        session_manager: SessionManager | None = None,
     ) -> None:
         super().__init__()
         base = config or MotherConfig()
@@ -78,6 +81,7 @@ class MotherApp(App[None]):
         self.agent_mode: bool = self.config.tools_enabled
         self.model: Model | None = None
         self.conversation: Conversation | None = None
+        self.session_manager: SessionManager | None = session_manager
         self._pending_executions: list[BashExecution] = []
         self._tool_outputs: dict[str, ToolOutput] = {}
         self._last_context_tokens: int | None = None
@@ -104,10 +108,15 @@ class MotherApp(App[None]):
 
     def action_switch_model(self, model_id: str) -> None:
         """Switch to a different LLM model and start a fresh conversation."""
+        previous_model = self.config.model
         self.config = replace(self.config, model=model_id, tools_enabled=self.agent_mode)
         self.model = llm.get_model(model_id)
         self.conversation = self.model.conversation()
         self._last_context_tokens = None
+        self._record_session_event(
+            "model_change",
+            {"from": previous_model, "model": model_id},
+        )
         self._update_subtitle()
         self._update_statusline()
         self.notify(f"Switched to {model_id}", title="Model changed")
@@ -115,6 +124,10 @@ class MotherApp(App[None]):
     def action_toggle_agent_mode(self) -> None:
         """Toggle agent mode (enables/disables tool use)."""
         self.agent_mode = not self.agent_mode
+        self._record_session_event(
+            "agent_mode_change",
+            {"enabled": self.agent_mode},
+        )
         self._update_subtitle()
         state = "enabled" if self.agent_mode else "disabled"
         self._update_statusline()
@@ -168,6 +181,61 @@ class MotherApp(App[None]):
             return "\n\n".join(context_parts) + "\n\n" + value
         return value
 
+    def _record_session_message(self, role: str, content: str) -> None:
+        """Append a message to the active session if session persistence is enabled."""
+        if self.session_manager is None:
+            return
+        self.session_manager.append(role, content)
+
+    def _record_session_event(self, name: str, details: dict[str, object] | None = None) -> None:
+        """Append a structured lifecycle event to the active session."""
+        if self.session_manager is None:
+            return
+        self.session_manager.record_event(name, details)
+
+    def _record_prompt_context(
+        self,
+        *,
+        user_text: str,
+        prompt_text: str,
+        system_prompt: str,
+        tool_names: list[str],
+    ) -> None:
+        """Record the exact prompt context sent to the model for this turn."""
+        if self.session_manager is None:
+            return
+        self.session_manager.record_prompt(
+            user_text=user_text,
+            prompt_text=prompt_text,
+            system_prompt=system_prompt,
+            agent_mode=self.agent_mode,
+            tool_names=tool_names,
+        )
+
+    def _start_new_session(self) -> None:
+        """Rotate to a fresh transient session after a successful save."""
+        self.session_manager = SessionManager.create(
+            markdown_dir=Path(self.config.session_markdown_dir),
+            model_name=self.config.model,
+        )
+
+    def action_save_session(self) -> None:
+        """Export the current session to markdown, overwriting the same file for this session."""
+        if self.session_manager is None:
+            self.notify("Session saving is unavailable.", title="Session", severity="warning")
+            return
+
+        try:
+            output_path = self.session_manager.save_as_markdown()
+        except RuntimeError as exc:
+            self.notify(str(exc), title="Session", severity="warning")
+            return
+        except Exception as exc:
+            self.notify(f"Failed to save session: {exc}", title="Session", severity="error")
+            return
+
+        self.notify(f"Saved to {output_path}", title="Session")
+
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
         text_area = self.query_one(TextArea)
@@ -177,10 +245,14 @@ class MotherApp(App[None]):
         _ = text_area.clear()
 
         parsed = parse_user_input(value)
+        if isinstance(parsed, SaveSessionCommand):
+            self.action_save_session()
+            return
         if isinstance(parsed, ShellCommand):
             await self.run_user_command(parsed)
             return
 
+        self._record_session_message("user", value)
         chat_view = self.query_one("#chat-view")
         text_area.read_only = True
         prompt = self._flush_pending_context(value)
@@ -190,7 +262,7 @@ class MotherApp(App[None]):
         if thinking_output is None:
             text_area.read_only = False
             return
-        _ = self.send_prompt(prompt, turn.response_widget, thinking_output)
+        _ = self.send_prompt(prompt, value, turn.response_widget, thinking_output)
 
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
@@ -209,6 +281,9 @@ class MotherApp(App[None]):
             exit_code = result.exit_code
 
         shell_widget.set_text(output)
+        prefix = "!" if cmd.include_in_context else "!!"
+        self._record_session_message("user", f"{prefix}{cmd.command}")
+        self._record_session_message("assistant", f"$ {cmd.command}\n\n{output}")
 
         execution = BashExecution(
             command=cmd.command,
@@ -356,6 +431,12 @@ class MotherApp(App[None]):
         """Show a trace entry when an agent tool call starts."""
         tool_name = tool.name if tool is not None else tool_call.name
         arguments = self._tool_call_arguments(tool_call)
+        if self.session_manager is not None:
+            self.session_manager.record_tool_call(
+                tool_name=tool_name,
+                tool_call_id=tool_call.tool_call_id,
+                arguments=arguments,
+            )
         _ = self.call_from_thread(
             self._show_tool_started,
             tool_name,
@@ -366,6 +447,13 @@ class MotherApp(App[None]):
     def _after_tool_call(self, tool: Tool, tool_call: ToolCall, tool_result: ToolResult) -> None:
         """Update the trace entry when an agent tool call finishes."""
         arguments = self._tool_call_arguments(tool_call)
+        if self.session_manager is not None:
+            self.session_manager.record_tool_result(
+                tool_name=tool.name,
+                tool_call_id=tool_call.tool_call_id,
+                arguments=arguments,
+                output=tool_result.output,
+            )
         _ = self.call_from_thread(
             self._show_tool_finished,
             tool.name,
@@ -501,17 +589,17 @@ class MotherApp(App[None]):
         llm_response: Iterable[str],
         response: Response,
         thinking_output: ThinkingOutput | None = None,
-    ) -> bool:
-        """Stream an LLM response into the widget and finalize the widget state."""
+    ) -> str | None:
+        """Stream an LLM response into the widget and return the final reply text."""
         try:
             full_text = self._stream_response(llm_response, response, thinking_output)
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
-            return False
+            return None
 
         response.reset_state(full_text)
         self._refresh_context_size()
-        return True
+        return full_text
 
     def _show_error(self, response: Response, error_text: str) -> None:
         """Display an error in the response widget and reset its state."""
@@ -522,6 +610,7 @@ class MotherApp(App[None]):
     def send_prompt(
         self,
         prompt: str,
+        user_text: str,
         response: Response,
         thinking_output: ThinkingOutput | None = None,
     ) -> None:
@@ -533,7 +622,14 @@ class MotherApp(App[None]):
             return
 
         tools = self._get_enabled_tools()
+        tool_names = self._tool_names(tools)
         system = self._build_system_prompt(tools)
+        self._record_prompt_context(
+            user_text=user_text,
+            prompt_text=prompt,
+            system_prompt=system,
+            tool_names=tool_names,
+        )
         llm_response = self._request_llm_response(
             conversation=conversation,
             prompt=prompt,
@@ -544,11 +640,17 @@ class MotherApp(App[None]):
         if llm_response is None:
             return
 
-        _ = self._stream_llm_response(llm_response, response, thinking_output)
+        full_text = self._stream_llm_response(llm_response, response, thinking_output)
+        if full_text is not None:
+            self._record_session_message("assistant", full_text)
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""
         self.agent_mode = False
+        self._record_session_event(
+            "agent_mode_disabled_unsupported",
+            {"model": self.config.model},
+        )
         self._update_subtitle()
         self.notify(
             f"{self.config.model} does not support tools — agent mode disabled",
@@ -560,9 +662,23 @@ class MotherApp(App[None]):
 @click.command()
 @click.option("--model", "-m", default=None, help="LLM model to use.")
 @click.option("--system", "-s", default=None, help="System prompt.")
-def cli(model: str | None, system: str | None) -> None:
+@click.option("--save", "save_last", is_flag=True, help="Save the last unsaved session and exit.")
+def cli(model: str | None, system: str | None, save_last: bool) -> None:
     """Launch the Mother TUI chatbot."""
     config = load_config()
     config = apply_cli_overrides(config, model, system)
-    app = MotherApp(config=config)
+
+    if save_last:
+        output_path = SessionManager.save_last(markdown_dir=Path(config.session_markdown_dir))
+        if output_path is None:
+            click.echo("No unsaved session found.")
+            return
+        click.echo(f"Saved: {output_path}")
+        return
+
+    session_manager = SessionManager.create(
+        markdown_dir=Path(config.session_markdown_dir),
+        model_name=config.model,
+    )
+    app = MotherApp(config=config, session_manager=session_manager)
     app.run()

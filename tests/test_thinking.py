@@ -98,13 +98,13 @@ def test_stream_llm_response_routes_thinking_to_dedicated_widget():
         patch.object(app, "_refresh_context_size") as refresh_context_size,
         patch.object(app, "_scroll_chat_to_end"),
     ):
-        success = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
+        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
             ["<th", "ink>step 1\n", "step 2</think>", "final", " answer"],
             cast(Response, cast(object, response)),
             cast(ThinkingOutput, cast(object, thinking_output)),
         )
 
-    assert success is True
+    assert full_text == "final answer"
     assert thinking_output.display is True
     assert thinking_output.started == 1
     assert thinking_output.finished == 1

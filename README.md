@@ -12,10 +12,24 @@ It supports two modes:
 - terminal-first chat UI
 - model switching
 - optional thinking display
+- session capture with `/save`, `Ctrl+S`, and `mother --save`
 - agent mode with tool traces
 - guarded local `bash` execution
 - web search via Jina Search
 - web fetching for public pages, APIs, and localhost services
+
+## Sessions
+
+Each app launch starts a new transient JSONL session under `~/.mother/sessions`.
+
+- `/save` or `Ctrl+S` exports the current session to markdown
+- `mother --save` recovers the last unsaved session and exits
+- if you quit without saving, the next launch silently deletes that last unsaved JSONL file
+- markdown exports include a session summary, prompt context, system prompts, tool calls, tool outputs, and key session events
+
+Markdown exports default to `~/Debian/Documents/mother` when that directory exists,
+otherwise `~/Documents/mother`. You can override this with `session_markdown_dir`
+in `~/.config/mother/config.toml`.
 
 ## Tools in agent mode
 

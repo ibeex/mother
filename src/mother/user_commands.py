@@ -16,15 +16,25 @@ class ShellCommand:
     include_in_context: bool
 
 
-def parse_user_input(text: str) -> NormalPrompt | ShellCommand:
-    """Parse user input for ! or !! prefixes.
+@dataclass
+class SaveSessionCommand:
+    command: str = "/save"
 
-    - ``!!command`` → ShellCommand(..., include_in_context=False)
-    - ``!command``  → ShellCommand(..., include_in_context=True)
-    - anything else → NormalPrompt(text)
+
+def parse_user_input(text: str) -> NormalPrompt | SaveSessionCommand | ShellCommand:
+    """Parse user input for built-in slash commands and ! / !! shell commands.
+
+    - ``/save`` or ``/export`` → SaveSessionCommand()
+    - ``!!command``            → ShellCommand(..., include_in_context=False)
+    - ``!command``             → ShellCommand(..., include_in_context=True)
+    - anything else            → NormalPrompt(text)
 
     A bare ``!`` (with no command) is treated as a NormalPrompt.
     """
+    normalized = text.strip().lower()
+    if normalized in {"/save", "/export"}:
+        return SaveSessionCommand(command=normalized)
+
     if text.startswith("!!"):
         command = text[2:].strip()
         if command:

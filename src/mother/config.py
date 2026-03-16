@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from mother.session import default_markdown_export_dir
 from mother.system_prompt import DEFAULT_BASE_SYSTEM
 
 CONFIG_DIR = Path.home() / ".config" / "mother"
@@ -32,6 +33,9 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Set this when your network uses SSL inspection with a custom root CA.
 # ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"
 
+# Directory used by /save, Ctrl+S, and `mother --save` markdown exports.
+# session_markdown_dir = "~/Documents/mother"
+
 # Legacy allowlist from the old regex-based bash guard.
 # Retained for backwards compatibility but ignored by the current
 # LLM-based bash guard.
@@ -45,6 +49,7 @@ class MotherConfig:
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     tools_enabled: bool = False
     ca_bundle_path: str = ""
+    session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
     allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
 
 
@@ -73,6 +78,10 @@ def load_config(path: Path | None = None) -> MotherConfig:
         system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
         tools_enabled=cast(bool, data.get("tools_enabled", MotherConfig.tools_enabled)),
         ca_bundle_path=cast(str, data.get("ca_bundle_path", MotherConfig.ca_bundle_path)),
+        session_markdown_dir=cast(
+            str,
+            data.get("session_markdown_dir", MotherConfig().session_markdown_dir),
+        ),
         allowlist=allowlist,
     )
 
@@ -87,5 +96,6 @@ def apply_cli_overrides(
         system_prompt=system if system is not None else config.system_prompt,
         tools_enabled=config.tools_enabled,
         ca_bundle_path=config.ca_bundle_path,
+        session_markdown_dir=config.session_markdown_dir,
         allowlist=config.allowlist,
     )
