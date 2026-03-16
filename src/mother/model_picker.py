@@ -59,7 +59,7 @@ class AgentModeProvider(Provider):
     async def search(self, query: str) -> AsyncGenerator[Hit, None]:
         app = cast(_MotherAppProto, cast(object, self.app))
         matcher = self.matcher(query)
-        label = "Agent mode: off" if app.agent_mode else "Agent mode: on"
+        label = "Agent: off" if app.agent_mode else "Agent: on"
         score = matcher.match(label)
         if score > 0 or not query:
             yield Hit(
