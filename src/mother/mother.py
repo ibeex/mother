@@ -379,6 +379,7 @@ class MotherApp(App[None]):
         tool_registry = get_default_tools(
             tools_enabled=self.agent_mode,
             allowlist=self.config.allowlist,
+            ca_bundle_path=self.config.ca_bundle_path,
         )
         if tool_registry.is_empty():
             return None

@@ -20,6 +20,13 @@ def test_config_default_allowlist(tmp_path: Path):
     assert config.allowlist == DEFAULT_ALLOWLIST
 
 
+def test_config_ca_bundle_path_from_toml(tmp_path: Path):
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text('ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"\n')
+    config = load_config(config_file)
+    assert config.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
+
+
 def test_model_switch_preserves_agent_mode():
     app = MotherApp()
     app.agent_mode = True

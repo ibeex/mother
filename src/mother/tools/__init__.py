@@ -26,6 +26,7 @@ def get_default_tools(
     tools_enabled: bool = False,
     allowlist: frozenset[str] | None = None,
     cwd: Path | None = None,
+    ca_bundle_path: str = "",
 ) -> ToolRegistry:
     registry = ToolRegistry()
     if tools_enabled:
@@ -36,6 +37,6 @@ def get_default_tools(
         effective_allowlist = allowlist if allowlist is not None else DEFAULT_ALLOWLIST
         effective_cwd = cwd if cwd is not None else Path.cwd()
         registry.register(make_bash_tool(effective_allowlist, effective_cwd))
-        registry.register(make_web_search_tool())
-        registry.register(make_web_fetch_tool())
+        registry.register(make_web_search_tool(ca_bundle_path=ca_bundle_path))
+        registry.register(make_web_fetch_tool(ca_bundle_path=ca_bundle_path))
     return registry

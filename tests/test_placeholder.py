@@ -98,30 +98,40 @@ def test_load_config_defaults(tmp_path: Path):
     assert config.model == DEFAULT_MODEL
     assert config.system_prompt == DEFAULT_SYSTEM
     assert config.tools_enabled is False
+    assert config.ca_bundle_path == ""
     assert config_file.exists()
 
 
 def test_load_config_from_file(tmp_path: Path):
     config_file = tmp_path / "config.toml"
-    _ = config_file.write_text('model = "gpt-4o"\ntools_enabled = true\n')
+    _ = config_file.write_text(
+        'model = "gpt-4o"\ntools_enabled = true\nca_bundle_path = "/etc/ssl/certs/ib_cert.pem"\n'
+    )
     config = load_config(config_file)
     assert config.model == "gpt-4o"
     assert config.tools_enabled is True
+    assert config.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
     assert config.system_prompt == DEFAULT_SYSTEM
 
 
 def test_apply_cli_overrides():
-    base = MotherConfig(model="gpt-5", system_prompt="Original.")
+    base = MotherConfig(
+        model="gpt-5", system_prompt="Original.", ca_bundle_path="/etc/ssl/certs/ib_cert.pem"
+    )
     result = apply_cli_overrides(base, model="gpt-4o-mini", system=None)
     assert result.model == "gpt-4o-mini"
     assert result.system_prompt == "Original."
+    assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
 
 
 def test_apply_cli_overrides_none():
-    base = MotherConfig(model="gpt-5", system_prompt="Original.")
+    base = MotherConfig(
+        model="gpt-5", system_prompt="Original.", ca_bundle_path="/etc/ssl/certs/ib_cert.pem"
+    )
     result = apply_cli_overrides(base, model=None, system=None)
     assert result.model == "gpt-5"
     assert result.system_prompt == "Original."
+    assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
 
 
 # Tools tests

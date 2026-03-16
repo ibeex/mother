@@ -27,6 +27,11 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Enable agent mode (allows LLM to run shell commands via the bash tool)
 # tools_enabled = false
 
+# Optional CA bundle path for web_search and web_fetch.
+# Leave empty to use only Python/system certificates.
+# Set this when your network uses SSL inspection with a custom root CA.
+# ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"
+
 # Legacy allowlist from the old regex-based bash guard.
 # Retained for backwards compatibility but ignored by the current
 # LLM-based bash guard.
@@ -39,6 +44,7 @@ class MotherConfig:
     model: str = "gpt-5"
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     tools_enabled: bool = False
+    ca_bundle_path: str = ""
     allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
 
 
@@ -66,6 +72,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
         model=cast(str, data.get("model", MotherConfig.model)),
         system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
         tools_enabled=cast(bool, data.get("tools_enabled", MotherConfig.tools_enabled)),
+        ca_bundle_path=cast(str, data.get("ca_bundle_path", MotherConfig.ca_bundle_path)),
         allowlist=allowlist,
     )
 
@@ -79,5 +86,6 @@ def apply_cli_overrides(
         model=model if model is not None else config.model,
         system_prompt=system if system is not None else config.system_prompt,
         tools_enabled=config.tools_enabled,
+        ca_bundle_path=config.ca_bundle_path,
         allowlist=config.allowlist,
     )

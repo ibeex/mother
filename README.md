@@ -82,6 +82,32 @@ pass insert api/jina
 
 Then paste your Jina API key as the first line of the secret.
 
+## SSL inspection / custom CA bundle
+
+If your network uses SSL inspection and Python fails TLS verification while `curl` works,
+you can configure a custom CA bundle for `web_search` and `web_fetch`.
+
+Config file:
+
+```text
+~/.config/mother/config.toml
+```
+
+Example:
+
+```toml
+tools_enabled = true
+ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"
+```
+
+Behavior:
+
+- if `ca_bundle_path` is missing or empty, Mother uses only Python/system certificates
+- if `ca_bundle_path` is set, that CA bundle is added for `web_search` and `web_fetch`
+- if the configured file does not exist, the tool returns a readable error
+
+Mother also relaxes OpenSSL strict X.509 verification for these web tool requests, which helps with some enterprise interception certificates that Python rejects more strictly than `curl`.
+
 ## Development
 
 For how to install uv and Python, see [installation.md](installation.md).

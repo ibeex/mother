@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import ssl
 import subprocess
 from email.message import Message
 from typing import final
@@ -39,9 +40,12 @@ class _FakeResponse:
 def test_web_fetch_tool_raw_mode_uses_urllib_request():
     captured_requests: list[Request] = []
 
-    def _fake_urlopen(request: Request, *, timeout: float) -> _FakeResponse:
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
         captured_requests.append(request)
         assert timeout == 12.0
+        assert context is not None
         return _FakeResponse(b'{"ok": true}', content_type="application/json")
 
     with patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_fake_urlopen):
@@ -71,8 +75,11 @@ def test_web_fetch_tool_raw_mode_uses_urllib_request():
 def test_web_fetch_tool_auto_mode_uses_raw_for_local_urls():
     captured_requests: list[Request] = []
 
-    def _fake_urlopen(request: Request, *, timeout: float) -> _FakeResponse:
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
         _ = timeout
+        assert context is not None
         captured_requests.append(request)
         return _FakeResponse(b"local ok")
 
@@ -88,8 +95,11 @@ def test_web_fetch_tool_auto_mode_uses_raw_for_local_urls():
 def test_web_fetch_tool_auto_mode_uses_jina_for_remote_pages():
     captured_requests: list[Request] = []
 
-    def _fake_urlopen(request: Request, *, timeout: float) -> _FakeResponse:
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
         _ = timeout
+        assert context is not None
         captured_requests.append(request)
         return _FakeResponse(b"Readable content")
 
@@ -114,8 +124,11 @@ def test_web_fetch_tool_retries_jina_with_api_key_after_rate_limit():
         fp=io.BytesIO(b"rate limit exceeded"),
     )
 
-    def _fake_urlopen(request: Request, *, timeout: float) -> _FakeResponse:
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
         _ = timeout
+        assert context is not None
         captured_requests.append(request)
         if len(captured_requests) == 1:
             raise rate_limit_error

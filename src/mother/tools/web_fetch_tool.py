@@ -14,6 +14,7 @@ from mother.tools.web_common import (
     DEFAULT_USER_AGENT,
     JINA_READER_URL,
     ResponseContext,
+    build_ssl_context,
     get_jina_api_key,
     is_local_url,
     parse_headers_json,
@@ -62,13 +63,15 @@ def _run_raw_request(
     headers: Mapping[str, str],
     body: str,
     timeout: float,
+    ca_bundle_path: str,
 ) -> str:
     request_headers = {"User-Agent": DEFAULT_USER_AGENT, **headers}
     data = body.encode("utf-8") if body else None
     request = urllib.request.Request(url, headers=request_headers, data=data, method=method)
+    ssl_context = build_ssl_context(ca_bundle_path)
     response_context = cast(
         ResponseContext,
-        urllib.request.urlopen(request, timeout=timeout),
+        urllib.request.urlopen(request, timeout=timeout, context=ssl_context),
     )
     with response_context as response:
         content_type = response.headers.get("Content-Type", "unknown")
@@ -98,17 +101,22 @@ def _build_jina_reader_request(url: str, api_key: str | None = None) -> urllib.r
     return urllib.request.Request(f"{JINA_READER_URL}{url}", headers=headers)
 
 
-def _run_jina_request(url: str, timeout: float, api_key: str | None = None) -> str:
+def _run_jina_request(
+    url: str, timeout: float, ca_bundle_path: str, api_key: str | None = None
+) -> str:
     request = _build_jina_reader_request(url, api_key)
+    ssl_context = build_ssl_context(ca_bundle_path)
     response_context = cast(
         ResponseContext,
-        urllib.request.urlopen(request, timeout=timeout),
+        urllib.request.urlopen(request, timeout=timeout, context=ssl_context),
     )
     with response_context as response:
         return response.read().decode("utf-8", errors="replace").strip()
 
 
-def make_web_fetch_tool(pass_path: str = DEFAULT_PASS_PATH) -> Callable[..., str]:
+def make_web_fetch_tool(
+    pass_path: str = DEFAULT_PASS_PATH, ca_bundle_path: str = ""
+) -> Callable[..., str]:
     """Factory returning a callable llm tool for HTTP fetches."""
 
     def web_fetch(
@@ -165,10 +173,11 @@ def make_web_fetch_tool(pass_path: str = DEFAULT_PASS_PATH) -> Callable[..., str
                     headers,
                     body,
                     timeout,
+                    ca_bundle_path,
                 )
 
             try:
-                content = _run_jina_request(normalized_url, timeout)
+                content = _run_jina_request(normalized_url, timeout, ca_bundle_path)
             except HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace").strip()
                 if not should_retry_with_jina_api_key(exc.code, detail):
@@ -177,7 +186,7 @@ def make_web_fetch_tool(pass_path: str = DEFAULT_PASS_PATH) -> Callable[..., str
                     return f"Error: HTTP {exc.code} - {exc.reason}"
 
                 api_key = get_jina_api_key(pass_path)
-                content = _run_jina_request(normalized_url, timeout, api_key)
+                content = _run_jina_request(normalized_url, timeout, ca_bundle_path, api_key)
 
             return "\n".join(
                 [

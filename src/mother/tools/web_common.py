@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import ssl
 import subprocess
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Protocol, cast
 from urllib.parse import urlparse
 
@@ -48,6 +50,35 @@ def get_jina_api_key(pass_path: str = DEFAULT_PASS_PATH) -> str:
     if not lines:
         raise RuntimeError(f"`pass {pass_path}` returned no secret.")
     return lines[0]
+
+
+def build_ssl_context(ca_bundle_path: str = "") -> ssl.SSLContext:
+    """Build an SSL context using system roots and an optional configured CA bundle.
+
+    Python/OpenSSL can reject some enterprise interception certificates more
+    strictly than curl, especially when the corporate CA omits extensions such as
+    Authority Key Identifier. To stay compatible with those environments while
+    still verifying certificates, this context disables OpenSSL's strict X.509
+    verification flag when it is available.
+
+    If ``ca_bundle_path`` is empty, only the default system trust store is used.
+    If it is set, the referenced CA bundle is added to the context.
+    """
+    context = ssl.create_default_context()
+    verify_x509_strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+    if verify_x509_strict:
+        context.verify_flags &= ~verify_x509_strict
+
+    normalized_ca_bundle_path = ca_bundle_path.strip()
+    if not normalized_ca_bundle_path:
+        return context
+
+    ca_bundle = Path(normalized_ca_bundle_path).expanduser()
+    if not ca_bundle.is_file():
+        raise RuntimeError(f"Configured CA bundle was not found: {ca_bundle}")
+
+    context.load_verify_locations(cafile=str(ca_bundle))
+    return context
 
 
 def should_retry_with_jina_api_key(status_code: int, detail: str) -> bool:

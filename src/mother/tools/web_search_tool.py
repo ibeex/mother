@@ -14,6 +14,7 @@ from mother.tools.web_common import (
     DEFAULT_USER_AGENT,
     JINA_SEARCH_URL,
     ResponseContext,
+    build_ssl_context,
     get_jina_api_key,
 )
 
@@ -30,17 +31,20 @@ def _build_search_request(query: str, api_key: str) -> urllib.request.Request:
     return urllib.request.Request(url, headers=headers)
 
 
-def _run_search_request(query: str, timeout: float, api_key: str) -> str:
+def _run_search_request(query: str, timeout: float, api_key: str, ca_bundle_path: str) -> str:
     request = _build_search_request(query, api_key)
+    ssl_context = build_ssl_context(ca_bundle_path)
     response_context = cast(
         ResponseContext,
-        urllib.request.urlopen(request, timeout=timeout),
+        urllib.request.urlopen(request, timeout=timeout, context=ssl_context),
     )
     with response_context as response:
         return response.read().decode("utf-8", errors="replace").strip()
 
 
-def make_web_search_tool(pass_path: str = DEFAULT_PASS_PATH) -> Callable[..., str]:
+def make_web_search_tool(
+    pass_path: str = DEFAULT_PASS_PATH, ca_bundle_path: str = ""
+) -> Callable[..., str]:
     """Factory returning a callable llm tool for web search."""
 
     def web_search(query: str, timeout: float = DEFAULT_TIMEOUT) -> str:
@@ -63,7 +67,7 @@ def make_web_search_tool(pass_path: str = DEFAULT_PASS_PATH) -> Callable[..., st
 
         try:
             api_key = get_jina_api_key(pass_path)
-            content = _run_search_request(normalized_query, timeout, api_key)
+            content = _run_search_request(normalized_query, timeout, api_key, ca_bundle_path)
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace").strip()
             if detail:
