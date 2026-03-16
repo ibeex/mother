@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import ssl
 import subprocess
 from email.message import Message
 from typing import final
@@ -34,9 +35,12 @@ class _FakeResponse:
 def test_web_search_tool_uses_authenticated_request():
     captured_requests: list[Request] = []
 
-    def _fake_urlopen(request: Request, *, timeout: float) -> _FakeResponse:
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
         captured_requests.append(request)
         assert timeout == 30.0
+        assert context is not None
         return _FakeResponse(b"Result one\nResult two")
 
     completed = subprocess.CompletedProcess(
