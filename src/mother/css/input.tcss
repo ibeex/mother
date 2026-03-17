@@ -1,4 +1,15 @@
-TextArea {
+#prompt-area {
+    height: auto;
+}
+
+#prompt-input {
     height: 6;
     border: tall $primary;
+}
+
+#slash-complete {
+    margin: 0 1;
+    max-height: 8;
+    border: round $primary;
+    background: $surface;
 }

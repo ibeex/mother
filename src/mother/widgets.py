@@ -1,18 +1,158 @@
 """Reusable TUI widget classes for Mother."""
 
-from typing import ClassVar, final, override
+from dataclasses import dataclass
+from typing import ClassVar, Protocol, cast, final, override
 
 import pyperclip
+from textual import events
 from textual.binding import BindingType
 from textual.containers import Vertical
-from textual.widgets import Label, Markdown, TextArea
+from textual.message import Message
+from textual.widgets import Label, Markdown, OptionList, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence
+from textual.widgets.option_list import Option
+
+from mother.slash_commands import SlashCommand, filter_slash_commands
+from mother.user_commands import should_submit_on_enter
+
+
+class _PromptSubmitApp(Protocol):
+    """Subset of app API used by the prompt input widget."""
+
+    async def action_submit(self) -> None: ...
 
 
 class Prompt(Markdown):
     """Markdown for the user prompt."""
 
     BORDER_TITLE: ClassVar[str] = "You"
+
+
+class PromptTextArea(TextArea):
+    """Main prompt input with slash-complete key handling."""
+
+    slash_complete_active: bool = False
+
+    @dataclass
+    class SlashNavigate(Message):
+        """Request that the slash popup move its highlight."""
+
+        text_area: "PromptTextArea"
+        direction: int
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
+    class SlashAccept(Message):
+        """Request that the slash popup accept its current selection."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
+    class SlashDismiss(Message):
+        """Request that the slash popup close."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
+    class SlashSubmit(Message):
+        """Request that the built-in slash command be submitted immediately."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    async def handle_enter_key(self) -> None:
+        """Select slash completions, submit built-ins, or insert a newline."""
+        if self.slash_complete_active:
+            _ = self.post_message(self.SlashAccept(self))
+            return
+        if should_submit_on_enter(self.text):
+            app = cast(_PromptSubmitApp, cast(object, self.app))
+            await app.action_submit()
+            return
+        start, end = self.selection
+        result = self.replace("\n", start, end)
+        self.move_cursor(result.end_location)
+
+    @override
+    async def _on_key(self, event: events.Key) -> None:
+        """Handle Enter/Escape before TextArea inserts characters."""
+        if event.key == "enter":
+            _ = event.stop()
+            _ = event.prevent_default()
+            await self.handle_enter_key()
+            return
+        if self.slash_complete_active and event.key == "escape":
+            _ = event.stop()
+            _ = event.prevent_default()
+            _ = self.post_message(self.SlashDismiss(self))
+            return
+        await super()._on_key(event)
+
+    @override
+    def action_cursor_up(self, select: bool = False) -> None:
+        if self.slash_complete_active and not select:
+            _ = self.post_message(self.SlashNavigate(self, -1))
+            return
+        super().action_cursor_up(select=select)
+
+    @override
+    def action_cursor_down(self, select: bool = False) -> None:
+        if self.slash_complete_active and not select:
+            _ = self.post_message(self.SlashNavigate(self, 1))
+            return
+        super().action_cursor_down(select=select)
+
+
+@final
+class SlashComplete(OptionList):
+    """Option list showing filtered slash command completions."""
+
+    def __init__(self, commands: list[SlashCommand] | tuple[SlashCommand, ...]) -> None:
+        super().__init__(id="slash-complete")
+        self.commands: list[SlashCommand] = list(commands)
+        self.matches: list[SlashCommand] = []
+
+    def update_query(self, query: str) -> bool:
+        """Refresh visible matches for the current slash query."""
+        self.matches = filter_slash_commands(self.commands, query)
+        _ = self.clear_options()
+        if not self.matches:
+            self.highlighted = None
+            return False
+        _ = self.add_options(
+            Option(f"{command.command} — {command.help}", id=command.command)
+            for command in self.matches
+        )
+        self.highlighted = 0
+        return True
+
+    def highlighted_command(self) -> SlashCommand | None:
+        """Return the currently highlighted slash command, if any."""
+        highlighted = self.highlighted
+        if highlighted is None:
+            return None
+        try:
+            return self.matches[highlighted]
+        except IndexError:
+            return None
 
 
 class CopyableOutput(TextArea):

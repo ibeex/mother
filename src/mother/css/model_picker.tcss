@@ -3,18 +3,33 @@ ModelPickerScreen {
     background: $background 60%;
 }
 
-#model-picker {
+#model-picker,
+#model-switch-confirm {
     width: 72;
-    height: 24;
     border: round $primary;
     background: $surface;
     padding: 1;
 }
 
-#model-query {
+#model-picker {
+    height: 24;
+}
+
+#model-switch-confirm {
+    height: auto;
+}
+
+#model-query,
+#model-switch-confirm-message {
     margin-bottom: 1;
 }
 
-#model-options {
+#model-options,
+#model-switch-confirm-options {
     height: 1fr;
+}
+
+#model-switch-confirm-title {
+    text-style: bold;
+    margin-bottom: 1;
 }

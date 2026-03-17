@@ -7,6 +7,7 @@ __all__ = (
     "NormalPrompt",
     "Prompt",
     "Response",
+    "QuitAppCommand",
     "SaveSessionCommand",
     "SessionManager",
     "ShellCommand",
@@ -18,5 +19,5 @@ from .bash_execution import BashExecution
 from .config import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherConfig, load_config
 from .mother import MotherApp, cli
 from .session import SessionManager
-from .user_commands import NormalPrompt, SaveSessionCommand, ShellCommand
+from .user_commands import NormalPrompt, QuitAppCommand, SaveSessionCommand, ShellCommand
 from .widgets import Prompt, Response

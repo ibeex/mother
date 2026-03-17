@@ -21,10 +21,26 @@ class SaveSessionCommand:
     command: str = "/save"
 
 
-def parse_user_input(text: str) -> NormalPrompt | SaveSessionCommand | ShellCommand:
+@dataclass
+class QuitAppCommand:
+    command: str = "/quit"
+
+
+def should_submit_on_enter(text: str) -> bool:
+    """Return whether Enter should submit immediately for this built-in slash command."""
+    if "\n" in text:
+        return False
+    parsed = parse_user_input(text)
+    return isinstance(parsed, SaveSessionCommand | QuitAppCommand)
+
+
+def parse_user_input(
+    text: str,
+) -> NormalPrompt | SaveSessionCommand | QuitAppCommand | ShellCommand:
     """Parse user input for built-in slash commands and ! / !! shell commands.
 
     - ``/save`` or ``/export`` → SaveSessionCommand()
+    - ``/quit`` or ``/exit``   → QuitAppCommand()
     - ``!!command``            → ShellCommand(..., include_in_context=False)
     - ``!command``             → ShellCommand(..., include_in_context=True)
     - anything else            → NormalPrompt(text)
@@ -34,6 +50,8 @@ def parse_user_input(text: str) -> NormalPrompt | SaveSessionCommand | ShellComm
     normalized = text.strip().lower()
     if normalized in {"/save", "/export"}:
         return SaveSessionCommand(command=normalized)
+    if normalized in {"/quit", "/exit"}:
+        return QuitAppCommand(command=normalized)
 
     if text.startswith("!!"):
         command = text[2:].strip()

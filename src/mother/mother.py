@@ -18,29 +18,37 @@ from llm.models import (
     ToolDef,
     ToolResult,
 )
-from textual import work
+from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
-from textual.containers import VerticalScroll
+from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.widgets import Footer, Header, TextArea
+from textual.widgets import Footer, Header, OptionList, TextArea
 from textual.worker import Worker, WorkerState
 
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig, apply_cli_overrides, load_config
-from mother.model_picker import AgentModeProvider, ModelPickerScreen, ModelProvider
+from mother.model_picker import (
+    AgentModeProvider,
+    ModelPickerScreen,
+    ModelProvider,
+    ModelSwitchConfirmScreen,
+)
 from mother.session import SessionManager
+from mother.slash_commands import SLASH_COMMANDS, SlashCommand, current_slash_query
 from mother.system_prompt import build_system_prompt
 from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
-from mother.user_commands import SaveSessionCommand, ShellCommand, parse_user_input
+from mother.user_commands import QuitAppCommand, SaveSessionCommand, ShellCommand, parse_user_input
 from mother.widgets import (
     ConversationTurn,
     OutputSection,
+    PromptTextArea,
     Response,
     ShellOutput,
+    SlashComplete,
     StatusLine,
     ThinkingOutput,
     ToolOutput,
@@ -57,7 +65,7 @@ APP_CSS_PATHS: list[str | PurePath] = [
 class MotherApp(App[None]):
     """Simple app for chatting with an LLM via a conversation."""
 
-    AUTO_FOCUS: ClassVar[str | None] = "TextArea"
+    AUTO_FOCUS: ClassVar[str | None] = "#prompt-input"
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
@@ -95,7 +103,11 @@ class MotherApp(App[None]):
         yield Header()
         with VerticalScroll(id="chat-view"):
             yield ConversationTurn(response_text="INTERFACE 2037 READY FOR INQUIRY")
-        yield TextArea()
+        with Vertical(id="prompt-area"):
+            slash_complete = SlashComplete(SLASH_COMMANDS)
+            slash_complete.display = False
+            yield slash_complete
+            yield PromptTextArea(id="prompt-input")
         yield StatusLine(
             self.config.model,
             self.agent_mode,
@@ -111,11 +123,62 @@ class MotherApp(App[None]):
         self._update_subtitle()
         self._update_statusline()
 
+    @property
+    def prompt_input(self) -> PromptTextArea:
+        """Return the main editable prompt input widget."""
+        return self.query_one("#prompt-input", PromptTextArea)
+
+    @property
+    def slash_complete(self) -> SlashComplete:
+        """Return the slash-command autocomplete popup widget."""
+        return self.query_one(SlashComplete)
+
+    def _hide_slash_complete(self) -> None:
+        """Hide slash-command autocomplete and restore normal prompt keys."""
+        self.slash_complete.display = False
+        self.prompt_input.slash_complete_active = False
+
+    def _refresh_slash_complete(self, text: str) -> None:
+        """Show, filter, or hide slash-command autocomplete for the prompt."""
+        query = current_slash_query(text)
+        if query is None:
+            self._hide_slash_complete()
+            return
+        has_matches = self.slash_complete.update_query(query)
+        self.slash_complete.display = has_matches
+        self.prompt_input.slash_complete_active = has_matches
+
+    def _selected_slash_command(self) -> SlashCommand | None:
+        """Return the highlighted slash command from the popup, if any."""
+        return self.slash_complete.highlighted_command()
+
+    def _apply_slash_completion(self, command: SlashCommand | None = None) -> None:
+        """Insert the selected slash command back into the prompt input."""
+        selected_command = command or self._selected_slash_command()
+        if selected_command is None:
+            return
+
+        completed_text = f"{selected_command.command} "
+        self.prompt_input.load_text(completed_text)
+        self.prompt_input.move_cursor((0, len(completed_text)), record_width=False)
+        self._hide_slash_complete()
+        _ = self.prompt_input.focus()
+
+    def _conversation_has_history(self) -> bool:
+        """Return whether the active conversation already contains model-visible history."""
+        conversation = self.conversation
+        return conversation is not None and bool(conversation.responses)
+
     def action_show_models(self) -> None:
         """Open the model picker."""
-        _ = self.push_screen(ModelPickerScreen(self.config.model))
 
-    def action_switch_model(self, model_id: str) -> None:
+        def on_model_selected(model_id: str | None) -> None:
+            if model_id is not None:
+                self.action_switch_model(model_id)
+
+        _ = self.push_screen(ModelPickerScreen(self.config.model), on_model_selected)
+
+    def _apply_model_switch(self, model_id: str) -> None:
         """Switch to a different LLM model and start a fresh conversation."""
         previous_model = self.config.model
         self.config = replace(self.config, model=model_id, tools_enabled=self.agent_mode)
@@ -129,6 +192,21 @@ class MotherApp(App[None]):
         self._update_subtitle()
         self._update_statusline()
         self.notify(f"Switched to {model_id}", title="Model changed")
+
+    def action_switch_model(self, model_id: str) -> None:
+        """Switch to a different LLM model, asking first if that will clear context."""
+        if model_id == self.config.model:
+            return
+
+        if not self._conversation_has_history():
+            self._apply_model_switch(model_id)
+            return
+
+        def on_confirm(confirmed: bool | None) -> None:
+            if confirmed:
+                self._apply_model_switch(model_id)
+
+        _ = self.push_screen(ModelSwitchConfirmScreen(model_id), on_confirm)
 
     def action_toggle_agent_mode(self) -> None:
         """Toggle agent mode (enables/disables tool use)."""
@@ -168,7 +246,7 @@ class MotherApp(App[None]):
 
     def action_scroll_to_bottom_from_chat(self) -> None:
         """Jump to the bottom only when focus is outside the input field."""
-        if isinstance(self.focused, TextArea):
+        if isinstance(self.focused, PromptTextArea):
             return
         self.action_scroll_to_bottom()
 
@@ -265,9 +343,63 @@ class MotherApp(App[None]):
 
         self.notify(f"Saved to {output_path}", title="Session")
 
+    def action_quit_app(self) -> None:
+        """Close the application immediately."""
+        self.exit()
+
+    @on(TextArea.Changed)
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """Refresh slash-command autocomplete as the main prompt changes."""
+        if event.text_area is not self.prompt_input:
+            return
+        self._refresh_slash_complete(event.text_area.text)
+
+    @on(PromptTextArea.SlashNavigate)
+    def on_prompt_text_area_slash_navigate(self, event: PromptTextArea.SlashNavigate) -> None:
+        """Move the slash-command highlight while the prompt retains focus."""
+        if not event.text_area.slash_complete_active:
+            return
+        if event.direction < 0:
+            self.slash_complete.action_cursor_up()
+        else:
+            self.slash_complete.action_cursor_down()
+
+    @on(PromptTextArea.SlashAccept)
+    def on_prompt_text_area_slash_accept(self, event: PromptTextArea.SlashAccept) -> None:
+        """Insert the currently highlighted slash command into the prompt."""
+        if event.text_area.slash_complete_active:
+            self._apply_slash_completion()
+
+    @on(PromptTextArea.SlashDismiss)
+    def on_prompt_text_area_slash_dismiss(self, event: PromptTextArea.SlashDismiss) -> None:
+        """Dismiss slash-command autocomplete without changing prompt text."""
+        if event.text_area.slash_complete_active:
+            self._hide_slash_complete()
+
+    @on(PromptTextArea.SlashSubmit)
+    async def on_prompt_text_area_slash_submit(self, event: PromptTextArea.SlashSubmit) -> None:
+        """Submit built-in slash commands with Enter instead of inserting a newline."""
+        if event.text_area is self.prompt_input:
+            await self.action_submit()
+
+    @on(OptionList.OptionSelected)
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Insert slash commands selected directly from the popup list."""
+        if event.option_list is not self.slash_complete or event.option.id is None:
+            return
+        selected = next(
+            (
+                command
+                for command in self.slash_complete.matches
+                if command.command == event.option.id
+            ),
+            None,
+        )
+        self._apply_slash_completion(selected)
+
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
-        text_area = self.query_one(TextArea)
+        text_area = self.prompt_input
         value = text_area.text.strip()
         if not value:
             return
@@ -276,6 +408,9 @@ class MotherApp(App[None]):
         parsed = parse_user_input(value)
         if isinstance(parsed, SaveSessionCommand):
             self.action_save_session()
+            return
+        if isinstance(parsed, QuitAppCommand):
+            self.action_quit_app()
             return
         if isinstance(parsed, ShellCommand):
             await self.run_user_command(parsed)
@@ -383,7 +518,7 @@ class MotherApp(App[None]):
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Re-enable input when the worker finishes."""
         if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
-            text_area = self.query_one(TextArea)
+            text_area = self.prompt_input
             text_area.read_only = False
             _ = text_area.focus()
 
