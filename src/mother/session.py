@@ -375,6 +375,18 @@ class SessionManager:
 
         lines.extend(["", "## Session Summary", ""])
         lines.extend(f"- {item}" for item in self._build_summary(entries))
+
+        first_prompt = self._first_prompt_entry(entries)
+        if first_prompt is not None:
+            lines.extend(
+                [
+                    "",
+                    "## System Prompt",
+                    "",
+                    _render_fenced_block(first_prompt["system_prompt"]),
+                ]
+            )
+
         lines.extend(["", "---", ""])
         lines.extend(self._render_entries(entries))
         return "\n".join(lines).rstrip() + "\n"
@@ -433,6 +445,7 @@ class SessionManager:
     def _render_entries(self, entries: list[SessionEntry]) -> list[str]:
         lines: list[str] = []
         consumed_tool_results: set[int] = set()
+        previous_system_prompt: str | None = None
 
         for index, entry in enumerate(entries):
             if entry["type"] == "tool_result" and index in consumed_tool_results:
@@ -451,6 +464,11 @@ class SessionManager:
                     matched_result = cast(ToolResultEntry, entries[match_index])
                     lines.extend(self._render_tool_call_entry(entry, matched_result))
                     continue
+
+            if entry["type"] == "prompt":
+                lines.extend(self._render_prompt_entry(entry, previous_system_prompt))
+                previous_system_prompt = entry["system_prompt"]
+                continue
 
             lines.extend(self._render_entry(entry))
 
@@ -476,6 +494,12 @@ class SessionManager:
             return index
         return None
 
+    def _first_prompt_entry(self, entries: list[SessionEntry]) -> PromptEntry | None:
+        for entry in entries:
+            if entry["type"] == "prompt":
+                return entry
+        return None
+
     def _render_entry(self, entry: SessionEntry) -> list[str]:
         if entry["type"] == "message":
             return self._render_message_entry(entry)
@@ -498,7 +522,11 @@ class SessionManager:
             "",
         ]
 
-    def _render_prompt_entry(self, entry: PromptEntry) -> list[str]:
+    def _render_prompt_entry(
+        self,
+        entry: PromptEntry,
+        previous_system_prompt: str | None = None,
+    ) -> list[str]:
         tools_available = (
             ", ".join(f"`{tool_name}`" for tool_name in entry["tool_names"])
             if entry["tool_names"]
@@ -512,8 +540,14 @@ class SessionManager:
             f"- Tools available: {tools_available}",
             "",
         ]
-        lines.extend(_render_details("System prompt", _render_fenced_block(entry["system_prompt"])))
-        lines.append("")
+        if previous_system_prompt is not None and entry["system_prompt"] != previous_system_prompt:
+            lines.extend(
+                _render_details(
+                    "System prompt updated",
+                    _render_fenced_block(entry["system_prompt"]),
+                )
+            )
+            lines.append("")
         if entry["prompt_text"] != entry["user_text"]:
             lines.extend(
                 _render_details(

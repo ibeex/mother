@@ -60,12 +60,13 @@ def test_session_save_writes_markdown_and_keeps_transient_jsonl_for_future_saves
     markdown = output_path.read_text(encoding="utf-8")
     assert "# Mother Session" in markdown
     assert "## Session Summary" in markdown
+    assert "## System Prompt" in markdown
     assert "prompt contexts" in markdown
     assert "tool calls" in markdown
     assert "tool results" in markdown
     assert "Models seen: `gpt-test`, `gpt-4o-mini`" in markdown
     assert "### Prompt Context" in markdown
-    assert "System prompt" in markdown
+    assert markdown.count("## System Prompt") == 1
     assert "### Tool Call · `bash`" in markdown
     assert "### Tool Result · `bash`" not in markdown
     assert "Tool output" in markdown
@@ -77,6 +78,35 @@ def test_session_save_writes_markdown_and_keeps_transient_jsonl_for_future_saves
     assert "**Model:** `gpt-test`" in markdown
     assert manager.path.exists() is True
     assert manager.last_file.exists() is True
+
+
+def test_prompt_context_does_not_repeat_same_system_prompt(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    markdown_dir = tmp_path / "markdown"
+
+    manager = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+    manager.record_prompt(
+        user_text="one",
+        prompt_text="one",
+        system_prompt="same prompt",
+        agent_mode=False,
+        tool_names=[],
+    )
+    manager.record_prompt(
+        user_text="two",
+        prompt_text="two",
+        system_prompt="same prompt",
+        agent_mode=False,
+        tool_names=[],
+    )
+
+    output_path = manager.save_as_markdown()
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert "## System Prompt" in markdown
+    assert markdown.count("same prompt") == 1
+    assert "System prompt updated" not in markdown
+
 
 
 def test_repeated_saves_overwrite_same_markdown_file_for_one_session(tmp_path: Path):
