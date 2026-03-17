@@ -24,6 +24,18 @@ class _FakeResponse:
 
 
 @final
+class _FakeChatView:
+    def __init__(self, *, scroll_y: float, max_scroll_y: float) -> None:
+        self.scroll_y = scroll_y
+        self.max_scroll_y = max_scroll_y
+        self.scroll_end_calls: int = 0
+
+    def scroll_end(self, *, animate: bool = False) -> None:
+        _ = animate
+        self.scroll_end_calls += 1
+
+
+@final
 class _UnsupportedToolsConversation:
     def __init__(self) -> None:
         self.chain_calls: int = 0
@@ -175,3 +187,49 @@ def test_stream_llm_response_shows_error_when_streaming_fails():
     assert full_text is None
     assert response.updated_texts == ["partial", "**Error:** stream failed"]
     assert response.reset_texts == ["**Error:** stream failed"]
+
+
+def test_update_response_output_scrolls_when_near_end():
+    app = MotherApp()
+    response = _FakeResponse()
+    chat_view = _FakeChatView(scroll_y=9, max_scroll_y=10)
+
+    with patch.object(app, "query_one", return_value=chat_view):
+        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+            cast(Response, cast(object, response)),
+            "hello",
+        )
+
+    assert response.updated_texts == ["hello"]
+    assert chat_view.scroll_end_calls == 1
+
+
+def test_update_response_output_does_not_scroll_when_user_is_reading_history():
+    app = MotherApp()
+    response = _FakeResponse()
+    chat_view = _FakeChatView(scroll_y=4, max_scroll_y=10)
+
+    with patch.object(app, "query_one", return_value=chat_view):
+        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+            cast(Response, cast(object, response)),
+            "hello",
+        )
+
+    assert response.updated_texts == ["hello"]
+    assert chat_view.scroll_end_calls == 0
+
+
+def test_update_response_output_respects_manual_scroll_mode():
+    app = MotherApp()
+    app.auto_scroll_enabled = False
+    response = _FakeResponse()
+    chat_view = _FakeChatView(scroll_y=10, max_scroll_y=10)
+
+    with patch.object(app, "query_one", return_value=chat_view):
+        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+            cast(Response, cast(object, response)),
+            "hello",
+        )
+
+    assert response.updated_texts == ["hello"]
+    assert chat_view.scroll_end_calls == 0

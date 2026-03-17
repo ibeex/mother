@@ -108,7 +108,6 @@ def test_prompt_context_does_not_repeat_same_system_prompt(tmp_path: Path):
     assert "System prompt updated" not in markdown
 
 
-
 def test_repeated_saves_overwrite_same_markdown_file_for_one_session(tmp_path: Path):
     sessions_dir = tmp_path / "sessions"
     markdown_dir = tmp_path / "markdown"

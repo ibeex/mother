@@ -62,6 +62,9 @@ class MotherApp(App[None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
         ("ctrl+o", "toggle_thinking_widget", "Thoughts"),
+        ("ctrl+g", "toggle_auto_scroll", "Autoscroll"),
+        ("end", "scroll_to_bottom", "Bottom"),
+        ("shift+g", "scroll_to_bottom_from_chat", "Bottom"),
         ("ctrl+s", "save_session", "Save"),
     ]
 
@@ -85,6 +88,7 @@ class MotherApp(App[None]):
         self._pending_executions: list[BashExecution] = []
         self._tool_outputs: dict[str, ToolOutput] = {}
         self._last_context_tokens: int | None = None
+        self.auto_scroll_enabled: bool = True
 
     @override
     def compose(self) -> ComposeResult:
@@ -92,7 +96,12 @@ class MotherApp(App[None]):
         with VerticalScroll(id="chat-view"):
             yield ConversationTurn(response_text="INTERFACE 2037 READY FOR INQUIRY")
         yield TextArea()
-        yield StatusLine(self.config.model, self.agent_mode, self._last_context_tokens)
+        yield StatusLine(
+            self.config.model,
+            self.agent_mode,
+            self._last_context_tokens,
+            self.auto_scroll_enabled,
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -144,6 +153,25 @@ class MotherApp(App[None]):
         if thinking_widgets:
             thinking_widgets[-1].action_toggle_expanded()
 
+    def action_toggle_auto_scroll(self) -> None:
+        """Toggle whether new chat output should keep the view pinned to the bottom."""
+        self.auto_scroll_enabled = not self.auto_scroll_enabled
+        self._update_statusline()
+        if self.auto_scroll_enabled:
+            self._scroll_chat_to_end(force=True)
+        state = "enabled" if self.auto_scroll_enabled else "disabled"
+        self.notify(f"Autoscroll {state}", title="Chat view")
+
+    def action_scroll_to_bottom(self) -> None:
+        """Jump the chat view to the latest content."""
+        self._scroll_chat_to_end(force=True)
+
+    def action_scroll_to_bottom_from_chat(self) -> None:
+        """Jump to the bottom only when focus is outside the input field."""
+        if isinstance(self.focused, TextArea):
+            return
+        self.action_scroll_to_bottom()
+
     def _update_subtitle(self) -> None:
         """Update subtitle to show model and agent mode indicator."""
         sub_title: str = f"{self.config.model} [AGENT]" if self.agent_mode else self.config.model
@@ -159,6 +187,7 @@ class MotherApp(App[None]):
             model_name=self.config.model,
             agent_mode=self.agent_mode,
             context_tokens=self._last_context_tokens,
+            auto_scroll_enabled=self.auto_scroll_enabled,
         )
 
     def _refresh_context_size(self) -> None:
@@ -254,10 +283,13 @@ class MotherApp(App[None]):
 
         self._record_session_message("user", value)
         chat_view = self.query_one("#chat-view")
+        should_follow = self._should_follow_chat_updates()
         text_area.read_only = True
         prompt = self._flush_pending_context(value)
         turn = ConversationTurn(prompt_text=value, include_thinking=True)
         _ = await chat_view.mount(turn)
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
         thinking_output = turn.thinking_output
         if thinking_output is None:
             text_area.read_only = False
@@ -267,9 +299,12 @@ class MotherApp(App[None]):
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
         chat_view = self.query_one("#chat-view")
+        should_follow = self._should_follow_chat_updates()
         shell_widget = ShellOutput(f"Running: {cmd.command}")
         section = OutputSection("Shell", "shell-title", shell_widget)
         _ = await chat_view.mount(section)
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
         try:
             result = await execute_bash(cmd.command)
@@ -316,12 +351,14 @@ class MotherApp(App[None]):
     ) -> None:
         """Mount a widget showing that a tool call has started."""
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
+        should_follow = self._should_follow_chat_updates()
         widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
         self._tool_outputs[key] = widget
         section = OutputSection("Tool", "tool-title", widget)
         chat_view = self.query_one("#chat-view", VerticalScroll)
         _ = chat_view.mount(section)
-        _ = chat_view.scroll_end(animate=False)
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
     def _show_tool_finished(
         self,
@@ -333,13 +370,15 @@ class MotherApp(App[None]):
         """Update a tool trace widget when a tool call finishes."""
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = self._tool_outputs.pop(key, None)
+        should_follow = self._should_follow_chat_updates()
         chat_view = self.query_one("#chat-view", VerticalScroll)
         if widget is None:
             widget = ToolOutput()
             section = OutputSection("Tool", "tool-title", widget)
             _ = chat_view.mount(section)
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
-        _ = chat_view.scroll_end(animate=False)
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Re-enable input when the worker finishes."""
@@ -348,25 +387,55 @@ class MotherApp(App[None]):
             text_area.read_only = False
             _ = text_area.focus()
 
-    def _scroll_chat_to_end(self) -> None:
+    def _chat_is_near_end(self, margin: int = 1) -> bool:
+        """Return whether the chat view is already at (or very near) the bottom."""
+        try:
+            chat_view = self.query_one("#chat-view", VerticalScroll)
+        except (NoMatches, ScreenStackError):
+            return True
+        return (chat_view.max_scroll_y - chat_view.scroll_y) <= margin
+
+    def _should_follow_chat_updates(self) -> bool:
+        """Return whether the next chat update should keep following new output."""
+        return self.auto_scroll_enabled and self._chat_is_near_end()
+
+    def _scroll_chat_to_end(self, *, force: bool = False) -> None:
         """Keep the chat view pinned to the latest streamed content."""
-        chat_view = self.query_one("#chat-view", VerticalScroll)
+        if not force and not self.auto_scroll_enabled:
+            return
+        try:
+            chat_view = self.query_one("#chat-view", VerticalScroll)
+        except (NoMatches, ScreenStackError):
+            return
         _ = chat_view.scroll_end(animate=False)
+
+    def _update_response_output(self, response: Response, text: str) -> None:
+        """Render response text and keep following only when the user is at the bottom."""
+        should_follow = self._should_follow_chat_updates()
+        _ = response.update(text)
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
     def _start_thinking_output(self, thinking_output: ThinkingOutput) -> None:
         """Switch the thinking widget into live streaming mode."""
+        should_follow = self._should_follow_chat_updates()
         thinking_output.start_streaming()
-        self._scroll_chat_to_end()
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
     def _update_thinking_output(self, thinking_output: ThinkingOutput, text: str) -> None:
         """Render streamed reasoning text in the dedicated thinking widget."""
+        should_follow = self._should_follow_chat_updates()
         thinking_output.set_text(text)
-        self._scroll_chat_to_end()
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
     def _finish_thinking_output(self, thinking_output: ThinkingOutput) -> None:
         """Collapse the thinking widget back to its preview after streaming ends."""
+        should_follow = self._should_follow_chat_updates()
         thinking_output.finish_streaming()
-        self._scroll_chat_to_end()
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
 
     def _stream_response(
         self,
@@ -379,7 +448,7 @@ class MotherApp(App[None]):
         if thinking_output is None:
             for chunk in llm_response:
                 full_text += chunk
-                _ = self.call_from_thread(response.update, full_text)
+                _ = self.call_from_thread(self._update_response_output, response, full_text)
             return full_text
 
         thinking_parser = ThinkTagStreamParser()
@@ -401,7 +470,7 @@ class MotherApp(App[None]):
                 thinking_streaming = False
             if response_delta:
                 full_text += response_delta
-                _ = self.call_from_thread(response.update, full_text)
+                _ = self.call_from_thread(self._update_response_output, response, full_text)
 
         thinking_delta, response_delta = thinking_parser.flush()
         if thinking_delta:
@@ -414,7 +483,7 @@ class MotherApp(App[None]):
             _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
         if response_delta:
             full_text += response_delta
-            _ = self.call_from_thread(response.update, full_text)
+            _ = self.call_from_thread(self._update_response_output, response, full_text)
 
         return full_text
 
@@ -603,7 +672,7 @@ class MotherApp(App[None]):
 
     def _show_error(self, response: Response, error_text: str) -> None:
         """Display an error in the response widget and reset its state."""
-        _ = self.call_from_thread(response.update, error_text)
+        _ = self.call_from_thread(self._update_response_output, response, error_text)
         response.reset_state(error_text)
 
     @work(thread=True)
@@ -615,7 +684,7 @@ class MotherApp(App[None]):
         thinking_output: ThinkingOutput | None = None,
     ) -> None:
         """Get the response in a thread, maintaining conversation history."""
-        _ = self.call_from_thread(response.update, "*Thinking...*")
+        _ = self.call_from_thread(self._update_response_output, response, "*Thinking...*")
         conversation = self.conversation
         if conversation is None:
             self._show_error(response, "**Error:** Conversation is not initialized.")

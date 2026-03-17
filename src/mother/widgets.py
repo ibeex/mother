@@ -314,15 +314,26 @@ class StatusLine(Label):
         model_name: str,
         agent_mode: bool,
         context_tokens: int | None = None,
+        auto_scroll_enabled: bool = True,
     ) -> None:
         super().__init__(
-            self.format_status(model_name, agent_mode, context_tokens),
+            self.format_status(
+                model_name,
+                agent_mode,
+                context_tokens,
+                auto_scroll_enabled,
+            ),
             id="status-line",
             markup=False,
         )
 
     @staticmethod
-    def format_status(model_name: str, agent_mode: bool, context_tokens: int | None) -> str:
+    def format_status(
+        model_name: str,
+        agent_mode: bool,
+        context_tokens: int | None,
+        auto_scroll_enabled: bool = True,
+    ) -> str:
         """Format the text displayed in the status line."""
         model = model_name or "?"
         agent = "on" if agent_mode else "off"
@@ -332,7 +343,8 @@ class StatusLine(Label):
             context = f"{context_tokens / 1000:.1f}k"
         else:
             context = str(context_tokens)
-        return f"{model} · {agent} · {context}"
+        auto_scroll = "auto" if auto_scroll_enabled else "manual"
+        return f"{model} · {agent} · {context} · {auto_scroll}"
 
     def set_status(
         self,
@@ -340,9 +352,17 @@ class StatusLine(Label):
         model_name: str,
         agent_mode: bool,
         context_tokens: int | None,
+        auto_scroll_enabled: bool,
     ) -> None:
-        """Update the displayed model, agent mode, and context size."""
-        self.update(self.format_status(model_name, agent_mode, context_tokens))
+        """Update the displayed model, agent mode, context size, and follow mode."""
+        self.update(
+            self.format_status(
+                model_name,
+                agent_mode,
+                context_tokens,
+                auto_scroll_enabled,
+            )
+        )
 
 
 class ShellOutput(CopyableOutput):
