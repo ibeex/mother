@@ -1,9 +1,15 @@
 /* ── Chat container — single outer border ── */
 
-#chat-view {
+#main-pane {
     border: wide $primary;
     margin: 0 1;
     background: $surface;
+}
+
+#chat-view {
+    border: none;
+    margin: 0;
+    background: transparent;
 }
 
 /* ── Grouped conversation turn ── */

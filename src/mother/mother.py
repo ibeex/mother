@@ -111,16 +111,17 @@ class MotherApp(App[None]):
     @override
     def compose(self) -> ComposeResult:
         yield Header()
-        with VerticalScroll(id="chat-view"):
-            yield ConversationTurn(response_text="INTERFACE 2037 READY FOR INQUIRY")
-        with Vertical(id="prompt-area"):
-            slash_complete = SlashComplete(SLASH_COMMANDS)
-            slash_complete.display = False
-            yield slash_complete
-            model_complete = ModelComplete()
-            model_complete.display = False
-            yield model_complete
-            yield PromptTextArea(id="prompt-input")
+        with Vertical(id="main-pane"):
+            with VerticalScroll(id="chat-view"):
+                yield ConversationTurn(response_text="INTERFACE 2037 READY FOR INQUIRY")
+            with Vertical(id="prompt-area"):
+                slash_complete = SlashComplete(SLASH_COMMANDS)
+                slash_complete.display = False
+                yield slash_complete
+                model_complete = ModelComplete()
+                model_complete.display = False
+                yield model_complete
+                yield PromptTextArea(id="prompt-input")
         yield StatusLine(
             self.config.model,
             self.agent_mode,

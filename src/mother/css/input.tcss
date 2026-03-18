@@ -1,10 +1,11 @@
 #prompt-area {
     height: auto;
+    border-top: wide $primary;
 }
 
 #prompt-input {
     height: 6;
-    border: tall $primary;
+    border: none;
 }
 
 #slash-complete,
