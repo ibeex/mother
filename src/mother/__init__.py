@@ -5,6 +5,7 @@ __all__ = (
     "MotherApp",
     "MotherConfig",
     "NormalPrompt",
+    "AgentModeCommand",
     "ModelsCommand",
     "Prompt",
     "Response",
@@ -21,6 +22,7 @@ from .config import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherConfig, load_config
 from .mother import MotherApp, cli
 from .session import SessionManager
 from .user_commands import (
+    AgentModeCommand,
     ModelsCommand,
     NormalPrompt,
     QuitAppCommand,

@@ -129,6 +129,33 @@ def test_models_command_enter_opens_model_picker() -> None:
     asyncio.run(run())
 
 
+def test_agent_command_enter_toggles_agent_mode() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with patch("mother.mother.llm.get_model", return_value=model):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/agent")
+                await pilot.pause()
+
+                assert app.agent_mode is False
+                await pilot.press("enter")
+                await pilot.pause()
+                assert text_area.text == "/agent "
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                assert app.agent_mode is True
+                assert text_area.text == ""
+
+    asyncio.run(run())
+
+
 def test_models_command_tab_opens_inline_model_picker() -> None:
     async def run() -> None:
         model = MagicMock()

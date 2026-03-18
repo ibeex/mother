@@ -36,5 +36,9 @@ def test_default_slash_commands_expose_quit_aliases() -> None:
     assert "/exit" in commands
 
 
+def test_default_slash_commands_expose_agent() -> None:
+    assert any(command.command == "/agent" for command in SLASH_COMMANDS)
+
+
 def test_default_slash_commands_expose_models() -> None:
     assert any(command.command == "/models" for command in SLASH_COMMANDS)

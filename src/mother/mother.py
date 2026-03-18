@@ -43,6 +43,7 @@ from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
 from mother.user_commands import (
+    AgentModeCommand,
     ModelsCommand,
     QuitAppCommand,
     SaveSessionCommand,
@@ -513,6 +514,9 @@ class MotherApp(App[None]):
             return
         if isinstance(parsed, QuitAppCommand):
             self.action_quit_app()
+            return
+        if isinstance(parsed, AgentModeCommand):
+            self.action_toggle_agent_mode()
             return
         if isinstance(parsed, ModelsCommand):
             if parsed.query is None:

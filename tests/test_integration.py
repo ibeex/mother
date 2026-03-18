@@ -48,6 +48,7 @@ def test_model_switch_syncs_tools_enabled_to_runtime_state():
 
 def test_exports_updated():
     from mother import (
+        AgentModeCommand,
         BashExecution,
         ModelsCommand,
         NormalPrompt,
@@ -56,6 +57,7 @@ def test_exports_updated():
         ShellCommand,
     )
 
+    assert AgentModeCommand is not None
     assert BashExecution is not None
     assert ModelsCommand is not None
     assert NormalPrompt is not None

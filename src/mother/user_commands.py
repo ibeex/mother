@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+_AGENT_COMMAND = "/agent"
 _MODELS_COMMAND = "/models"
 
 
@@ -26,6 +27,11 @@ class SaveSessionCommand:
 @dataclass
 class QuitAppCommand:
     command: str = "/quit"
+
+
+@dataclass
+class AgentModeCommand:
+    command: str = _AGENT_COMMAND
 
 
 @dataclass
@@ -60,16 +66,26 @@ def should_submit_on_enter(text: str) -> bool:
     if "\n" in text:
         return False
     parsed = parse_user_input(text)
-    return isinstance(parsed, SaveSessionCommand | QuitAppCommand | ModelsCommand)
+    return isinstance(
+        parsed, SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand
+    )
 
 
 def parse_user_input(
     text: str,
-) -> NormalPrompt | SaveSessionCommand | QuitAppCommand | ModelsCommand | ShellCommand:
+) -> (
+    NormalPrompt
+    | SaveSessionCommand
+    | QuitAppCommand
+    | AgentModeCommand
+    | ModelsCommand
+    | ShellCommand
+):
     """Parse user input for built-in slash commands and ! / !! shell commands.
 
     - ``/save`` or ``/export``   → SaveSessionCommand()
     - ``/quit`` or ``/exit``     → QuitAppCommand()
+    - ``/agent``                 → AgentModeCommand()
     - ``/models``                → ModelsCommand()
     - ``/models query``          → ModelsCommand(query=...)
     - ``!!command``              → ShellCommand(..., include_in_context=False)
@@ -84,6 +100,8 @@ def parse_user_input(
         return SaveSessionCommand(command=normalized)
     if normalized in {"/quit", "/exit"}:
         return QuitAppCommand(command=normalized)
+    if normalized == _AGENT_COMMAND:
+        return AgentModeCommand()
     if normalized == _MODELS_COMMAND:
         return ModelsCommand()
     if normalized.startswith(f"{_MODELS_COMMAND} "):

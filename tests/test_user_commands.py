@@ -4,6 +4,7 @@ from datetime import datetime
 
 from mother.bash_execution import BashExecution, format_for_context
 from mother.user_commands import (
+    AgentModeCommand,
     ModelsCommand,
     NormalPrompt,
     QuitAppCommand,
@@ -60,6 +61,12 @@ def test_detect_exit_command():
     assert result.command == "/exit"
 
 
+def test_detect_agent_mode_command():
+    result = parse_user_input("/agent")
+    assert isinstance(result, AgentModeCommand)
+    assert result.command == "/agent"
+
+
 def test_detect_models_command():
     result = parse_user_input("/models")
     assert isinstance(result, ModelsCommand)
@@ -93,6 +100,10 @@ def test_should_submit_save_on_enter():
 
 def test_should_submit_quit_on_enter():
     assert should_submit_on_enter("/quit") is True
+
+
+def test_should_submit_agent_on_enter():
+    assert should_submit_on_enter("/agent") is True
 
 
 def test_should_submit_models_on_enter():
