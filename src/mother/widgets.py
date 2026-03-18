@@ -93,6 +93,17 @@ class PromptTextArea(TextArea):
             return self.text_area
 
     @dataclass
+    class ModelAccept(Message):
+        """Request that the model popup accept its current selection."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
     class SlashSubmit(Message):
         """Request that the built-in slash command be submitted immediately."""
 
@@ -142,6 +153,11 @@ class PromptTextArea(TextArea):
                 _ = event.stop()
                 _ = event.prevent_default()
                 _ = self.post_message(self.SlashAccept(self))
+                return
+            if self.model_complete_active:
+                _ = event.stop()
+                _ = event.prevent_default()
+                _ = self.post_message(self.ModelAccept(self))
                 return
             if self._expand_models_query_prefix():
                 _ = event.stop()

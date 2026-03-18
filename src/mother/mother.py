@@ -105,6 +105,7 @@ class MotherApp(App[None]):
         self._pending_executions: list[BashExecution] = []
         self._tool_outputs: dict[str, ToolOutput] = {}
         self._last_context_tokens: int | None = None
+        self._suppress_prompt_completion_once: str | None = None
         self.auto_scroll_enabled: bool = True
 
     @override
@@ -200,6 +201,19 @@ class MotherApp(App[None]):
         self.prompt_input.move_cursor((0, len(completed_text)), record_width=False)
         self._hide_slash_complete()
         self._refresh_prompt_completions(completed_text)
+        _ = self.prompt_input.focus()
+
+    def _apply_model_completion(self, model_id: str | None = None) -> None:
+        """Insert the selected inline model completion into the prompt input."""
+        selected_model = model_id or self._selected_model_completion()
+        if selected_model is None:
+            return
+
+        completed_text = f"/models {selected_model}"
+        self._suppress_prompt_completion_once = completed_text
+        self.prompt_input.load_text(completed_text)
+        self.prompt_input.move_cursor((0, len(completed_text)), record_width=False)
+        self._hide_model_complete()
         _ = self.prompt_input.focus()
 
     def _conversation_has_history(self) -> bool:
@@ -406,6 +420,12 @@ class MotherApp(App[None]):
         """Refresh prompt autocomplete helpers as the main prompt changes."""
         if event.text_area is not self.prompt_input:
             return
+        if event.text_area.text == self._suppress_prompt_completion_once:
+            self._suppress_prompt_completion_once = None
+            self._hide_model_complete()
+            self._hide_slash_complete()
+            return
+        self._suppress_prompt_completion_once = None
         self._refresh_prompt_completions(event.text_area.text)
 
     @on(PromptTextArea.SlashNavigate)
@@ -439,6 +459,12 @@ class MotherApp(App[None]):
         """Dismiss slash-command autocomplete without changing prompt text."""
         if event.text_area.slash_complete_active:
             self._hide_slash_complete()
+
+    @on(PromptTextArea.ModelAccept)
+    def on_prompt_text_area_model_accept(self, event: PromptTextArea.ModelAccept) -> None:
+        """Insert the currently highlighted model completion into the prompt."""
+        if event.text_area.model_complete_active:
+            self._apply_model_completion()
 
     @on(PromptTextArea.ModelDismiss)
     def on_prompt_text_area_model_dismiss(self, event: PromptTextArea.ModelDismiss) -> None:

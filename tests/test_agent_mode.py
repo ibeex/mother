@@ -190,6 +190,37 @@ def test_models_command_typed_character_expands_query() -> None:
     asyncio.run(run())
 
 
+def test_models_command_tab_accepts_highlighted_model() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        available_models = [
+            ("claude-haiku-3-5", "claude-haiku-3-5 — Haiku"),
+            ("gpt-5", "gpt-5"),
+        ]
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch("mother.widgets.get_available_models", return_value=available_models),
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models ha")
+                text_area.move_cursor((0, len("/models ha")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("tab")
+                await pilot.pause()
+
+                assert text_area.text == "/models claude-haiku-3-5"
+                assert app.model_complete.display is False
+                assert text_area.model_complete_active is False
+
+    asyncio.run(run())
+
+
 def test_models_command_query_enter_switches_model() -> None:
     async def run() -> None:
         model = MagicMock()
