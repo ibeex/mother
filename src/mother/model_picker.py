@@ -51,6 +51,35 @@ def get_available_models() -> list[tuple[str, str]]:
     return available_models
 
 
+def filter_available_models(
+    query: str,
+    available_models: list[tuple[str, str]] | None = None,
+) -> list[tuple[str, str]]:
+    """Return available models matching a search query.
+
+    Prefix matches on the model id are preferred. If there are none, the
+    broader label/model-id substring search used by the picker is applied.
+    """
+    models = available_models or get_available_models()
+    normalized_query = query.strip().lower()
+    if not normalized_query:
+        return list(models)
+
+    prefix_matches = [
+        (model_id, label)
+        for model_id, label in models
+        if model_id.lower().startswith(normalized_query)
+    ]
+    if prefix_matches:
+        return prefix_matches
+
+    return [
+        (model_id, label)
+        for model_id, label in models
+        if normalized_query in model_id.lower() or normalized_query in label.lower()
+    ]
+
+
 class AgentModeProvider(Provider):
     """Command palette provider for toggling agent mode."""
 
@@ -167,14 +196,7 @@ class ModelPickerScreen(ModalScreen[str | None]):
 
     def _refresh_options(self, query: str) -> None:
         option_list = self.query_one(OptionList)
-        normalized_query = query.strip().lower()
-        matching_models = [
-            (model_id, label)
-            for model_id, label in self._all_models
-            if not normalized_query
-            or normalized_query in model_id.lower()
-            or normalized_query in label.lower()
-        ]
+        matching_models = filter_available_models(query, self._all_models)
         _ = option_list.clear_options()
         if not matching_models:
             _ = option_list.add_option(Option("No models found", disabled=True))

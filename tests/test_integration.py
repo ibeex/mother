@@ -47,9 +47,17 @@ def test_model_switch_syncs_tools_enabled_to_runtime_state():
 
 
 def test_exports_updated():
-    from mother import BashExecution, NormalPrompt, SaveSessionCommand, SessionManager, ShellCommand
+    from mother import (
+        BashExecution,
+        ModelsCommand,
+        NormalPrompt,
+        SaveSessionCommand,
+        SessionManager,
+        ShellCommand,
+    )
 
     assert BashExecution is not None
+    assert ModelsCommand is not None
     assert NormalPrompt is not None
     assert SaveSessionCommand is not None
     assert SessionManager is not None

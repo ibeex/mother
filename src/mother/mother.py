@@ -33,6 +33,7 @@ from mother.model_picker import (
     ModelPickerScreen,
     ModelProvider,
     ModelSwitchConfirmScreen,
+    filter_available_models,
 )
 from mother.session import SessionManager
 from mother.slash_commands import SLASH_COMMANDS, SlashCommand, current_slash_query
@@ -41,9 +42,17 @@ from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
-from mother.user_commands import QuitAppCommand, SaveSessionCommand, ShellCommand, parse_user_input
+from mother.user_commands import (
+    ModelsCommand,
+    QuitAppCommand,
+    SaveSessionCommand,
+    ShellCommand,
+    current_model_query,
+    parse_user_input,
+)
 from mother.widgets import (
     ConversationTurn,
+    ModelComplete,
     OutputSection,
     PromptTextArea,
     Response,
@@ -107,6 +116,9 @@ class MotherApp(App[None]):
             slash_complete = SlashComplete(SLASH_COMMANDS)
             slash_complete.display = False
             yield slash_complete
+            model_complete = ModelComplete()
+            model_complete.display = False
+            yield model_complete
             yield PromptTextArea(id="prompt-input")
         yield StatusLine(
             self.config.model,
@@ -133,15 +145,34 @@ class MotherApp(App[None]):
         """Return the slash-command autocomplete popup widget."""
         return self.query_one(SlashComplete)
 
+    @property
+    def model_complete(self) -> ModelComplete:
+        """Return the inline model autocomplete popup widget."""
+        return self.query_one(ModelComplete)
+
     def _hide_slash_complete(self) -> None:
         """Hide slash-command autocomplete and restore normal prompt keys."""
         self.slash_complete.display = False
         self.prompt_input.slash_complete_active = False
 
-    def _refresh_slash_complete(self, text: str) -> None:
-        """Show, filter, or hide slash-command autocomplete for the prompt."""
+    def _hide_model_complete(self) -> None:
+        """Hide inline model autocomplete and restore normal prompt keys."""
+        self.model_complete.display = False
+        self.prompt_input.model_complete_active = False
+
+    def _refresh_prompt_completions(self, text: str) -> None:
+        """Show, filter, or hide prompt helpers for slash commands and models."""
+        model_query = current_model_query(text)
+        if model_query is not None:
+            self._hide_slash_complete()
+            has_matches = self.model_complete.update_query(model_query, self.config.model)
+            self.model_complete.display = has_matches
+            self.prompt_input.model_complete_active = has_matches
+            return
+
+        self._hide_model_complete()
         query = current_slash_query(text)
-        if query is None:
+        if query is None or query.lower() == "/models":
             self._hide_slash_complete()
             return
         has_matches = self.slash_complete.update_query(query)
@@ -151,6 +182,12 @@ class MotherApp(App[None]):
     def _selected_slash_command(self) -> SlashCommand | None:
         """Return the highlighted slash command from the popup, if any."""
         return self.slash_complete.highlighted_command()
+
+    def _selected_model_completion(self) -> str | None:
+        """Return the highlighted inline model completion, if any."""
+        if not self.model_complete.display:
+            return None
+        return self.model_complete.highlighted_model_id()
 
     def _apply_slash_completion(self, command: SlashCommand | None = None) -> None:
         """Insert the selected slash command back into the prompt input."""
@@ -162,6 +199,7 @@ class MotherApp(App[None]):
         self.prompt_input.load_text(completed_text)
         self.prompt_input.move_cursor((0, len(completed_text)), record_width=False)
         self._hide_slash_complete()
+        self._refresh_prompt_completions(completed_text)
         _ = self.prompt_input.focus()
 
     def _conversation_has_history(self) -> bool:
@@ -177,6 +215,22 @@ class MotherApp(App[None]):
                 self.action_switch_model(model_id)
 
         _ = self.push_screen(ModelPickerScreen(self.config.model), on_model_selected)
+
+    def _resolve_model_query(self, query: str) -> str | None:
+        """Resolve a ``/models`` query to a concrete model id, if possible."""
+        highlighted_model = self._selected_model_completion()
+        if highlighted_model is not None:
+            return highlighted_model
+
+        matches = filter_available_models(query)
+        if not matches:
+            return None
+
+        normalized_query = query.strip().lower()
+        for model_id, _label in matches:
+            if model_id.lower() == normalized_query:
+                return model_id
+        return matches[0][0]
 
     def _apply_model_switch(self, model_id: str) -> None:
         """Switch to a different LLM model and start a fresh conversation."""
@@ -349,10 +403,10 @@ class MotherApp(App[None]):
 
     @on(TextArea.Changed)
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Refresh slash-command autocomplete as the main prompt changes."""
+        """Refresh prompt autocomplete helpers as the main prompt changes."""
         if event.text_area is not self.prompt_input:
             return
-        self._refresh_slash_complete(event.text_area.text)
+        self._refresh_prompt_completions(event.text_area.text)
 
     @on(PromptTextArea.SlashNavigate)
     def on_prompt_text_area_slash_navigate(self, event: PromptTextArea.SlashNavigate) -> None:
@@ -363,6 +417,16 @@ class MotherApp(App[None]):
             self.slash_complete.action_cursor_up()
         else:
             self.slash_complete.action_cursor_down()
+
+    @on(PromptTextArea.ModelNavigate)
+    def on_prompt_text_area_model_navigate(self, event: PromptTextArea.ModelNavigate) -> None:
+        """Move the inline model highlight while the prompt retains focus."""
+        if not event.text_area.model_complete_active:
+            return
+        if event.direction < 0:
+            self.model_complete.action_cursor_up()
+        else:
+            self.model_complete.action_cursor_down()
 
     @on(PromptTextArea.SlashAccept)
     def on_prompt_text_area_slash_accept(self, event: PromptTextArea.SlashAccept) -> None:
@@ -376,6 +440,12 @@ class MotherApp(App[None]):
         if event.text_area.slash_complete_active:
             self._hide_slash_complete()
 
+    @on(PromptTextArea.ModelDismiss)
+    def on_prompt_text_area_model_dismiss(self, event: PromptTextArea.ModelDismiss) -> None:
+        """Dismiss inline model autocomplete without changing prompt text."""
+        if event.text_area.model_complete_active:
+            self._hide_model_complete()
+
     @on(PromptTextArea.SlashSubmit)
     async def on_prompt_text_area_slash_submit(self, event: PromptTextArea.SlashSubmit) -> None:
         """Submit built-in slash commands with Enter instead of inserting a newline."""
@@ -384,18 +454,23 @@ class MotherApp(App[None]):
 
     @on(OptionList.OptionSelected)
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """Insert slash commands selected directly from the popup list."""
-        if event.option_list is not self.slash_complete or event.option.id is None:
+        """Handle prompt popup selections from slash and model helpers."""
+        if event.option_list is self.slash_complete and event.option.id is not None:
+            selected = next(
+                (
+                    command
+                    for command in self.slash_complete.matches
+                    if command.command == event.option.id
+                ),
+                None,
+            )
+            self._apply_slash_completion(selected)
             return
-        selected = next(
-            (
-                command
-                for command in self.slash_complete.matches
-                if command.command == event.option.id
-            ),
-            None,
-        )
-        self._apply_slash_completion(selected)
+
+        if event.option_list is self.model_complete and event.option.id is not None:
+            self._hide_model_complete()
+            _ = self.prompt_input.clear()
+            self.action_switch_model(event.option.id)
 
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
@@ -411,6 +486,20 @@ class MotherApp(App[None]):
             return
         if isinstance(parsed, QuitAppCommand):
             self.action_quit_app()
+            return
+        if isinstance(parsed, ModelsCommand):
+            if parsed.query is None:
+                self.action_show_models()
+                return
+            model_id = self._resolve_model_query(parsed.query)
+            if model_id is None:
+                self.notify(
+                    f"No models found for '{parsed.query}'",
+                    title="Models",
+                    severity="warning",
+                )
+                return
+            self.action_switch_model(model_id)
             return
         if isinstance(parsed, ShellCommand):
             await self.run_user_command(parsed)

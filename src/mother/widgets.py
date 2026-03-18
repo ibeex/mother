@@ -12,8 +12,9 @@ from textual.widgets import Label, Markdown, OptionList, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 from textual.widgets.option_list import Option
 
+from mother.model_picker import filter_available_models, get_available_models
 from mother.slash_commands import SlashCommand, filter_slash_commands
-from mother.user_commands import should_submit_on_enter
+from mother.user_commands import should_expand_models_query, should_submit_on_enter
 
 
 class _PromptSubmitApp(Protocol):
@@ -32,6 +33,7 @@ class PromptTextArea(TextArea):
     """Main prompt input with slash-complete key handling."""
 
     slash_complete_active: bool = False
+    model_complete_active: bool = False
 
     @dataclass
     class SlashNavigate(Message):
@@ -68,6 +70,29 @@ class PromptTextArea(TextArea):
             return self.text_area
 
     @dataclass
+    class ModelNavigate(Message):
+        """Request that the model popup move its highlight."""
+
+        text_area: "PromptTextArea"
+        direction: int
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
+    class ModelDismiss(Message):
+        """Request that the model popup close."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
     class SlashSubmit(Message):
         """Request that the built-in slash command be submitted immediately."""
 
@@ -77,6 +102,19 @@ class PromptTextArea(TextArea):
         @override
         def control(self) -> "PromptTextArea":
             return self.text_area
+
+    def _selection_is_at_end(self) -> bool:
+        start, end = self.selection
+        return start == end == (0, len(self.text))
+
+    def _expand_models_query_prefix(self, character: str | None = None) -> bool:
+        """Expand ``/models`` to ``/models `` and optionally append a typed character."""
+        if not should_expand_models_query(self.text) or not self._selection_is_at_end():
+            return False
+        suffix = f" {character}" if character is not None else " "
+        self.load_text(f"{self.text}{suffix}")
+        self.move_cursor((0, len(self.text)), record_width=False)
+        return True
 
     async def handle_enter_key(self) -> None:
         """Select slash completions, submit built-ins, or insert a newline."""
@@ -99,15 +137,38 @@ class PromptTextArea(TextArea):
             _ = event.prevent_default()
             await self.handle_enter_key()
             return
+        if event.key == "tab":
+            if self.slash_complete_active:
+                _ = event.stop()
+                _ = event.prevent_default()
+                _ = self.post_message(self.SlashAccept(self))
+                return
+            if self._expand_models_query_prefix():
+                _ = event.stop()
+                _ = event.prevent_default()
+                return
+        if self.model_complete_active and event.key == "escape":
+            _ = event.stop()
+            _ = event.prevent_default()
+            _ = self.post_message(self.ModelDismiss(self))
+            return
         if self.slash_complete_active and event.key == "escape":
             _ = event.stop()
             _ = event.prevent_default()
             _ = self.post_message(self.SlashDismiss(self))
             return
+        if event.character is not None and not event.character.isspace():
+            if self._expand_models_query_prefix(event.character):
+                _ = event.stop()
+                _ = event.prevent_default()
+                return
         await super()._on_key(event)
 
     @override
     def action_cursor_up(self, select: bool = False) -> None:
+        if self.model_complete_active and not select:
+            _ = self.post_message(self.ModelNavigate(self, -1))
+            return
         if self.slash_complete_active and not select:
             _ = self.post_message(self.SlashNavigate(self, -1))
             return
@@ -115,6 +176,9 @@ class PromptTextArea(TextArea):
 
     @override
     def action_cursor_down(self, select: bool = False) -> None:
+        if self.model_complete_active and not select:
+            _ = self.post_message(self.ModelNavigate(self, 1))
+            return
         if self.slash_complete_active and not select:
             _ = self.post_message(self.SlashNavigate(self, 1))
             return
@@ -151,6 +215,42 @@ class SlashComplete(OptionList):
             return None
         try:
             return self.matches[highlighted]
+        except IndexError:
+            return None
+
+
+@final
+class ModelComplete(OptionList):
+    """Option list showing filtered model completions for ``/models``."""
+
+    def __init__(self) -> None:
+        super().__init__(id="model-complete")
+        self.matches: list[tuple[str, str]] = []
+
+    def update_query(self, query: str, current_model: str) -> bool:
+        """Refresh visible matches for the current model query."""
+        self.matches = filter_available_models(query, get_available_models())
+        _ = self.clear_options()
+        if not self.matches:
+            self.highlighted = None
+            return False
+        _ = self.add_options(
+            Option(
+                f"★ {label}" if model_id == current_model else label,
+                id=model_id,
+            )
+            for model_id, label in self.matches
+        )
+        self.highlighted = 0
+        return True
+
+    def highlighted_model_id(self) -> str | None:
+        """Return the currently highlighted model id, if any."""
+        highlighted = self.highlighted
+        if highlighted is None:
+            return None
+        try:
+            return self.matches[highlighted][0]
         except IndexError:
             return None
 

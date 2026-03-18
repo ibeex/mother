@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from llm.models import Conversation
 
 from mother import MotherApp, MotherConfig
-from mother.widgets import PromptTextArea, StatusLine
+from mother.widgets import ModelComplete, PromptTextArea, StatusLine
 
 
 def test_app_starts_in_conversational_mode():
@@ -101,6 +101,121 @@ def test_selected_slash_command_submits_on_second_enter() -> None:
                 await pilot.press("enter")
                 await pilot.pause()
                 exit_app.assert_called_once_with()
+
+    asyncio.run(run())
+
+
+def test_models_command_enter_opens_model_picker() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch.object(app, "action_show_models") as show_models,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models")
+                await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                show_models.assert_called_once_with()
+
+    asyncio.run(run())
+
+
+def test_models_command_tab_opens_inline_model_picker() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        available_models = [
+            ("gpt-5", "gpt-5"),
+            ("claude-opus-4-1", "claude-opus-4-1 — Opus"),
+        ]
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch("mother.widgets.get_available_models", return_value=available_models),
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models")
+                text_area.move_cursor((0, len("/models")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("tab")
+                await pilot.pause()
+
+                model_complete = app.query_one(ModelComplete)
+                assert text_area.text == "/models "
+                assert model_complete.display is True
+                assert text_area.model_complete_active is True
+
+    asyncio.run(run())
+
+
+def test_models_command_typed_character_expands_query() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        available_models = [("claude-opus-4-1", "claude-opus-4-1 — Opus")]
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch("mother.widgets.get_available_models", return_value=available_models),
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models")
+                text_area.move_cursor((0, len("/models")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("o")
+                await pilot.pause()
+
+                model_complete = app.query_one(ModelComplete)
+                assert text_area.text == "/models o"
+                assert model_complete.display is True
+                assert text_area.model_complete_active is True
+
+    asyncio.run(run())
+
+
+def test_models_command_query_enter_switches_model() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        available_models = [
+            ("claude-opus-4-1", "claude-opus-4-1 — Opus"),
+            ("gpt-5", "gpt-5"),
+        ]
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch("mother.widgets.get_available_models", return_value=available_models),
+            patch("mother.model_picker.get_available_models", return_value=available_models),
+            patch.object(app, "action_switch_model") as switch_model,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models opus")
+                await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                switch_model.assert_called_once_with("claude-opus-4-1")
 
     asyncio.run(run())
 

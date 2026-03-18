@@ -18,6 +18,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/save", "Save the current session to markdown"),
     SlashCommand("/quit", "Quit Mother"),
     SlashCommand("/exit", "Quit Mother"),
+    SlashCommand("/models", "Browse and switch models"),
 )
 
 
