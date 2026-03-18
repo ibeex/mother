@@ -78,6 +78,11 @@ Response.grouped:focus {
     border: none;
 }
 
+Prompt > MarkdownBlock:last-child,
+Response > MarkdownBlock:last-child {
+    margin-bottom: 0;
+}
+
 ThinkingOutput.grouped {
     border: none;
     background: transparent;
