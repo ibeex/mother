@@ -1,18 +1,32 @@
 #prompt-area {
     height: auto;
-    border-top: wide $primary;
+    border-top: solid $foreground 10%;
+    padding: 0 1;
+    background: $background;
+}
+
+#prompt-row {
+    height: auto;
+    background: $surface 30%;
+}
+
+#prompt-row:focus-within {
+    background: $surface 45%;
 }
 
 #prompt-input {
-    height: 6;
+    width: 1fr;
+    height: 4;
     border: none;
+    background: transparent;
+    padding: 0;
 }
 
 #slash-complete,
 #slash-argument-complete,
 #model-complete {
-    margin: 0 1;
+    margin: 0 0 0 3;
     max-height: 8;
-    border: round $primary;
+    border: round $primary 18%;
     background: $surface;
 }

@@ -22,6 +22,9 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # LLM model to use (e.g. "gpt-4o", "gpt-5", "claude-3-5-sonnet-latest")
 # model = "gpt-5"
 
+# Built-in Textual theme.
+# theme = "catppuccin-mocha"
+
 # Base system prompt sent with every conversation.
 # Mother appends runtime context such as date, OS, current directory, mode, and tools.
 # system_prompt = "You are Mother, a concise and helpful assistant."
@@ -51,6 +54,7 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 @dataclass
 class MotherConfig:
     model: str = "gpt-5"
+    theme: str = "catppuccin-mocha"
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     reasoning_effort: str = DEFAULT_REASONING_EFFORT
     tools_enabled: bool = False
@@ -87,6 +91,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
     )
     return MotherConfig(
         model=cast(str, data.get("model", MotherConfig.model)),
+        theme=cast(str, data.get("theme", MotherConfig.theme)),
         system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
         reasoning_effort=reasoning_effort,
         tools_enabled=cast(bool, data.get("tools_enabled", MotherConfig.tools_enabled)),
@@ -106,6 +111,7 @@ def apply_cli_overrides(
 ) -> MotherConfig:
     return MotherConfig(
         model=model if model is not None else config.model,
+        theme=config.theme,
         system_prompt=system if system is not None else config.system_prompt,
         reasoning_effort=config.reasoning_effort,
         tools_enabled=config.tools_enabled,

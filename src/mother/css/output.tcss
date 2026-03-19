@@ -8,7 +8,7 @@ ShellOutput {
 }
 
 ShellOutput:focus {
-    background: $accent 10%;
+    background: $accent 6%;
 }
 
 ToolOutput {
@@ -21,7 +21,7 @@ ToolOutput {
 }
 
 ToolOutput:focus {
-    background: $secondary 10%;
+    background: $secondary 6%;
 }
 
 ThinkingOutput {
@@ -34,5 +34,5 @@ ThinkingOutput {
 }
 
 ThinkingOutput:focus {
-    background: $primary 10%;
+    background: $primary 6%;
 }

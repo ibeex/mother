@@ -6,9 +6,9 @@ from typing import ClassVar, Protocol, cast, final, override
 import pyperclip
 from textual import events
 from textual.binding import BindingType
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
-from textual.widgets import Label, Markdown, OptionList, TextArea
+from textual.widgets import Label, Markdown, OptionList, Static, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 from textual.widgets.option_list import Option
 
@@ -529,14 +529,34 @@ class CopyableMarkdown(Markdown):
 
 
 class TurnLabel(Label):
-    """Section label used inside a grouped conversation turn."""
+    """Compact label used inside conversation and output sections."""
 
     def __init__(self, text: str, *, classes: str) -> None:
         super().__init__(text, markup=False, classes=classes)
 
 
+@final
+class WelcomeBanner(Static):
+    """UI-only startup greeting shown in the chat pane."""
+
+    DEFAULT_TEXT: ClassVar[str] = (
+        " __  __  ____  _______ _    _ ______ _____  \n"
+        "|  \\/  |/ __ \\|__   __| |  | |  ____|  __ \\ \n"
+        "| \\  / | |  | |  | |  | |__| | |__  | |__) |\n"
+        "| |\\/| | |  | |  | |  |  __  |  __| |  _  / \n"
+        "| |  | | |__| |  | |  | |  | | |____| | \\ \\ \n"
+        "|_|  |_|\\____/   |_|  |_|  |_|______|_|  \\_\\\n"
+        "\n"
+        "INTERFACE 2037 READY\n"
+        "MU-TH-UR 6000 SYSTEM"
+    )
+
+    def __init__(self, text: str | None = None) -> None:
+        super().__init__(text or self.DEFAULT_TEXT, markup=False, id="welcome-banner")
+
+
 class ConversationTurn(Vertical):
-    """A grouped prompt / thinking / response block with shared outer border."""
+    """A compact prompt / thinking / response block."""
 
     DEFAULT_CSS: ClassVar[str] = """
     ConversationTurn {
@@ -554,45 +574,40 @@ class ConversationTurn(Vertical):
         response_text: str = "",
         include_thinking: bool = False,
     ) -> None:
-        children: list[Vertical] = []
-        has_prompt = prompt_text is not None
+        children: list[Vertical | Horizontal] = []
 
         self.prompt_widget: Prompt | None = None
         if prompt_text is not None:
             self.prompt_widget = Prompt(prompt_text)
             _ = self.prompt_widget.add_class("grouped")
             children.append(
-                Vertical(
-                    TurnLabel("You", classes="turn-title prompt-title"),
+                Horizontal(
+                    TurnLabel(">", classes="turn-gutter prompt-gutter"),
                     self.prompt_widget,
                     classes="turn-section prompt-section",
                 )
             )
 
         self.thinking_output: ThinkingOutput | None = None
-        self.thinking_section: Vertical | None = None
+        self.thinking_section: Horizontal | None = None
         if include_thinking:
             self.thinking_output = ThinkingOutput()
             _ = self.thinking_output.add_class("grouped")
             self.thinking_output.set_text("")
-            self.thinking_section = Vertical(
-                TurnLabel("Mother · thinking", classes="turn-title thinking-title"),
+            self.thinking_section = Horizontal(
+                TurnLabel("…", classes="turn-gutter thinking-gutter"),
                 self.thinking_output,
-                classes="turn-section thinking-section separated",
+                classes="turn-section thinking-section",
             )
             self.thinking_section.display = False
             children.append(self.thinking_section)
 
         self.response_widget: Response = Response(response_text)
         _ = self.response_widget.add_class("grouped")
-        response_classes = "turn-section response-section"
-        if has_prompt or include_thinking:
-            response_classes += " separated"
         children.append(
             Vertical(
-                TurnLabel("Mother", classes="turn-title response-title"),
                 self.response_widget,
-                classes=response_classes,
+                classes="turn-section response-section",
             )
         )
 

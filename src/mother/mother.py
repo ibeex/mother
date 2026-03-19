@@ -22,7 +22,7 @@ from llm.models import (
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, OptionList, TextArea
 from textual.worker import Worker, WorkerState
@@ -78,6 +78,8 @@ from mother.widgets import (
     StatusLine,
     ThinkingOutput,
     ToolOutput,
+    TurnLabel,
+    WelcomeBanner,
 )
 
 CSS_DIR = Path(__file__).resolve().parent / "css"
@@ -115,6 +117,7 @@ class MotherApp(App[None]):
         super().__init__()
         base = config or MotherConfig()
         self.config: MotherConfig = apply_cli_overrides(base, model_name, system)
+        self.theme = self.config.theme  # pyright: ignore[reportUnannotatedClassAttribute]
         self.agent_mode: bool = self.config.tools_enabled
         self.model: Model | None = None
         self.conversation: Conversation | None = None
@@ -131,7 +134,7 @@ class MotherApp(App[None]):
         yield Header()
         with Vertical(id="main-pane"):
             with VerticalScroll(id="chat-view"):
-                yield ConversationTurn(response_text="INTERFACE 2037 READY FOR INQUIRY")
+                yield WelcomeBanner()
             with Vertical(id="prompt-area"):
                 slash_complete = SlashComplete(SLASH_COMMANDS)
                 slash_complete.display = False
@@ -139,7 +142,9 @@ class MotherApp(App[None]):
                 slash_argument_complete = SlashArgumentComplete()
                 slash_argument_complete.display = False
                 yield slash_argument_complete
-                yield PromptTextArea(id="prompt-input")
+                with Horizontal(id="prompt-row"):
+                    yield TurnLabel(">", classes="turn-gutter input-gutter")
+                    yield PromptTextArea(id="prompt-input")
         yield StatusLine(
             self.config.model,
             self.agent_mode,
