@@ -1,5 +1,6 @@
 """Tests for clipboard image paste support."""
 
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -9,11 +10,12 @@ from llm.models import Attachment
 from PIL import Image
 
 from mother import MotherApp
-from mother.clipboard import save_clipboard_image
+from mother import clipboard as clipboard_module
+from mother.clipboard import MAX_IMAGE_DIMENSION, save_clipboard_image
 from mother.widgets import PromptTextArea
 
 
-def test_save_clipboard_image_writes_temp_png(tmp_path: Path) -> None:
+def test_save_clipboard_image_writes_temp_image(tmp_path: Path) -> None:
     image = Image.new("RGBA", (2, 2), color=(255, 0, 0, 255))
 
     with patch("mother.clipboard.ImageGrab.grabclipboard", return_value=image):
@@ -22,6 +24,60 @@ def test_save_clipboard_image_writes_temp_png(tmp_path: Path) -> None:
     assert output_path is not None
     assert output_path.exists()
     assert output_path.suffix == ".png"
+
+
+def test_save_clipboard_image_skips_optimization_when_under_limits(tmp_path: Path) -> None:
+    image = Image.new("RGBA", (32, 32), color=(255, 0, 0, 255))
+
+    with (
+        patch("mother.clipboard.ImageGrab.grabclipboard", return_value=image),
+        patch("mother.clipboard._encoded_candidates", side_effect=AssertionError),
+    ):
+        output_path = save_clipboard_image(tmp_path)
+
+    assert output_path is not None
+    assert output_path.exists()
+
+
+def test_save_clipboard_image_resizes_large_images(tmp_path: Path) -> None:
+    image = Image.new("RGB", (4000, 1200), color="navy")
+
+    with patch("mother.clipboard.ImageGrab.grabclipboard", return_value=image):
+        output_path = save_clipboard_image(tmp_path)
+
+    assert output_path is not None
+    with Image.open(output_path) as saved_image:
+        assert max(saved_image.size) == MAX_IMAGE_DIMENSION
+
+
+def test_save_clipboard_image_corrects_exif_orientation(tmp_path: Path) -> None:
+    image = Image.new("RGB", (40, 20), color="green")
+    exif = Image.Exif()
+    _ = exif.__setitem__(274, 6)
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    _ = buffer.seek(0)
+
+    with Image.open(buffer) as clipboard_image:
+        with patch("mother.clipboard.ImageGrab.grabclipboard", return_value=clipboard_image):
+            output_path = save_clipboard_image(tmp_path)
+
+    assert output_path is not None
+    with Image.open(output_path) as saved_image:
+        assert saved_image.size == (20, 40)
+
+
+def test_save_clipboard_image_respects_size_limit(tmp_path: Path) -> None:
+    image = Image.effect_noise((1200, 1200), 100).convert("RGB")
+
+    with (
+        patch.object(clipboard_module, "MAX_IMAGE_BYTES", 50_000),
+        patch("mother.clipboard.ImageGrab.grabclipboard", return_value=image),
+    ):
+        output_path = save_clipboard_image(tmp_path)
+
+    assert output_path is not None
+    assert output_path.stat().st_size <= 50_000
 
 
 def test_prompt_text_area_action_paste_prefers_clipboard_image() -> None:

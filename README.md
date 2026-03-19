@@ -26,6 +26,7 @@ checks the system clipboard for an image first.
 
 - if an image is present, Mother saves it to a temporary file and inserts that path into the prompt
 - the pasted image is also attached to the next model request when that path remains in the message
+- pasted images are EXIF-orientation corrected, and only resized/optimized when they exceed 2000×2000 or a 4.5MB upload budget
 - if no image is present, `Ctrl+V` falls back to normal text paste
 
 Your selected model must support image attachments for multimodal prompts to work.
