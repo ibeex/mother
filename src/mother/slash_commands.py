@@ -91,14 +91,12 @@ def _filter_argument_choices(
     ]
 
 
-
 def filter_model_argument_choices(query: str) -> list[SlashArgumentChoice]:
     """Return inline completion choices for ``/models``."""
     return [
         SlashArgumentChoice(model_id, label)
         for model_id, label in filter_available_models(query, get_available_models())
     ]
-
 
 
 def resolve_model_argument(query: str) -> str | None:
@@ -114,11 +112,9 @@ def resolve_model_argument(query: str) -> str | None:
     return matches[0].value
 
 
-
 def filter_reasoning_argument_choices(query: str) -> list[SlashArgumentChoice]:
     """Return inline completion choices for ``/reasoning``."""
     return _filter_argument_choices(_REASONING_ARGUMENT_CHOICES, query)
-
 
 
 def resolve_reasoning_argument(query: str) -> str | None:
@@ -151,11 +147,9 @@ _SLASH_ARGUMENT_SPECS_BY_COMMAND: dict[str, SlashArgumentSpec] = {
 }
 
 
-
 def get_slash_argument_spec(command: str) -> SlashArgumentSpec | None:
     """Return inline completion metadata for a slash command, if configured."""
     return _SLASH_ARGUMENT_SPECS_BY_COMMAND.get(command.lower())
-
 
 
 def current_slash_argument_query(text: str) -> SlashArgumentQuery | None:
@@ -173,13 +167,11 @@ def current_slash_argument_query(text: str) -> SlashArgumentQuery | None:
     return None
 
 
-
 def should_expand_slash_argument(text: str) -> bool:
     """Return whether Tab or a typed character should expand a slash argument command."""
     if not text or "\n" in text:
         return False
     return text.lstrip().lower() in _SLASH_ARGUMENT_SPECS_BY_COMMAND
-
 
 
 def current_slash_query(text: str) -> str | None:
@@ -195,7 +187,6 @@ def current_slash_query(text: str) -> str | None:
     if any(character.isspace() for character in candidate[1:]):
         return None
     return candidate
-
 
 
 def filter_slash_commands(

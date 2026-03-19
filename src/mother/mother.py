@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path, PurePath
+from time import perf_counter
 from typing import ClassVar, cast, override
 
 import click
@@ -126,6 +127,7 @@ class MotherApp(App[None]):
         self._pending_image_attachments: dict[str, Attachment] = {}
         self._tool_outputs: dict[str, ToolOutput] = {}
         self._last_context_tokens: int | None = None
+        self._last_response_time_seconds: float | None = None
         self._suppress_prompt_completion_once: str | None = None
         self.auto_scroll_enabled: bool = True
 
@@ -151,6 +153,7 @@ class MotherApp(App[None]):
             self._last_context_tokens,
             self.auto_scroll_enabled,
             self._status_reasoning_effort(),
+            self._last_response_time_seconds,
         )
         yield Footer()
 
@@ -390,6 +393,7 @@ class MotherApp(App[None]):
         self.model = llm.get_model(model_id)
         self.conversation = self.model.conversation()
         self._last_context_tokens = None
+        self._last_response_time_seconds = None
         self._record_session_event(
             "model_change",
             {"from": previous_model, "model": model_id},
@@ -478,7 +482,13 @@ class MotherApp(App[None]):
             context_tokens=self._last_context_tokens,
             auto_scroll_enabled=self.auto_scroll_enabled,
             reasoning_effort=self._status_reasoning_effort(),
+            last_response_time_seconds=self._last_response_time_seconds,
         )
+
+    def _remember_last_response_time(self, duration_seconds: float) -> None:
+        """Store the most recent successful model-response duration and refresh the status line."""
+        self._last_response_time_seconds = max(0.0, duration_seconds)
+        self._update_statusline()
 
     def _refresh_context_size(self) -> None:
         """Capture the latest context token count, if the provider reports one."""
@@ -1116,6 +1126,7 @@ class MotherApp(App[None]):
         llm_response: Iterable[str],
         response: Response,
         thinking_output: ThinkingOutput | None = None,
+        started_at: float | None = None,
     ) -> str | None:
         """Stream an LLM response into the widget and return the final reply text."""
         try:
@@ -1126,6 +1137,11 @@ class MotherApp(App[None]):
 
         response.reset_state(full_text)
         self._refresh_context_size()
+        if started_at is not None:
+            _ = self.call_from_thread(
+                self._remember_last_response_time,
+                perf_counter() - started_at,
+            )
         return full_text
 
     def _show_error(self, response: Response, error_text: str) -> None:
@@ -1160,6 +1176,7 @@ class MotherApp(App[None]):
             tool_names=tool_names,
             attachment_paths=attachment_paths,
         )
+        started_at = perf_counter()
         llm_response = self._request_llm_response(
             conversation=conversation,
             prompt=prompt,
@@ -1171,7 +1188,12 @@ class MotherApp(App[None]):
         if llm_response is None:
             return
 
-        full_text = self._stream_llm_response(llm_response, response, thinking_output)
+        full_text = self._stream_llm_response(
+            llm_response,
+            response,
+            thinking_output,
+            started_at=started_at,
+        )
         if full_text is not None:
             self._record_session_message("assistant", full_text)
 

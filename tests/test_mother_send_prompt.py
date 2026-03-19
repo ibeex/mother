@@ -371,6 +371,27 @@ def test_stream_llm_response_refreshes_context_size_on_success():
     refresh_context_size.assert_called_once_with()
 
 
+def test_stream_llm_response_records_last_response_time_on_success() -> None:
+    app = MotherApp()
+    response = _FakeResponse()
+
+    with (
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "_refresh_context_size"),
+        patch.object(app, "_update_statusline") as update_statusline,
+        patch("mother.mother.perf_counter", return_value=11.25),
+    ):
+        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
+            ["hello", " world"],
+            cast(Response, cast(object, response)),
+            started_at=10.0,
+        )
+
+    assert full_text == "hello world"
+    assert app._last_response_time_seconds == 1.25  # pyright: ignore[reportPrivateUsage]
+    update_statusline.assert_called_once_with()
+
+
 def test_stream_llm_response_shows_error_when_streaming_fails():
     app = MotherApp()
     response = _FakeResponse()

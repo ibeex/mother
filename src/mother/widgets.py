@@ -12,6 +12,7 @@ from textual.widgets import Label, Markdown, OptionList, Static, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 from textual.widgets.option_list import Option
 
+from mother.clipboard import read_clipboard_text
 from mother.slash_commands import (
     SlashArgumentChoice,
     SlashCommand,
@@ -176,6 +177,13 @@ class PromptTextArea(TextArea):
             if result := self._replace_via_keyboard(image_path, *self.selection):
                 self.move_cursor(result.end_location)
             return
+
+        clipboard_text = read_clipboard_text()
+        if clipboard_text is not None:
+            if result := self._replace_via_keyboard(clipboard_text, *self.selection):
+                self.move_cursor(result.end_location)
+            return
+
         super().action_paste()
 
     @override
@@ -636,6 +644,7 @@ class StatusLine(Label):
         context_tokens: int | None = None,
         auto_scroll_enabled: bool = True,
         reasoning_effort: str | None = None,
+        last_response_time_seconds: float | None = None,
     ) -> None:
         super().__init__(
             self.format_status(
@@ -644,10 +653,25 @@ class StatusLine(Label):
                 context_tokens,
                 auto_scroll_enabled,
                 reasoning_effort,
+                last_response_time_seconds,
             ),
             id="status-line",
             markup=False,
         )
+
+    @staticmethod
+    def format_response_time(seconds: float | None) -> str | None:
+        """Format the last completed model-response duration for the status line."""
+        if seconds is None:
+            return None
+        if seconds < 60:
+            return f"{seconds:.1f}s"
+        whole_seconds = round(seconds)
+        minutes, remaining_seconds = divmod(whole_seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {remaining_seconds}s"
+        hours, remaining_minutes = divmod(minutes, 60)
+        return f"{hours}h {remaining_minutes}m {remaining_seconds}s"
 
     @staticmethod
     def format_status(
@@ -656,6 +680,7 @@ class StatusLine(Label):
         context_tokens: int | None,
         auto_scroll_enabled: bool = True,
         reasoning_effort: str | None = None,
+        last_response_time_seconds: float | None = None,
     ) -> str:
         """Format the text displayed in the status line."""
         model = model_name or "?"
@@ -670,6 +695,9 @@ class StatusLine(Label):
         parts = [model, agent, context, auto_scroll]
         if reasoning_effort is not None:
             parts.append(reasoning_effort)
+        response_time = StatusLine.format_response_time(last_response_time_seconds)
+        if response_time is not None:
+            parts.append(f"last {response_time}")
         return " · ".join(parts)
 
     def set_status(
@@ -680,8 +708,9 @@ class StatusLine(Label):
         context_tokens: int | None,
         auto_scroll_enabled: bool,
         reasoning_effort: str | None,
+        last_response_time_seconds: float | None,
     ) -> None:
-        """Update the displayed model, agent mode, context size, follow mode, and reasoning."""
+        """Update the displayed model, agent mode, context size, follow mode, reasoning, and last response time."""
         self.update(
             self.format_status(
                 model_name,
@@ -689,6 +718,7 @@ class StatusLine(Label):
                 context_tokens,
                 auto_scroll_enabled,
                 reasoning_effort,
+                last_response_time_seconds,
             )
         )
 

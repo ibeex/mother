@@ -49,14 +49,12 @@ class ReasoningCommand:
     effort: str | None = None
 
 
-
 def current_model_query(text: str) -> str | None:
     """Return the active ``/models`` query for inline model completion."""
     query = current_slash_argument_query(text)
     if query is None or query.command != _MODELS_COMMAND:
         return None
     return query.query
-
 
 
 def current_reasoning_query(text: str) -> str | None:
@@ -67,17 +65,14 @@ def current_reasoning_query(text: str) -> str | None:
     return query.query
 
 
-
 def should_expand_models_query(text: str) -> bool:
     """Return whether Tab or a typed character should expand ``/models`` to ``/models ``."""
     return text.lstrip().lower() == _MODELS_COMMAND and should_expand_slash_argument(text)
 
 
-
 def should_expand_reasoning_query(text: str) -> bool:
     """Return whether Tab or a typed character should expand ``/reasoning`` to ``/reasoning ``."""
     return text.lstrip().lower() == _REASONING_COMMAND and should_expand_slash_argument(text)
-
 
 
 def should_submit_on_enter(text: str) -> bool:
@@ -89,7 +84,6 @@ def should_submit_on_enter(text: str) -> bool:
         parsed,
         SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand | ReasoningCommand,
     )
-
 
 
 def parse_user_input(

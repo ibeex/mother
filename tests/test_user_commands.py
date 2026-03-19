@@ -104,12 +104,10 @@ def test_current_model_query_detects_models_arguments():
     assert current_model_query("/models") is None
 
 
-
 def test_current_reasoning_query_detects_reasoning_arguments():
     assert current_reasoning_query("/reasoning high") == "high"
     assert current_reasoning_query("/reasoning   ") == ""
     assert current_reasoning_query("/reasoning") is None
-
 
 
 def test_should_expand_models_query_only_for_exact_command():
@@ -117,7 +115,6 @@ def test_should_expand_models_query_only_for_exact_command():
     assert should_expand_models_query(" /models") is True
     assert should_expand_models_query("/models ") is False
     assert should_expand_models_query("/models opus") is False
-
 
 
 def test_should_expand_reasoning_query_only_for_exact_command():

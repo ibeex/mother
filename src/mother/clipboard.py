@@ -8,6 +8,7 @@ from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
+import pyperclip
 from PIL import Image as ImageModule
 from PIL import ImageGrab, ImageOps
 from PIL.Image import Image
@@ -142,6 +143,14 @@ def _optimize_image(image: Image) -> EncodedClipboardImage:
     raise ClipboardImageError(
         f"Clipboard image is too large even after optimization. Limit is {MAX_IMAGE_BYTES / 1_000_000:.1f}MB.{details}"
     )
+
+
+def read_clipboard_text() -> str | None:
+    """Return text from the system clipboard when available."""
+    try:
+        return pyperclip.paste()
+    except pyperclip.PyperclipException:
+        return None
 
 
 def save_clipboard_image(temp_dir: Path | None = None) -> Path | None:

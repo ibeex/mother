@@ -525,6 +525,32 @@ def test_statusline_formats_reasoning_when_supported() -> None:
     )
 
 
+def test_statusline_formats_last_response_time() -> None:
+    assert (
+        StatusLine.format_status(
+            "test-model",
+            True,
+            256,
+            False,
+            "high",
+            1.25,
+        )
+        == "test-model · on · 256 · manual · high · last 1.2s"
+    )
+
+
+def test_statusline_formats_subsecond_last_response_time() -> None:
+    assert StatusLine.format_response_time(0.806) == "0.8s"
+
+
+def test_statusline_formats_minute_last_response_time() -> None:
+    assert StatusLine.format_response_time(61.0) == "1m 1s"
+
+
+def test_statusline_formats_hour_last_response_time() -> None:
+    assert StatusLine.format_response_time(3661.0) == "1h 1m 1s"
+
+
 def test_status_reasoning_effort_visible_for_reasoning_models() -> None:
     app = MotherApp(config=MotherConfig(reasoning_effort="none"))
     app.model = cast(

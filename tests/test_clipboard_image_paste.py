@@ -93,14 +93,33 @@ def test_prompt_text_area_action_paste_prefers_clipboard_image() -> None:
     assert text_area.text == "/tmp/pasted-image.png"
 
 
-def test_prompt_text_area_action_paste_falls_back_to_text_clipboard() -> None:
+def test_prompt_text_area_action_paste_reads_system_text_clipboard() -> None:
+    text_area = PromptTextArea()
+    fake_app = SimpleNamespace(
+        clipboard="ignored internal clipboard",
+        capture_clipboard_image=lambda: None,
+    )
+
+    with (
+        patch.object(PromptTextArea, "app", new_callable=PropertyMock, return_value=fake_app),
+        patch("mother.widgets.read_clipboard_text", return_value="plain text"),
+    ):
+        text_area.action_paste()
+
+    assert text_area.text == "plain text"
+
+
+def test_prompt_text_area_action_paste_falls_back_to_internal_text_clipboard() -> None:
     text_area = PromptTextArea()
     fake_app = SimpleNamespace(
         clipboard="plain text",
         capture_clipboard_image=lambda: None,
     )
 
-    with patch.object(PromptTextArea, "app", new_callable=PropertyMock, return_value=fake_app):
+    with (
+        patch.object(PromptTextArea, "app", new_callable=PropertyMock, return_value=fake_app),
+        patch("mother.widgets.read_clipboard_text", return_value=None),
+    ):
         text_area.action_paste()
 
     assert text_area.text == "plain text"

@@ -34,7 +34,6 @@ def test_current_slash_argument_query_detects_models_arguments() -> None:
     assert query.query == "opus"
 
 
-
 def test_current_slash_argument_query_detects_reasoning_arguments() -> None:
     query = current_slash_argument_query(" /reasoning hi ")
 
@@ -43,19 +42,16 @@ def test_current_slash_argument_query_detects_reasoning_arguments() -> None:
     assert query.query == "hi"
 
 
-
 def test_should_expand_slash_argument_for_supported_commands() -> None:
     assert should_expand_slash_argument("/models") is True
     assert should_expand_slash_argument(" /reasoning") is True
     assert should_expand_slash_argument("/save") is False
 
 
-
 def test_get_slash_argument_spec_returns_registered_commands() -> None:
     assert get_slash_argument_spec("/models") is not None
     assert get_slash_argument_spec("/reasoning") is not None
     assert get_slash_argument_spec("/save") is None
-
 
 
 def test_filter_slash_commands_matches_save_prefix() -> None:
