@@ -10,7 +10,7 @@ from threading import RLock
 from typing import Literal, TypedDict, cast
 from uuid import uuid4
 
-SESSION_VERSION = 2
+SESSION_VERSION = 3
 DEFAULT_SESSIONS_DIR = Path.home() / ".mother" / "sessions"
 LAST_SESSION_FILE_NAME = "last"
 
@@ -43,6 +43,7 @@ class PromptEntry(TypedDict):
     system_prompt: str
     agent_mode: bool
     tool_names: list[str]
+    attachment_paths: list[str]
 
 
 class ToolCallEntry(TypedDict):
@@ -236,6 +237,7 @@ class SessionManager:
         system_prompt: str,
         agent_mode: bool,
         tool_names: list[str],
+        attachment_paths: list[str],
     ) -> None:
         """Record the exact prompt context sent to the LLM for a turn."""
         entry: PromptEntry = {
@@ -247,6 +249,7 @@ class SessionManager:
             "system_prompt": system_prompt,
             "agent_mode": agent_mode,
             "tool_names": tool_names,
+            "attachment_paths": attachment_paths,
         }
         with self._lock:
             self._write(entry)
@@ -532,12 +535,17 @@ class SessionManager:
             if entry["tool_names"]
             else "(none)"
         )
+        attachment_paths = entry.get("attachment_paths", [])
+        attachments = (
+            ", ".join(f"`{path}`" for path in attachment_paths) if attachment_paths else "(none)"
+        )
         lines = [
             "### Prompt Context",
             "",
             f"- Time: `{entry['ts']}`",
             f"- Mode: `{'agent' if entry['agent_mode'] else 'chat'}`",
             f"- Tools available: {tools_available}",
+            f"- Attachments: {attachments}",
             "",
         ]
         if previous_system_prompt is not None and entry["system_prompt"] != previous_system_prompt:

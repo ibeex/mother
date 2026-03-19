@@ -39,6 +39,7 @@ def test_session_save_writes_markdown_and_keeps_transient_jsonl_for_future_saves
         system_prompt="You are Mother.",
         agent_mode=False,
         tool_names=[],
+        attachment_paths=["/tmp/screenshot.png"],
     )
     manager.record_event("model_change", {"from": "gpt-test", "model": "gpt-4o-mini"})
     manager.record_tool_call(
@@ -66,6 +67,7 @@ def test_session_save_writes_markdown_and_keeps_transient_jsonl_for_future_saves
     assert "tool results" in markdown
     assert "Models seen: `gpt-test`, `gpt-4o-mini`" in markdown
     assert "### Prompt Context" in markdown
+    assert "Attachments: `/tmp/screenshot.png`" in markdown
     assert markdown.count("## System Prompt") == 1
     assert "### Tool Call · `bash`" in markdown
     assert "### Tool Result · `bash`" not in markdown
@@ -91,6 +93,7 @@ def test_prompt_context_does_not_repeat_same_system_prompt(tmp_path: Path):
         system_prompt="same prompt",
         agent_mode=False,
         tool_names=[],
+        attachment_paths=[],
     )
     manager.record_prompt(
         user_text="two",
@@ -98,6 +101,7 @@ def test_prompt_context_does_not_repeat_same_system_prompt(tmp_path: Path):
         system_prompt="same prompt",
         agent_mode=False,
         tool_names=[],
+        attachment_paths=[],
     )
 
     output_path = manager.save_as_markdown()

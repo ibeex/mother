@@ -4,7 +4,7 @@ from collections.abc import Callable, Iterable, Iterator
 from typing import cast, final
 from unittest.mock import patch
 
-from llm.models import Conversation, ToolDef
+from llm.models import Attachment, Conversation, ToolDef
 
 from mother import MotherApp, MotherConfig
 from mother.widgets import Response
@@ -42,12 +42,15 @@ class _UnsupportedToolsConversation:
         self.prompt_calls: int = 0
         self.chain_limit: int | None = None
         self.prompt_systems: list[str | None] = []
+        self.chain_attachments: list[list[Attachment] | None] = []
+        self.prompt_attachments: list[list[Attachment] | None] = []
 
     def chain(
         self,
         prompt: str,
         *,
         system: str | None = None,
+        attachments: list[Attachment] | None = None,
         tools: list[ToolDef] | None = None,
         chain_limit: int | None = None,
         before_call: object | None = None,
@@ -60,12 +63,20 @@ class _UnsupportedToolsConversation:
         _ = after_call
         self.chain_calls += 1
         self.chain_limit = chain_limit
+        self.chain_attachments.append(attachments)
         raise RuntimeError("test-model does not support tools")
 
-    def prompt(self, prompt: str, *, system: str | None = None) -> Iterable[str]:
+    def prompt(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        attachments: list[Attachment] | None = None,
+    ) -> Iterable[str]:
         _ = prompt
         self.prompt_systems.append(system)
         self.prompt_calls += 1
+        self.prompt_attachments.append(attachments)
         return ["fallback", " response"]
 
 
@@ -76,6 +87,7 @@ class _FailingConversation:
         prompt: str,
         *,
         system: str | None = None,
+        attachments: list[Attachment] | None = None,
         tools: list[ToolDef] | None = None,
         chain_limit: int | None = None,
         before_call: object | None = None,
@@ -83,16 +95,40 @@ class _FailingConversation:
     ) -> Iterable[str]:
         _ = prompt
         _ = system
+        _ = attachments
         _ = tools
         _ = chain_limit
         _ = before_call
         _ = after_call
         raise RuntimeError("boom")
 
-    def prompt(self, prompt: str, *, system: str | None = None) -> Iterable[str]:
+    def prompt(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        attachments: list[Attachment] | None = None,
+    ) -> Iterable[str]:
         _ = prompt
         _ = system
+        _ = attachments
         raise AssertionError("prompt should not be called")
+
+
+@final
+class _PromptOnlyConversation:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None, list[Attachment] | None]] = []
+
+    def prompt(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        attachments: list[Attachment] | None = None,
+    ) -> Iterable[str]:
+        self.calls.append((prompt, system, attachments))
+        return ["ok"]
 
 
 def _call_from_thread(callback: object, *args: object) -> object:
@@ -111,6 +147,8 @@ def test_request_llm_response_falls_back_when_model_rejects_tools():
     conversation = _UnsupportedToolsConversation()
     tools = cast(list[ToolDef], [object()])
 
+    attachment = Attachment(path="/tmp/pasted.png")
+
     with (
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "notify"),
@@ -120,6 +158,7 @@ def test_request_llm_response_falls_back_when_model_rejects_tools():
             prompt="hello",
             system="system",
             tools=tools,
+            attachments=[attachment],
             response=cast(Response, cast(object, response)),
         )
 
@@ -128,8 +167,10 @@ def test_request_llm_response_falls_back_when_model_rejects_tools():
     assert app.agent_mode is False
     assert conversation.chain_calls == 1
     assert conversation.chain_limit == 3
+    assert conversation.chain_attachments == [[attachment]]
     assert conversation.prompt_calls == 1
     assert conversation.prompt_systems == [app._build_system_prompt(None, agent_mode=False)]  # pyright: ignore[reportPrivateUsage]
+    assert conversation.prompt_attachments == [[attachment]]
     assert response.updated_texts == []
     assert response.reset_texts == []
 
@@ -146,6 +187,7 @@ def test_request_llm_response_shows_error_for_non_tool_failures():
             prompt="hello",
             system="system",
             tools=tools,
+            attachments=[Attachment(path="/tmp/pasted.png")],
             response=cast(Response, cast(object, response)),
         )
 
@@ -153,6 +195,26 @@ def test_request_llm_response_shows_error_for_non_tool_failures():
     assert app.agent_mode is True
     assert response.updated_texts == ["**Error:** boom"]
     assert response.reset_texts == ["**Error:** boom"]
+
+
+def test_request_llm_response_passes_attachments_without_tools():
+    app = MotherApp(config=MotherConfig(model="test-model"))
+    response = _FakeResponse()
+    attachment = Attachment(path="/tmp/pasted.png")
+    conversation = _PromptOnlyConversation()
+
+    llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
+        conversation=cast(Conversation, cast(object, conversation)),
+        prompt="hello",
+        system="system",
+        tools=None,
+        attachments=[attachment],
+        response=cast(Response, cast(object, response)),
+    )
+
+    assert llm_response is not None
+    assert list(llm_response) == ["ok"]
+    assert conversation.calls == [("hello", "system", [attachment])]
 
 
 def test_stream_llm_response_refreshes_context_size_on_success():

@@ -10,6 +10,7 @@ import click
 import llm
 from llm.models import (
     AfterCallSync,
+    Attachment,
     BeforeCallSync,
     Conversation,
     Model,
@@ -27,6 +28,7 @@ from textual.widgets import Footer, Header, OptionList, TextArea
 from textual.worker import Worker, WorkerState
 
 from mother.bash_execution import BashExecution, format_for_context
+from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.model_picker import (
     AgentModeProvider,
@@ -104,6 +106,7 @@ class MotherApp(App[None]):
         self.conversation: Conversation | None = None
         self.session_manager: SessionManager | None = session_manager
         self._pending_executions: list[BashExecution] = []
+        self._pending_image_attachments: dict[str, Attachment] = {}
         self._tool_outputs: dict[str, ToolOutput] = {}
         self._last_context_tokens: int | None = None
         self._suppress_prompt_completion_once: str | None = None
@@ -358,6 +361,26 @@ class MotherApp(App[None]):
             return "\n\n".join(context_parts) + "\n\n" + value
         return value
 
+    def capture_clipboard_image(self) -> str | None:
+        """Save a clipboard image to a temp file and register it as a pending attachment."""
+        try:
+            path = save_clipboard_image()
+        except ClipboardImageError as exc:
+            self.notify(str(exc), title="Clipboard", severity="warning")
+            return None
+
+        if path is None:
+            return None
+
+        self._pending_image_attachments[str(path)] = Attachment(path=str(path))
+        self.notify(f"Attached image: {path.name}", title="Clipboard")
+        return str(path)
+
+    def _consume_attachments_for_text(self, text: str) -> list[Attachment]:
+        """Return and clear any pending image attachments referenced by the prompt text."""
+        attachment_paths = [path for path in self._pending_image_attachments if path in text]
+        return [self._pending_image_attachments.pop(path) for path in attachment_paths]
+
     def _record_session_message(self, role: str, content: str) -> None:
         """Append a message to the active session if session persistence is enabled."""
         if self.session_manager is None:
@@ -377,6 +400,7 @@ class MotherApp(App[None]):
         prompt_text: str,
         system_prompt: str,
         tool_names: list[str],
+        attachment_paths: list[str],
     ) -> None:
         """Record the exact prompt context sent to the model for this turn."""
         if self.session_manager is None:
@@ -387,6 +411,7 @@ class MotherApp(App[None]):
             system_prompt=system_prompt,
             agent_mode=self.agent_mode,
             tool_names=tool_names,
+            attachment_paths=attachment_paths,
         )
 
     def _start_new_session(self) -> None:
@@ -536,6 +561,7 @@ class MotherApp(App[None]):
             await self.run_user_command(parsed)
             return
 
+        attachments = self._consume_attachments_for_text(value)
         self._record_session_message("user", value)
         chat_view = self.query_one("#chat-view")
         should_follow = self._should_follow_chat_updates()
@@ -549,7 +575,7 @@ class MotherApp(App[None]):
         if thinking_output is None:
             text_area.read_only = False
             return
-        _ = self.send_prompt(prompt, value, turn.response_widget, thinking_output)
+        _ = self.send_prompt(prompt, value, turn.response_widget, thinking_output, attachments)
 
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
@@ -836,18 +862,20 @@ class MotherApp(App[None]):
         prompt: str,
         system: str | None,
         tools: list[ToolDef] | None,
+        attachments: list[Attachment] | None,
         before_tool_call: BeforeCallSync | None,
         after_tool_call: AfterCallSync | None,
     ) -> Iterable[str]:
         """Build the LLM response stream, with tool callbacks when agent mode is active."""
         if tools is None:
             prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
-            return prompt_fn(prompt, system=system)
+            return prompt_fn(prompt, system=system, attachments=attachments)
 
         chain_fn = cast(Callable[..., Iterable[str]], conversation.chain)
         return chain_fn(
             prompt,
             system=system,
+            attachments=attachments,
             tools=tools,
             chain_limit=3,
             before_call=before_tool_call,
@@ -865,6 +893,7 @@ class MotherApp(App[None]):
         prompt: str,
         system: str | None,
         tools: list[ToolDef] | None,
+        attachments: list[Attachment] | None,
         response: Response,
     ) -> Iterable[str] | None:
         """Request an LLM response stream, falling back if the model rejects tools."""
@@ -891,6 +920,7 @@ class MotherApp(App[None]):
                 prompt,
                 system,
                 tools,
+                attachments,
                 before_tool_call,
                 after_tool_call,
             )
@@ -903,7 +933,7 @@ class MotherApp(App[None]):
         prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
         fallback_system = self._build_system_prompt(None, agent_mode=False)
         try:
-            return prompt_fn(prompt, system=fallback_system)
+            return prompt_fn(prompt, system=fallback_system, attachments=attachments)
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return None
@@ -937,6 +967,7 @@ class MotherApp(App[None]):
         user_text: str,
         response: Response,
         thinking_output: ThinkingOutput | None = None,
+        attachments: list[Attachment] | None = None,
     ) -> None:
         """Get the response in a thread, maintaining conversation history."""
         _ = self.call_from_thread(self._update_response_output, response, "*Thinking...*")
@@ -948,17 +979,20 @@ class MotherApp(App[None]):
         tools = self._get_enabled_tools()
         tool_names = self._tool_names(tools)
         system = self._build_system_prompt(tools)
+        attachment_paths = [attachment.path for attachment in attachments or [] if attachment.path]
         self._record_prompt_context(
             user_text=user_text,
             prompt_text=prompt,
             system_prompt=system,
             tool_names=tool_names,
+            attachment_paths=attachment_paths,
         )
         llm_response = self._request_llm_response(
             conversation=conversation,
             prompt=prompt,
             system=system,
             tools=tools,
+            attachments=attachments,
             response=response,
         )
         if llm_response is None:

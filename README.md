@@ -13,10 +13,22 @@ It supports two modes:
 - model switching
 - optional thinking display
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
+- clipboard image paste in the prompt via `Ctrl+V`
 - agent mode with tool traces
 - guarded local `bash` execution
 - web search via Jina Search
 - web fetching for public pages, APIs, and localhost services
+
+## Clipboard images
+
+When the prompt input is focused, `Ctrl+V` still behaves like paste, but Mother now
+checks the system clipboard for an image first.
+
+- if an image is present, Mother saves it to a temporary file and inserts that path into the prompt
+- the pasted image is also attached to the next model request when that path remains in the message
+- if no image is present, `Ctrl+V` falls back to normal text paste
+
+Your selected model must support image attachments for multimodal prompts to work.
 
 ## Sessions
 

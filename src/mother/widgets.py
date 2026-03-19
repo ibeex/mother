@@ -23,6 +23,14 @@ class _PromptSubmitApp(Protocol):
     async def action_submit(self) -> None: ...
 
 
+class _PromptClipboardApp(Protocol):
+    """Subset of app API used for clipboard image paste support."""
+
+    clipboard: str
+
+    def capture_clipboard_image(self) -> str | None: ...
+
+
 class Prompt(Markdown):
     """Markdown for the user prompt."""
 
@@ -139,6 +147,19 @@ class PromptTextArea(TextArea):
         start, end = self.selection
         result = self.replace("\n", start, end)
         self.move_cursor(result.end_location)
+
+    @override
+    def action_paste(self) -> None:
+        """Prefer clipboard images over plain-text paste when Ctrl+V is used."""
+        if self.read_only:
+            return
+        app = cast(_PromptClipboardApp, cast(object, self.app))
+        image_path = app.capture_clipboard_image()
+        if image_path is not None:
+            if result := self._replace_via_keyboard(image_path, *self.selection):
+                self.move_cursor(result.end_location)
+            return
+        super().action_paste()
 
     @override
     async def _on_key(self, event: events.Key) -> None:
