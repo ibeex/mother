@@ -2,14 +2,21 @@
 
 import asyncio
 from collections.abc import Callable
+from enum import StrEnum
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from llm.models import Conversation
+from llm.models import Conversation, Model
 
 from mother import MotherApp, MotherConfig
 from mother.widgets import ModelComplete, PromptTextArea, StatusLine
+
+
+class _ReasoningEnum(StrEnum):
+    low = "low"
+    medium = "medium"
+    high = "high"
 
 
 def test_app_starts_in_conversational_mode():
@@ -156,6 +163,148 @@ def test_agent_command_enter_toggles_agent_mode() -> None:
     asyncio.run(run())
 
 
+def test_reasoning_command_updates_runtime_setting() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        model.Options = SimpleNamespace(
+            model_fields={
+                "reasoning_effort": SimpleNamespace(annotation=_ReasoningEnum | None),
+            }
+        )
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch.object(app, "notify") as notify,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/reasoning high")
+                await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                assert app.config.reasoning_effort == "high"
+                assert text_area.text == ""
+                notify.assert_called_with(
+                    "Reasoning set to high for test-model",
+                    title="Reasoning",
+                )
+
+    asyncio.run(run())
+
+
+def test_reasoning_command_tab_opens_inline_picker() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with patch("mother.mother.llm.get_model", return_value=model):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/reasoning")
+                text_area.move_cursor((0, len("/reasoning")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("tab")
+                await pilot.pause()
+
+                model_complete = app.query_one(ModelComplete)
+                assert text_area.text == "/reasoning "
+                assert model_complete.display is True
+                assert text_area.model_complete_active is True
+
+    asyncio.run(run())
+
+
+def test_reasoning_command_typed_character_expands_query() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with patch("mother.mother.llm.get_model", return_value=model):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/reasoning")
+                text_area.move_cursor((0, len("/reasoning")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("h")
+                await pilot.pause()
+
+                model_complete = app.query_one(ModelComplete)
+                assert text_area.text == "/reasoning h"
+                assert model_complete.display is True
+                assert text_area.model_complete_active is True
+
+    asyncio.run(run())
+
+
+def test_reasoning_command_tab_accepts_highlighted_value() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with patch("mother.mother.llm.get_model", return_value=model):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/reasoning h")
+                text_area.move_cursor((0, len("/reasoning h")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("tab")
+                await pilot.pause()
+
+                assert text_area.text == "/reasoning high"
+                assert app.model_complete.display is False
+                assert text_area.model_complete_active is False
+
+    asyncio.run(run())
+
+
+def test_reasoning_command_partial_query_enter_uses_highlighted_value() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        model.Options = SimpleNamespace(
+            model_fields={
+                "reasoning_effort": SimpleNamespace(annotation=_ReasoningEnum | None),
+            }
+        )
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with (
+            patch("mother.mother.llm.get_model", return_value=model),
+            patch.object(app, "notify") as notify,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/reasoning h")
+                await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                assert app.config.reasoning_effort == "high"
+                assert text_area.text == ""
+                notify.assert_called_with(
+                    "Reasoning set to high for test-model",
+                    title="Reasoning",
+                )
+
+    asyncio.run(run())
+
+
 def test_models_command_tab_opens_inline_model_picker() -> None:
     async def run() -> None:
         model = MagicMock()
@@ -169,7 +318,7 @@ def test_models_command_tab_opens_inline_model_picker() -> None:
 
         with (
             patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.widgets.get_available_models", return_value=available_models),
+            patch("mother.slash_commands.get_available_models", return_value=available_models),
         ):
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
@@ -198,7 +347,7 @@ def test_models_command_typed_character_expands_query() -> None:
 
         with (
             patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.widgets.get_available_models", return_value=available_models),
+            patch("mother.slash_commands.get_available_models", return_value=available_models),
         ):
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
@@ -217,6 +366,30 @@ def test_models_command_typed_character_expands_query() -> None:
     asyncio.run(run())
 
 
+def test_models_command_backspace_deletes_text_instead_of_expanding_query() -> None:
+    async def run() -> None:
+        model = MagicMock()
+        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
+        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with patch("mother.mother.llm.get_model", return_value=model):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models")
+                text_area.move_cursor((0, len("/models")), record_width=False)
+                await pilot.pause()
+
+                await pilot.press("backspace")
+                await pilot.pause()
+
+                assert text_area.text == "/model"
+                assert text_area.model_complete_active is False
+                assert text_area.slash_complete_active is True
+
+    asyncio.run(run())
+
+
 def test_models_command_tab_accepts_highlighted_model() -> None:
     async def run() -> None:
         model = MagicMock()
@@ -230,7 +403,7 @@ def test_models_command_tab_accepts_highlighted_model() -> None:
 
         with (
             patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.widgets.get_available_models", return_value=available_models),
+            patch("mother.slash_commands.get_available_models", return_value=available_models),
         ):
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
@@ -261,8 +434,7 @@ def test_models_command_query_enter_switches_model() -> None:
 
         with (
             patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.widgets.get_available_models", return_value=available_models),
-            patch("mother.model_picker.get_available_models", return_value=available_models),
+            patch("mother.slash_commands.get_available_models", return_value=available_models),
             patch.object(app, "action_switch_model") as switch_model,
         ):
             async with app.run_test() as pilot:
@@ -344,6 +516,30 @@ def test_statusline_formats_manual_scroll_mode():
     assert (
         StatusLine.format_status("test-model", True, 256, False) == "test-model · on · 256 · manual"
     )
+
+
+def test_statusline_formats_reasoning_when_supported() -> None:
+    assert (
+        StatusLine.format_status("test-model", True, 256, False, "high")
+        == "test-model · on · 256 · manual · high"
+    )
+
+
+def test_status_reasoning_effort_visible_for_reasoning_models() -> None:
+    app = MotherApp(config=MotherConfig(reasoning_effort="none"))
+    app.model = cast(
+        Model,
+        cast(
+            object,
+            SimpleNamespace(
+                Options=SimpleNamespace(
+                    model_fields={"reasoning_effort": object()},
+                )
+            ),
+        ),
+    )
+
+    assert app._status_reasoning_effort() == "off"  # pyright: ignore[reportPrivateUsage]
 
 
 def test_send_prompt_no_tools_when_conversational():

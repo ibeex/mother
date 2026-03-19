@@ -52,6 +52,7 @@ def test_exports_updated():
         BashExecution,
         ModelsCommand,
         NormalPrompt,
+        ReasoningCommand,
         SaveSessionCommand,
         SessionManager,
         ShellCommand,
@@ -61,6 +62,7 @@ def test_exports_updated():
     assert BashExecution is not None
     assert ModelsCommand is not None
     assert NormalPrompt is not None
+    assert ReasoningCommand is not None
     assert SaveSessionCommand is not None
     assert SessionManager is not None
     assert ShellCommand is not None

@@ -8,11 +8,14 @@ from mother.user_commands import (
     ModelsCommand,
     NormalPrompt,
     QuitAppCommand,
+    ReasoningCommand,
     SaveSessionCommand,
     ShellCommand,
     current_model_query,
+    current_reasoning_query,
     parse_user_input,
     should_expand_models_query,
+    should_expand_reasoning_query,
     should_submit_on_enter,
 )
 
@@ -81,10 +84,32 @@ def test_detect_models_query_command():
     assert result.query == "opus"
 
 
+def test_detect_reasoning_command():
+    result = parse_user_input("/reasoning")
+    assert isinstance(result, ReasoningCommand)
+    assert result.command == "/reasoning"
+    assert result.effort is None
+
+
+def test_detect_reasoning_value_command():
+    result = parse_user_input(" /reasoning high ")
+    assert isinstance(result, ReasoningCommand)
+    assert result.command == "/reasoning"
+    assert result.effort == "high"
+
+
 def test_current_model_query_detects_models_arguments():
     assert current_model_query("/models opus") == "opus"
     assert current_model_query("/models   ") == ""
     assert current_model_query("/models") is None
+
+
+
+def test_current_reasoning_query_detects_reasoning_arguments():
+    assert current_reasoning_query("/reasoning high") == "high"
+    assert current_reasoning_query("/reasoning   ") == ""
+    assert current_reasoning_query("/reasoning") is None
+
 
 
 def test_should_expand_models_query_only_for_exact_command():
@@ -92,6 +117,14 @@ def test_should_expand_models_query_only_for_exact_command():
     assert should_expand_models_query(" /models") is True
     assert should_expand_models_query("/models ") is False
     assert should_expand_models_query("/models opus") is False
+
+
+
+def test_should_expand_reasoning_query_only_for_exact_command():
+    assert should_expand_reasoning_query("/reasoning") is True
+    assert should_expand_reasoning_query(" /reasoning") is True
+    assert should_expand_reasoning_query("/reasoning ") is False
+    assert should_expand_reasoning_query("/reasoning high") is False
 
 
 def test_should_submit_save_on_enter():
@@ -109,6 +142,11 @@ def test_should_submit_agent_on_enter():
 def test_should_submit_models_on_enter():
     assert should_submit_on_enter("/models") is True
     assert should_submit_on_enter("/models opus") is True
+
+
+def test_should_submit_reasoning_on_enter():
+    assert should_submit_on_enter("/reasoning") is True
+    assert should_submit_on_enter("/reasoning medium") is True
 
 
 def test_should_not_submit_normal_prompt_on_enter():

@@ -12,9 +12,13 @@ from textual.widgets import Label, Markdown, OptionList, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence
 from textual.widgets.option_list import Option
 
-from mother.model_picker import filter_available_models, get_available_models
-from mother.slash_commands import SlashCommand, filter_slash_commands
-from mother.user_commands import should_expand_models_query, should_submit_on_enter
+from mother.slash_commands import (
+    SlashArgumentChoice,
+    SlashCommand,
+    filter_slash_commands,
+    should_expand_slash_argument,
+)
+from mother.user_commands import should_submit_on_enter
 
 
 class _PromptSubmitApp(Protocol):
@@ -41,7 +45,16 @@ class PromptTextArea(TextArea):
     """Main prompt input with slash-complete key handling."""
 
     slash_complete_active: bool = False
-    model_complete_active: bool = False
+    slash_argument_complete_active: bool = False
+
+    @property
+    def model_complete_active(self) -> bool:
+        """Backward-compatible alias for generic slash-argument completion state."""
+        return self.slash_argument_complete_active
+
+    @model_complete_active.setter
+    def model_complete_active(self, value: bool) -> None:
+        self.slash_argument_complete_active = value
 
     @dataclass
     class SlashNavigate(Message):
@@ -78,8 +91,8 @@ class PromptTextArea(TextArea):
             return self.text_area
 
     @dataclass
-    class ModelNavigate(Message):
-        """Request that the model popup move its highlight."""
+    class SlashArgumentNavigate(Message):
+        """Request that the slash-argument popup move its highlight."""
 
         text_area: "PromptTextArea"
         direction: int
@@ -90,8 +103,8 @@ class PromptTextArea(TextArea):
             return self.text_area
 
     @dataclass
-    class ModelDismiss(Message):
-        """Request that the model popup close."""
+    class SlashArgumentDismiss(Message):
+        """Request that the slash-argument popup close."""
 
         text_area: "PromptTextArea"
 
@@ -101,8 +114,8 @@ class PromptTextArea(TextArea):
             return self.text_area
 
     @dataclass
-    class ModelAccept(Message):
-        """Request that the model popup accept its current selection."""
+    class SlashArgumentAccept(Message):
+        """Request that the slash-argument popup accept its current selection."""
 
         text_area: "PromptTextArea"
 
@@ -122,13 +135,17 @@ class PromptTextArea(TextArea):
         def control(self) -> "PromptTextArea":
             return self.text_area
 
+    ModelNavigate: type[SlashArgumentNavigate] = SlashArgumentNavigate
+    ModelDismiss: type[SlashArgumentDismiss] = SlashArgumentDismiss
+    ModelAccept: type[SlashArgumentAccept] = SlashArgumentAccept
+
     def _selection_is_at_end(self) -> bool:
         start, end = self.selection
         return start == end == (0, len(self.text))
 
-    def _expand_models_query_prefix(self, character: str | None = None) -> bool:
-        """Expand ``/models`` to ``/models `` and optionally append a typed character."""
-        if not should_expand_models_query(self.text) or not self._selection_is_at_end():
+    def _expand_slash_argument_prefix(self, character: str | None = None) -> bool:
+        """Expand a slash command with inline argument completion to include a space."""
+        if not should_expand_slash_argument(self.text) or not self._selection_is_at_end():
             return False
         suffix = f" {character}" if character is not None else " "
         self.load_text(f"{self.text}{suffix}")
@@ -175,27 +192,31 @@ class PromptTextArea(TextArea):
                 _ = event.prevent_default()
                 _ = self.post_message(self.SlashAccept(self))
                 return
-            if self.model_complete_active:
+            if self.slash_argument_complete_active:
                 _ = event.stop()
                 _ = event.prevent_default()
-                _ = self.post_message(self.ModelAccept(self))
+                _ = self.post_message(self.SlashArgumentAccept(self))
                 return
-            if self._expand_models_query_prefix():
+            if self._expand_slash_argument_prefix():
                 _ = event.stop()
                 _ = event.prevent_default()
                 return
-        if self.model_complete_active and event.key == "escape":
+        if self.slash_argument_complete_active and event.key == "escape":
             _ = event.stop()
             _ = event.prevent_default()
-            _ = self.post_message(self.ModelDismiss(self))
+            _ = self.post_message(self.SlashArgumentDismiss(self))
             return
         if self.slash_complete_active and event.key == "escape":
             _ = event.stop()
             _ = event.prevent_default()
             _ = self.post_message(self.SlashDismiss(self))
             return
-        if event.character is not None and not event.character.isspace():
-            if self._expand_models_query_prefix(event.character):
+        if (
+            event.character is not None
+            and event.character.isprintable()
+            and not event.character.isspace()
+        ):
+            if self._expand_slash_argument_prefix(event.character):
                 _ = event.stop()
                 _ = event.prevent_default()
                 return
@@ -203,8 +224,8 @@ class PromptTextArea(TextArea):
 
     @override
     def action_cursor_up(self, select: bool = False) -> None:
-        if self.model_complete_active and not select:
-            _ = self.post_message(self.ModelNavigate(self, -1))
+        if self.slash_argument_complete_active and not select:
+            _ = self.post_message(self.SlashArgumentNavigate(self, -1))
             return
         if self.slash_complete_active and not select:
             _ = self.post_message(self.SlashNavigate(self, -1))
@@ -213,8 +234,8 @@ class PromptTextArea(TextArea):
 
     @override
     def action_cursor_down(self, select: bool = False) -> None:
-        if self.model_complete_active and not select:
-            _ = self.post_message(self.ModelNavigate(self, 1))
+        if self.slash_argument_complete_active and not select:
+            _ = self.post_message(self.SlashArgumentNavigate(self, 1))
             return
         if self.slash_complete_active and not select:
             _ = self.post_message(self.SlashNavigate(self, 1))
@@ -257,39 +278,46 @@ class SlashComplete(OptionList):
 
 
 @final
-class ModelComplete(OptionList):
-    """Option list showing filtered model completions for ``/models``."""
+class SlashArgumentComplete(OptionList):
+    """Option list showing filtered inline argument completions for slash commands."""
 
     def __init__(self) -> None:
-        super().__init__(id="model-complete")
-        self.matches: list[tuple[str, str]] = []
+        super().__init__(id="slash-argument-complete")
+        self.matches: list[SlashArgumentChoice] = []
 
-    def update_query(self, query: str, current_model: str) -> bool:
-        """Refresh visible matches for the current model query."""
-        self.matches = filter_available_models(query, get_available_models())
+    def update_matches(
+        self,
+        matches: list[SlashArgumentChoice],
+        current_value: str | None = None,
+    ) -> bool:
+        """Refresh visible matches for the active slash-argument query."""
+        self.matches = matches
         _ = self.clear_options()
         if not self.matches:
             self.highlighted = None
             return False
         _ = self.add_options(
             Option(
-                f"★ {label}" if model_id == current_model else label,
-                id=model_id,
+                f"★ {choice.label}" if choice.value == current_value else choice.label,
+                id=choice.value,
             )
-            for model_id, label in self.matches
+            for choice in self.matches
         )
         self.highlighted = 0
         return True
 
-    def highlighted_model_id(self) -> str | None:
-        """Return the currently highlighted model id, if any."""
+    def highlighted_value(self) -> str | None:
+        """Return the currently highlighted slash-argument value, if any."""
         highlighted = self.highlighted
         if highlighted is None:
             return None
         try:
-            return self.matches[highlighted][0]
+            return self.matches[highlighted].value
         except IndexError:
             return None
+
+
+ModelComplete = SlashArgumentComplete
 
 
 class CopyableOutput(TextArea):
@@ -592,6 +620,7 @@ class StatusLine(Label):
         agent_mode: bool,
         context_tokens: int | None = None,
         auto_scroll_enabled: bool = True,
+        reasoning_effort: str | None = None,
     ) -> None:
         super().__init__(
             self.format_status(
@@ -599,6 +628,7 @@ class StatusLine(Label):
                 agent_mode,
                 context_tokens,
                 auto_scroll_enabled,
+                reasoning_effort,
             ),
             id="status-line",
             markup=False,
@@ -610,6 +640,7 @@ class StatusLine(Label):
         agent_mode: bool,
         context_tokens: int | None,
         auto_scroll_enabled: bool = True,
+        reasoning_effort: str | None = None,
     ) -> str:
         """Format the text displayed in the status line."""
         model = model_name or "?"
@@ -621,7 +652,10 @@ class StatusLine(Label):
         else:
             context = str(context_tokens)
         auto_scroll = "auto" if auto_scroll_enabled else "manual"
-        return f"{model} · {agent} · {context} · {auto_scroll}"
+        parts = [model, agent, context, auto_scroll]
+        if reasoning_effort is not None:
+            parts.append(reasoning_effort)
+        return " · ".join(parts)
 
     def set_status(
         self,
@@ -630,14 +664,16 @@ class StatusLine(Label):
         agent_mode: bool,
         context_tokens: int | None,
         auto_scroll_enabled: bool,
+        reasoning_effort: str | None,
     ) -> None:
-        """Update the displayed model, agent mode, context size, and follow mode."""
+        """Update the displayed model, agent mode, context size, follow mode, and reasoning."""
         self.update(
             self.format_status(
                 model_name,
                 agent_mode,
                 context_tokens,
                 auto_scroll_enabled,
+                reasoning_effort,
             )
         )
 

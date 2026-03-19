@@ -35,10 +35,23 @@ from mother.model_picker import (
     ModelPickerScreen,
     ModelProvider,
     ModelSwitchConfirmScreen,
-    filter_available_models,
+)
+from mother.reasoning import (
+    REASONING_EFFORT_HELP,
+    build_reasoning_options,
+    format_reasoning_effort,
+    normalize_reasoning_effort,
+    supported_reasoning_efforts,
+    supports_reasoning_effort,
 )
 from mother.session import SessionManager
-from mother.slash_commands import SLASH_COMMANDS, SlashCommand, current_slash_query
+from mother.slash_commands import (
+    SLASH_COMMANDS,
+    SlashCommand,
+    current_slash_argument_query,
+    current_slash_query,
+    get_slash_argument_spec,
+)
 from mother.system_prompt import build_system_prompt
 from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
@@ -48,9 +61,9 @@ from mother.user_commands import (
     AgentModeCommand,
     ModelsCommand,
     QuitAppCommand,
+    ReasoningCommand,
     SaveSessionCommand,
     ShellCommand,
-    current_model_query,
     parse_user_input,
 )
 from mother.widgets import (
@@ -60,6 +73,7 @@ from mother.widgets import (
     PromptTextArea,
     Response,
     ShellOutput,
+    SlashArgumentComplete,
     SlashComplete,
     StatusLine,
     ThinkingOutput,
@@ -122,15 +136,16 @@ class MotherApp(App[None]):
                 slash_complete = SlashComplete(SLASH_COMMANDS)
                 slash_complete.display = False
                 yield slash_complete
-                model_complete = ModelComplete()
-                model_complete.display = False
-                yield model_complete
+                slash_argument_complete = SlashArgumentComplete()
+                slash_argument_complete.display = False
+                yield slash_argument_complete
                 yield PromptTextArea(id="prompt-input")
         yield StatusLine(
             self.config.model,
             self.agent_mode,
             self._last_context_tokens,
             self.auto_scroll_enabled,
+            self._status_reasoning_effort(),
         )
         yield Footer()
 
@@ -152,8 +167,13 @@ class MotherApp(App[None]):
         return self.query_one(SlashComplete)
 
     @property
+    def slash_argument_complete(self) -> SlashArgumentComplete:
+        """Return the inline slash-argument autocomplete popup widget."""
+        return self.query_one(SlashArgumentComplete)
+
+    @property
     def model_complete(self) -> ModelComplete:
-        """Return the inline model autocomplete popup widget."""
+        """Backward-compatible alias for the inline slash-argument popup widget."""
         return self.query_one(ModelComplete)
 
     def _hide_slash_complete(self) -> None:
@@ -161,24 +181,39 @@ class MotherApp(App[None]):
         self.slash_complete.display = False
         self.prompt_input.slash_complete_active = False
 
-    def _hide_model_complete(self) -> None:
-        """Hide inline model autocomplete and restore normal prompt keys."""
-        self.model_complete.display = False
-        self.prompt_input.model_complete_active = False
+    def _hide_slash_argument_complete(self) -> None:
+        """Hide inline slash-argument autocomplete and restore normal prompt keys."""
+        self.slash_argument_complete.display = False
+        self.prompt_input.slash_argument_complete_active = False
+
+    def _current_slash_argument_value(self, command: str) -> str | None:
+        """Return the active value to highlight for a slash command argument."""
+        normalized_command = command.lower()
+        if normalized_command == "/models":
+            return self.config.model
+        if normalized_command == "/reasoning":
+            return format_reasoning_effort(self.config.reasoning_effort)
+        return None
 
     def _refresh_prompt_completions(self, text: str) -> None:
-        """Show, filter, or hide prompt helpers for slash commands and models."""
-        model_query = current_model_query(text)
-        if model_query is not None:
-            self._hide_slash_complete()
-            has_matches = self.model_complete.update_query(model_query, self.config.model)
-            self.model_complete.display = has_matches
-            self.prompt_input.model_complete_active = has_matches
-            return
+        """Show, filter, or hide prompt helpers for slash commands and arguments."""
+        argument_query = current_slash_argument_query(text)
+        if argument_query is not None:
+            spec = get_slash_argument_spec(argument_query.command)
+            if spec is not None:
+                self._hide_slash_complete()
+                matches = spec.complete(argument_query.query)
+                has_matches = self.slash_argument_complete.update_matches(
+                    matches,
+                    self._current_slash_argument_value(argument_query.command),
+                )
+                self.slash_argument_complete.display = has_matches
+                self.prompt_input.slash_argument_complete_active = has_matches
+                return
 
-        self._hide_model_complete()
+        self._hide_slash_argument_complete()
         query = current_slash_query(text)
-        if query is None or query.lower() == "/models":
+        if query is None or get_slash_argument_spec(query) is not None:
             self._hide_slash_complete()
             return
         has_matches = self.slash_complete.update_query(query)
@@ -189,11 +224,16 @@ class MotherApp(App[None]):
         """Return the highlighted slash command from the popup, if any."""
         return self.slash_complete.highlighted_command()
 
-    def _selected_model_completion(self) -> str | None:
-        """Return the highlighted inline model completion, if any."""
-        if not self.model_complete.display:
+    def _selected_slash_argument_value(self, command: str | None = None) -> str | None:
+        """Return the highlighted inline slash-argument value, if any."""
+        if not self.slash_argument_complete.display:
             return None
-        return self.model_complete.highlighted_model_id()
+        active_query = current_slash_argument_query(self.prompt_input.text)
+        if active_query is None:
+            return None
+        if command is not None and active_query.command.lower() != command.lower():
+            return None
+        return self.slash_argument_complete.highlighted_value()
 
     def _apply_slash_completion(self, command: SlashCommand | None = None) -> None:
         """Insert the selected slash command back into the prompt input."""
@@ -208,17 +248,20 @@ class MotherApp(App[None]):
         self._refresh_prompt_completions(completed_text)
         _ = self.prompt_input.focus()
 
-    def _apply_model_completion(self, model_id: str | None = None) -> None:
-        """Insert the selected inline model completion into the prompt input."""
-        selected_model = model_id or self._selected_model_completion()
-        if selected_model is None:
+    def _apply_slash_argument_completion(self, value: str | None = None) -> None:
+        """Insert the selected inline slash-argument completion into the prompt input."""
+        active_query = current_slash_argument_query(self.prompt_input.text)
+        if active_query is None:
+            return
+        selected_value = value or self._selected_slash_argument_value(active_query.command)
+        if selected_value is None:
             return
 
-        completed_text = f"/models {selected_model}"
+        completed_text = f"{active_query.command} {selected_value}"
         self._suppress_prompt_completion_once = completed_text
         self.prompt_input.load_text(completed_text)
         self.prompt_input.move_cursor((0, len(completed_text)), record_width=False)
-        self._hide_model_complete()
+        self._hide_slash_argument_complete()
         _ = self.prompt_input.focus()
 
     def _conversation_has_history(self) -> bool:
@@ -235,21 +278,105 @@ class MotherApp(App[None]):
 
         _ = self.push_screen(ModelPickerScreen(self.config.model), on_model_selected)
 
-    def _resolve_model_query(self, query: str) -> str | None:
-        """Resolve a ``/models`` query to a concrete model id, if possible."""
-        highlighted_model = self._selected_model_completion()
-        if highlighted_model is not None:
-            return highlighted_model
+    def _resolve_slash_argument_query(self, command: str, query: str) -> str | None:
+        """Resolve a slash-command argument query to a concrete completion value."""
+        highlighted_value = self._selected_slash_argument_value(command)
+        if highlighted_value is not None:
+            return highlighted_value
 
-        matches = filter_available_models(query)
-        if not matches:
+        spec = get_slash_argument_spec(command)
+        if spec is None:
             return None
+        return spec.resolve(query)
 
-        normalized_query = query.strip().lower()
-        for model_id, _label in matches:
-            if model_id.lower() == normalized_query:
-                return model_id
-        return matches[0][0]
+    def _reasoning_options(self) -> dict[str, object]:
+        """Return supported model options for reasoning-capable models."""
+        return build_reasoning_options(self.model, self.config.reasoning_effort)
+
+    def _show_reasoning_status(self) -> None:
+        """Notify the user of the current reasoning setting and model support."""
+        configured = format_reasoning_effort(self.config.reasoning_effort)
+        supported = supported_reasoning_efforts(self.model)
+        if supported:
+            if (
+                self.config.reasoning_effort != "auto"
+                and self.config.reasoning_effort not in supported
+            ):
+                supported_text = "|".join(format_reasoning_effort(value) for value in supported)
+                self.notify(
+                    (
+                        f"{self.config.model} reasoning: {configured} (not supported here). "
+                        f"Supported: {supported_text}"
+                    ),
+                    title="Reasoning",
+                    severity="warning",
+                )
+                return
+            self.notify(
+                f"{self.config.model} reasoning: {configured}",
+                title="Reasoning",
+            )
+            return
+        self.notify(
+            (
+                f"{self.config.model} does not expose reasoning control. "
+                f"Configured default: {configured}"
+            ),
+            title="Reasoning",
+            severity="warning",
+        )
+
+    def _set_reasoning_effort(self, effort: str) -> None:
+        """Update the configured reasoning effort for future model requests."""
+        normalized = normalize_reasoning_effort(effort)
+        if normalized is None:
+            self.notify(
+                f"Use /reasoning {REASONING_EFFORT_HELP}",
+                title="Reasoning",
+                severity="warning",
+            )
+            return
+
+        supported = supported_reasoning_efforts(self.model)
+        if supported and normalized != "auto" and normalized not in supported:
+            supported_text = "|".join(format_reasoning_effort(value) for value in supported)
+            self.notify(
+                f"{self.config.model} supports: {supported_text}",
+                title="Reasoning",
+                severity="warning",
+            )
+            return
+
+        previous = self.config.reasoning_effort
+        self.config = replace(
+            self.config,
+            reasoning_effort=normalized,
+            tools_enabled=self.agent_mode,
+        )
+        self._record_session_event(
+            "reasoning_effort_change",
+            {
+                "from": previous,
+                "reasoning_effort": normalized,
+                "model": self.config.model,
+            },
+        )
+        self._update_statusline()
+        configured = format_reasoning_effort(normalized)
+        if supports_reasoning_effort(self.model):
+            self.notify(
+                f"Reasoning set to {configured} for {self.config.model}",
+                title="Reasoning",
+            )
+            return
+        self.notify(
+            (
+                f"Reasoning set to {configured}. {self.config.model} does not expose "
+                "reasoning control, so this will apply when you switch models."
+            ),
+            title="Reasoning",
+            severity="warning",
+        )
 
     def _apply_model_switch(self, model_id: str) -> None:
         """Switch to a different LLM model and start a fresh conversation."""
@@ -328,6 +455,12 @@ class MotherApp(App[None]):
         sub_title: str = f"{self.config.model} [AGENT]" if self.agent_mode else self.config.model
         self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
 
+    def _status_reasoning_effort(self) -> str | None:
+        """Return the visible reasoning setting for reasoning-capable models."""
+        if not supports_reasoning_effort(self.model):
+            return None
+        return format_reasoning_effort(self.config.reasoning_effort)
+
     def _update_statusline(self) -> None:
         """Update the single-line status bar above the footer."""
         try:
@@ -339,6 +472,7 @@ class MotherApp(App[None]):
             agent_mode=self.agent_mode,
             context_tokens=self._last_context_tokens,
             auto_scroll_enabled=self.auto_scroll_enabled,
+            reasoning_effort=self._status_reasoning_effort(),
         )
 
     def _refresh_context_size(self) -> None:
@@ -449,7 +583,7 @@ class MotherApp(App[None]):
             return
         if event.text_area.text == self._suppress_prompt_completion_once:
             self._suppress_prompt_completion_once = None
-            self._hide_model_complete()
+            self._hide_slash_argument_complete()
             self._hide_slash_complete()
             return
         self._suppress_prompt_completion_once = None
@@ -465,15 +599,18 @@ class MotherApp(App[None]):
         else:
             self.slash_complete.action_cursor_down()
 
-    @on(PromptTextArea.ModelNavigate)
-    def on_prompt_text_area_model_navigate(self, event: PromptTextArea.ModelNavigate) -> None:
-        """Move the inline model highlight while the prompt retains focus."""
-        if not event.text_area.model_complete_active:
+    @on(PromptTextArea.SlashArgumentNavigate)
+    def on_prompt_text_area_slash_argument_navigate(
+        self,
+        event: PromptTextArea.SlashArgumentNavigate,
+    ) -> None:
+        """Move the inline slash-argument highlight while the prompt retains focus."""
+        if not event.text_area.slash_argument_complete_active:
             return
         if event.direction < 0:
-            self.model_complete.action_cursor_up()
+            self.slash_argument_complete.action_cursor_up()
         else:
-            self.model_complete.action_cursor_down()
+            self.slash_argument_complete.action_cursor_down()
 
     @on(PromptTextArea.SlashAccept)
     def on_prompt_text_area_slash_accept(self, event: PromptTextArea.SlashAccept) -> None:
@@ -487,17 +624,23 @@ class MotherApp(App[None]):
         if event.text_area.slash_complete_active:
             self._hide_slash_complete()
 
-    @on(PromptTextArea.ModelAccept)
-    def on_prompt_text_area_model_accept(self, event: PromptTextArea.ModelAccept) -> None:
-        """Insert the currently highlighted model completion into the prompt."""
-        if event.text_area.model_complete_active:
-            self._apply_model_completion()
+    @on(PromptTextArea.SlashArgumentAccept)
+    def on_prompt_text_area_slash_argument_accept(
+        self,
+        event: PromptTextArea.SlashArgumentAccept,
+    ) -> None:
+        """Insert the currently highlighted slash-argument completion into the prompt."""
+        if event.text_area.slash_argument_complete_active:
+            self._apply_slash_argument_completion()
 
-    @on(PromptTextArea.ModelDismiss)
-    def on_prompt_text_area_model_dismiss(self, event: PromptTextArea.ModelDismiss) -> None:
-        """Dismiss inline model autocomplete without changing prompt text."""
-        if event.text_area.model_complete_active:
-            self._hide_model_complete()
+    @on(PromptTextArea.SlashArgumentDismiss)
+    def on_prompt_text_area_slash_argument_dismiss(
+        self,
+        event: PromptTextArea.SlashArgumentDismiss,
+    ) -> None:
+        """Dismiss inline slash-argument autocomplete without changing prompt text."""
+        if event.text_area.slash_argument_complete_active:
+            self._hide_slash_argument_complete()
 
     @on(PromptTextArea.SlashSubmit)
     async def on_prompt_text_area_slash_submit(self, event: PromptTextArea.SlashSubmit) -> None:
@@ -507,7 +650,7 @@ class MotherApp(App[None]):
 
     @on(OptionList.OptionSelected)
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """Handle prompt popup selections from slash and model helpers."""
+        """Handle prompt popup selections from slash and argument helpers."""
         if event.option_list is self.slash_complete and event.option.id is not None:
             selected = next(
                 (
@@ -520,10 +663,8 @@ class MotherApp(App[None]):
             self._apply_slash_completion(selected)
             return
 
-        if event.option_list is self.model_complete and event.option.id is not None:
-            self._hide_model_complete()
-            _ = self.prompt_input.clear()
-            self.action_switch_model(event.option.id)
+        if event.option_list is self.slash_argument_complete and event.option.id is not None:
+            self._apply_slash_argument_completion(event.option.id)
 
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
@@ -547,7 +688,7 @@ class MotherApp(App[None]):
             if parsed.query is None:
                 self.action_show_models()
                 return
-            model_id = self._resolve_model_query(parsed.query)
+            model_id = self._resolve_slash_argument_query(parsed.command, parsed.query)
             if model_id is None:
                 self.notify(
                     f"No models found for '{parsed.query}'",
@@ -556,6 +697,15 @@ class MotherApp(App[None]):
                 )
                 return
             self.action_switch_model(model_id)
+            return
+        if isinstance(parsed, ReasoningCommand):
+            if parsed.effort is None:
+                self._show_reasoning_status()
+                return
+            resolved_effort = (
+                self._resolve_slash_argument_query(parsed.command, parsed.effort) or parsed.effort
+            )
+            self._set_reasoning_effort(resolved_effort)
             return
         if isinstance(parsed, ShellCommand):
             await self.run_user_command(parsed)
@@ -867,11 +1017,23 @@ class MotherApp(App[None]):
         after_tool_call: AfterCallSync | None,
     ) -> Iterable[str]:
         """Build the LLM response stream, with tool callbacks when agent mode is active."""
+        request_options = self._reasoning_options()
         if tools is None:
             prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
-            return prompt_fn(prompt, system=system, attachments=attachments)
+            return prompt_fn(prompt, system=system, attachments=attachments, **request_options)
 
         chain_fn = cast(Callable[..., Iterable[str]], conversation.chain)
+        if request_options:
+            return chain_fn(
+                prompt,
+                system=system,
+                attachments=attachments,
+                tools=tools,
+                chain_limit=3,
+                before_call=before_tool_call,
+                after_call=after_tool_call,
+                options=request_options,
+            )
         return chain_fn(
             prompt,
             system=system,
@@ -932,8 +1094,14 @@ class MotherApp(App[None]):
         _ = self.call_from_thread(self._disable_agent_mode_unsupported)
         prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
         fallback_system = self._build_system_prompt(None, agent_mode=False)
+        fallback_options = self._reasoning_options()
         try:
-            return prompt_fn(prompt, system=fallback_system, attachments=attachments)
+            return prompt_fn(
+                prompt,
+                system=fallback_system,
+                attachments=attachments,
+                **fallback_options,
+            )
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return None

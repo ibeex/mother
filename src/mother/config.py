@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from mother.reasoning import DEFAULT_REASONING_EFFORT, parse_reasoning_effort
 from mother.session import default_markdown_export_dir
 from mother.system_prompt import DEFAULT_BASE_SYSTEM
 
@@ -24,6 +25,10 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Base system prompt sent with every conversation.
 # Mother appends runtime context such as date, OS, current directory, mode, and tools.
 # system_prompt = "You are Mother, a concise and helpful assistant."
+
+# Reasoning effort for models that expose a `reasoning_effort` option.
+# Supported values: "auto", "none", "low", "medium", "high", "xhigh"
+# reasoning_effort = "medium"
 
 # Enable agent mode (allows LLM to run shell commands via the bash tool)
 # tools_enabled = false
@@ -47,6 +52,7 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 class MotherConfig:
     model: str = "gpt-5"
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
+    reasoning_effort: str = DEFAULT_REASONING_EFFORT
     tools_enabled: bool = False
     ca_bundle_path: str = ""
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
@@ -73,9 +79,16 @@ def load_config(path: Path | None = None) -> MotherConfig:
 
     raw_allowlist = cast(list[str] | None, data.get("allowlist"))
     allowlist = frozenset(raw_allowlist) if raw_allowlist is not None else MotherConfig().allowlist
+    raw_reasoning_effort = cast(str | None, data.get("reasoning_effort"))
+    reasoning_effort = (
+        DEFAULT_REASONING_EFFORT
+        if raw_reasoning_effort is None
+        else parse_reasoning_effort(raw_reasoning_effort)
+    )
     return MotherConfig(
         model=cast(str, data.get("model", MotherConfig.model)),
         system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
+        reasoning_effort=reasoning_effort,
         tools_enabled=cast(bool, data.get("tools_enabled", MotherConfig.tools_enabled)),
         ca_bundle_path=cast(str, data.get("ca_bundle_path", MotherConfig.ca_bundle_path)),
         session_markdown_dir=cast(
@@ -94,6 +107,7 @@ def apply_cli_overrides(
     return MotherConfig(
         model=model if model is not None else config.model,
         system_prompt=system if system is not None else config.system_prompt,
+        reasoning_effort=config.reasoning_effort,
         tools_enabled=config.tools_enabled,
         ca_bundle_path=config.ca_bundle_path,
         session_markdown_dir=config.session_markdown_dir,

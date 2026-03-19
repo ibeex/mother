@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mother.slash_commands import current_slash_argument_query, should_expand_slash_argument
+
 _AGENT_COMMAND = "/agent"
 _MODELS_COMMAND = "/models"
+_REASONING_COMMAND = "/reasoning"
 
 
 @dataclass
@@ -40,25 +43,41 @@ class ModelsCommand:
     query: str | None = None
 
 
+@dataclass
+class ReasoningCommand:
+    command: str = _REASONING_COMMAND
+    effort: str | None = None
+
+
+
 def current_model_query(text: str) -> str | None:
     """Return the active ``/models`` query for inline model completion."""
-    if not text or "\n" in text:
+    query = current_slash_argument_query(text)
+    if query is None or query.command != _MODELS_COMMAND:
         return None
+    return query.query
 
-    candidate = text.lstrip()
-    normalized = candidate.lower()
-    if normalized == _MODELS_COMMAND:
+
+
+def current_reasoning_query(text: str) -> str | None:
+    """Return the active ``/reasoning`` query for inline completion."""
+    query = current_slash_argument_query(text)
+    if query is None or query.command != _REASONING_COMMAND:
         return None
-    if not normalized.startswith(f"{_MODELS_COMMAND} "):
-        return None
-    return candidate[len(_MODELS_COMMAND) :].strip()
+    return query.query
+
 
 
 def should_expand_models_query(text: str) -> bool:
     """Return whether Tab or a typed character should expand ``/models`` to ``/models ``."""
-    if not text or "\n" in text:
-        return False
-    return text.lstrip().lower() == _MODELS_COMMAND
+    return text.lstrip().lower() == _MODELS_COMMAND and should_expand_slash_argument(text)
+
+
+
+def should_expand_reasoning_query(text: str) -> bool:
+    """Return whether Tab or a typed character should expand ``/reasoning`` to ``/reasoning ``."""
+    return text.lstrip().lower() == _REASONING_COMMAND and should_expand_slash_argument(text)
+
 
 
 def should_submit_on_enter(text: str) -> bool:
@@ -67,8 +86,10 @@ def should_submit_on_enter(text: str) -> bool:
         return False
     parsed = parse_user_input(text)
     return isinstance(
-        parsed, SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand
+        parsed,
+        SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand | ReasoningCommand,
     )
+
 
 
 def parse_user_input(
@@ -79,6 +100,7 @@ def parse_user_input(
     | QuitAppCommand
     | AgentModeCommand
     | ModelsCommand
+    | ReasoningCommand
     | ShellCommand
 ):
     """Parse user input for built-in slash commands and ! / !! shell commands.
@@ -88,6 +110,8 @@ def parse_user_input(
     - ``/agent``                 → AgentModeCommand()
     - ``/models``                → ModelsCommand()
     - ``/models query``          → ModelsCommand(query=...)
+    - ``/reasoning``             → ReasoningCommand()
+    - ``/reasoning value``       → ReasoningCommand(effort=...)
     - ``!!command``              → ShellCommand(..., include_in_context=False)
     - ``!command``               → ShellCommand(..., include_in_context=True)
     - anything else              → NormalPrompt(text)
@@ -106,6 +130,10 @@ def parse_user_input(
         return ModelsCommand()
     if normalized.startswith(f"{_MODELS_COMMAND} "):
         return ModelsCommand(query=candidate[len(_MODELS_COMMAND) :].strip())
+    if normalized == _REASONING_COMMAND:
+        return ReasoningCommand()
+    if normalized.startswith(f"{_REASONING_COMMAND} "):
+        return ReasoningCommand(effort=candidate[len(_REASONING_COMMAND) :].strip())
 
     if text.startswith("!!"):
         command = text[2:].strip()

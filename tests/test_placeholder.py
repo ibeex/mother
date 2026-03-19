@@ -22,6 +22,7 @@ def test_mother_app_defaults():
     app = MotherApp()
     assert app.config.model == DEFAULT_MODEL
     assert app.config.system_prompt == DEFAULT_SYSTEM
+    assert app.config.reasoning_effort == "medium"
 
 
 def test_mother_app_custom_args():
@@ -35,6 +36,7 @@ def test_mother_app_config_kwarg():
     app = MotherApp(config=config)
     assert app.config.model == "gpt-4o"
     assert app.config.system_prompt == "Be brief."
+    assert app.config.reasoning_effort == "medium"
 
 
 def test_cli_help():
@@ -97,6 +99,7 @@ def test_load_config_defaults(tmp_path: Path):
     config = load_config(config_file)
     assert config.model == DEFAULT_MODEL
     assert config.system_prompt == DEFAULT_SYSTEM
+    assert config.reasoning_effort == "medium"
     assert config.tools_enabled is False
     assert config.ca_bundle_path == ""
     assert config_file.exists()
@@ -105,32 +108,53 @@ def test_load_config_defaults(tmp_path: Path):
 def test_load_config_from_file(tmp_path: Path):
     config_file = tmp_path / "config.toml"
     _ = config_file.write_text(
-        'model = "gpt-4o"\ntools_enabled = true\nca_bundle_path = "/etc/ssl/certs/ib_cert.pem"\n'
+        'model = "gpt-4o"\nreasoning_effort = "high"\ntools_enabled = true\nca_bundle_path = "/etc/ssl/certs/ib_cert.pem"\n'
     )
     config = load_config(config_file)
     assert config.model == "gpt-4o"
+    assert config.reasoning_effort == "high"
     assert config.tools_enabled is True
     assert config.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
     assert config.system_prompt == DEFAULT_SYSTEM
 
 
+def test_load_config_rejects_invalid_reasoning_effort(tmp_path: Path):
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text('reasoning_effort = "turbo"\n')
+
+    try:
+        _ = load_config(config_file)
+    except ValueError as exc:
+        assert "reasoning_effort" in str(exc)
+    else:
+        raise AssertionError("Expected invalid reasoning_effort to raise ValueError")
+
+
 def test_apply_cli_overrides():
     base = MotherConfig(
-        model="gpt-5", system_prompt="Original.", ca_bundle_path="/etc/ssl/certs/ib_cert.pem"
+        model="gpt-5",
+        system_prompt="Original.",
+        reasoning_effort="high",
+        ca_bundle_path="/etc/ssl/certs/ib_cert.pem",
     )
     result = apply_cli_overrides(base, model="gpt-4o-mini", system=None)
     assert result.model == "gpt-4o-mini"
     assert result.system_prompt == "Original."
+    assert result.reasoning_effort == "high"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
 
 
 def test_apply_cli_overrides_none():
     base = MotherConfig(
-        model="gpt-5", system_prompt="Original.", ca_bundle_path="/etc/ssl/certs/ib_cert.pem"
+        model="gpt-5",
+        system_prompt="Original.",
+        reasoning_effort="auto",
+        ca_bundle_path="/etc/ssl/certs/ib_cert.pem",
     )
     result = apply_cli_overrides(base, model=None, system=None)
     assert result.model == "gpt-5"
     assert result.system_prompt == "Original."
+    assert result.reasoning_effort == "auto"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
 
 

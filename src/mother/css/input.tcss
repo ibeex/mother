@@ -9,6 +9,7 @@
 }
 
 #slash-complete,
+#slash-argument-complete,
 #model-complete {
     margin: 0 1;
     max-height: 8;

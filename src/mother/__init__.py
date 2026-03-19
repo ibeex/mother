@@ -8,6 +8,7 @@ __all__ = (
     "AgentModeCommand",
     "ModelsCommand",
     "Prompt",
+    "ReasoningCommand",
     "Response",
     "QuitAppCommand",
     "SaveSessionCommand",
@@ -26,6 +27,7 @@ from .user_commands import (
     ModelsCommand,
     NormalPrompt,
     QuitAppCommand,
+    ReasoningCommand,
     SaveSessionCommand,
     ShellCommand,
 )

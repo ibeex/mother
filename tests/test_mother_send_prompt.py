@@ -1,10 +1,11 @@
 """Tests for the refactored LLM request flow in MotherApp."""
 
 from collections.abc import Callable, Iterable, Iterator
-from typing import cast, final
+from enum import StrEnum
+from typing import ClassVar, cast, final
 from unittest.mock import patch
 
-from llm.models import Attachment, Conversation, ToolDef
+from llm.models import Attachment, Conversation, Model, ToolDef
 
 from mother import MotherApp, MotherConfig
 from mother.widgets import Response
@@ -131,6 +132,83 @@ class _PromptOnlyConversation:
         return ["ok"]
 
 
+@final
+class _ReasoningPromptConversation:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def prompt(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        attachments: list[Attachment] | None = None,
+        reasoning_effort: str | None = None,
+    ) -> Iterable[str]:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "attachments": attachments,
+                "reasoning_effort": reasoning_effort,
+            }
+        )
+        return ["ok"]
+
+
+@final
+class _ReasoningChainConversation:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def chain(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        attachments: list[Attachment] | None = None,
+        tools: list[ToolDef] | None = None,
+        chain_limit: int | None = None,
+        before_call: object | None = None,
+        after_call: object | None = None,
+        options: dict[str, object] | None = None,
+    ) -> Iterable[str]:
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "system": system,
+                "attachments": attachments,
+                "tools": tools,
+                "chain_limit": chain_limit,
+                "before_call": before_call,
+                "after_call": after_call,
+                "options": options,
+            }
+        )
+        return ["ok"]
+
+
+class _ReasoningEnum(StrEnum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+@final
+class _Field:
+    def __init__(self, annotation: object) -> None:
+        self.annotation = annotation
+
+
+@final
+class _ModelWithReasoningOptions:
+    @final
+    class Options:
+        model_fields: ClassVar[dict[str, object]] = {
+            "reasoning_effort": _Field(_ReasoningEnum | None)
+        }
+
+
 def _call_from_thread(callback: object, *args: object) -> object:
     return cast(Callable[..., object], callback)(*args)
 
@@ -215,6 +293,63 @@ def test_request_llm_response_passes_attachments_without_tools():
     assert llm_response is not None
     assert list(llm_response) == ["ok"]
     assert conversation.calls == [("hello", "system", [attachment])]
+
+
+def test_request_llm_response_passes_reasoning_effort_without_tools() -> None:
+    app = MotherApp(config=MotherConfig(model="test-model", reasoning_effort="high"))
+    app.model = cast(Model, cast(object, _ModelWithReasoningOptions()))
+    response = _FakeResponse()
+    conversation = _ReasoningPromptConversation()
+
+    llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
+        conversation=cast(Conversation, cast(object, conversation)),
+        prompt="hello",
+        system="system",
+        tools=None,
+        attachments=None,
+        response=cast(Response, cast(object, response)),
+    )
+
+    assert llm_response is not None
+    assert list(llm_response) == ["ok"]
+    assert conversation.calls == [
+        {
+            "prompt": "hello",
+            "system": "system",
+            "attachments": None,
+            "reasoning_effort": "high",
+        }
+    ]
+
+
+def test_request_llm_response_passes_reasoning_effort_with_tools() -> None:
+    app = MotherApp(config=MotherConfig(model="test-model", reasoning_effort="medium"))
+    app.model = cast(Model, cast(object, _ModelWithReasoningOptions()))
+    response = _FakeResponse()
+    conversation = _ReasoningChainConversation()
+    tools = cast(list[ToolDef], [object()])
+
+    llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
+        conversation=cast(Conversation, cast(object, conversation)),
+        prompt="hello",
+        system="system",
+        tools=tools,
+        attachments=None,
+        response=cast(Response, cast(object, response)),
+    )
+
+    assert llm_response is not None
+    assert list(llm_response) == ["ok"]
+    assert len(conversation.calls) == 1
+    call = conversation.calls[0]
+    assert call["prompt"] == "hello"
+    assert call["system"] == "system"
+    assert call["attachments"] is None
+    assert call["tools"] == tools
+    assert call["chain_limit"] == 3
+    assert call["before_call"] is not None
+    assert call["after_call"] is not None
+    assert call["options"] == {"reasoning_effort": "medium"}
 
 
 def test_stream_llm_response_refreshes_context_size_on_success():
