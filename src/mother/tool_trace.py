@@ -10,6 +10,15 @@ def _format_section(title: str, body: str) -> str:
     return f"{title}:\n{body}"
 
 
+def _format_argument_body(arguments: dict[str, object]) -> str:
+    """Render argument mappings without the outermost braces."""
+    rendered = json.dumps(arguments, indent=2, sort_keys=True, default=repr)
+    lines = rendered.splitlines()
+    if len(lines) >= 2 and lines[0] == "{" and lines[-1] == "}":
+        return "\n".join(lines[1:-1])
+    return rendered
+
+
 def format_tool_arguments(arguments: dict[str, object]) -> str:
     """Render tool arguments as plain text."""
     lines: list[str] = []
@@ -24,12 +33,7 @@ def format_tool_arguments(arguments: dict[str, object]) -> str:
     if rendered_arguments:
         if lines:
             lines.append("")
-        lines.append(
-            _format_section(
-                "Arguments",
-                json.dumps(rendered_arguments, indent=2, sort_keys=True, default=repr),
-            )
-        )
+        lines.append(_format_section("Arguments", _format_argument_body(rendered_arguments)))
 
     return "\n".join(lines)
 

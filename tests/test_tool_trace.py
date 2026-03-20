@@ -13,6 +13,8 @@ def test_format_tool_arguments_renders_extra_arguments_as_json():
     text = format_tool_arguments({"command": "ls -la", "timeout": 30.0})
     assert "Command:" in text
     assert '"timeout": 30.0' in text
+    assert "Arguments:\n{" not in text
+    assert not text.rstrip().endswith("}")
 
 
 def test_format_tool_event_renders_started_status():
