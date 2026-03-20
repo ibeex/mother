@@ -45,7 +45,7 @@ from mother.reasoning import (
     supported_reasoning_efforts,
     supports_reasoning_effort,
 )
-from mother.session import SessionManager
+from mother.session import SessionManager, format_markdown_export
 from mother.slash_commands import (
     SLASH_COMMANDS,
     SlashCommand,
@@ -586,6 +586,14 @@ class MotherApp(App[None]):
             return
 
         self.notify(f"Saved to {output_path}", title="Session")
+
+        notice = format_markdown_export(output_path)
+        if notice is None:
+            return
+        if notice.severity is None:
+            self.notify(notice.message, title="Session")
+            return
+        self.notify(notice.message, title="Session", severity=notice.severity)
 
     def action_quit_app(self) -> None:
         """Close the application immediately."""
@@ -1227,6 +1235,9 @@ def cli(model: str | None, system: str | None, save_last: bool) -> None:
             click.echo("No unsaved session found.")
             return
         click.echo(f"Saved: {output_path}")
+        notice = format_markdown_export(output_path)
+        if notice is not None:
+            click.echo(notice.message)
         return
 
     session_manager = SessionManager.create(

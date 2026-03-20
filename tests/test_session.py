@@ -2,10 +2,10 @@
 
 from pathlib import Path
 from typing import cast, final
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from mother import MotherApp, MotherConfig
-from mother.session import SessionManager
+from mother.session import MarkdownFormatNotice, SessionManager, format_markdown_export
 
 
 @final
@@ -165,6 +165,36 @@ def test_save_last_exports_existing_unsaved_session(tmp_path: Path):
     assert (sessions_dir / "last").exists() is False
 
 
+def test_format_markdown_export_uses_rumdl_when_uv_is_available(tmp_path: Path):
+    markdown_path = tmp_path / "mother.md"
+    _ = markdown_path.write_text("# Mother Session\n", encoding="utf-8")
+
+    with (
+        patch("mother.session.shutil.which", return_value="/usr/bin/uv"),
+        patch("mother.session.subprocess.run") as run,
+    ):
+        notice = format_markdown_export(markdown_path)
+
+    assert notice is None
+    run.assert_called_once_with(
+        ["uv", "run", "rumdl", "fmt", "--disable", "MD013", str(markdown_path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_format_markdown_export_reports_missing_uv(tmp_path: Path):
+    markdown_path = tmp_path / "mother.md"
+
+    with patch("mother.session.shutil.which", return_value=None):
+        notice = format_markdown_export(markdown_path)
+
+    assert notice == MarkdownFormatNotice(
+        "Install uv to enable better markdown formatting on save."
+    )
+
+
 def test_action_save_session_keeps_current_session_manager(tmp_path: Path):
     config = MotherConfig(session_markdown_dir=str(tmp_path / "markdown"))
     saved_path = tmp_path / "markdown" / "mother.md"
@@ -172,9 +202,37 @@ def test_action_save_session_keeps_current_session_manager(tmp_path: Path):
     app = MotherApp(config=config)
     app.session_manager = cast(SessionManager, cast(object, fake_session_manager))
 
-    with patch.object(app, "notify") as notify:
+    with (
+        patch.object(app, "notify") as notify,
+        patch("mother.mother.format_markdown_export", return_value=None),
+    ):
         app.action_save_session()
 
     assert fake_session_manager.save_calls == 1
     assert app.session_manager is not None
     notify.assert_called_once_with(f"Saved to {saved_path}", title="Session")
+
+
+def test_action_save_session_notifies_when_uv_is_missing(tmp_path: Path):
+    config = MotherConfig(session_markdown_dir=str(tmp_path / "markdown"))
+    saved_path = tmp_path / "markdown" / "mother.md"
+    fake_session_manager = _FakeSessionManager(saved_path)
+    app = MotherApp(config=config)
+    app.session_manager = cast(SessionManager, cast(object, fake_session_manager))
+
+    with (
+        patch.object(app, "notify") as notify,
+        patch(
+            "mother.mother.format_markdown_export",
+            return_value=MarkdownFormatNotice(
+                "Install uv to enable better markdown formatting on save."
+            ),
+        ),
+    ):
+        app.action_save_session()
+
+    assert fake_session_manager.save_calls == 1
+    assert notify.call_args_list == [
+        call(f"Saved to {saved_path}", title="Session"),
+        call("Install uv to enable better markdown formatting on save.", title="Session"),
+    ]

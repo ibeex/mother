@@ -40,6 +40,8 @@ Each app launch starts a new transient JSONL session under `~/.mother/sessions`.
 
 - `/save` or `Ctrl+S` exports the current session to markdown
 - `mother --save` recovers the last unsaved session and exits
+- after each markdown export, Mother tries `uv run rumdl fmt --disable MD013 <file>` for cleaner formatting
+- if `uv` is not installed, the session is still saved and Mother shows a tip about installing `uv` for better formatting
 - if you quit without saving, the next launch silently deletes that last unsaved JSONL file
 - markdown exports include a session summary, prompt context, system prompts, tool calls, tool outputs, and key session events
 

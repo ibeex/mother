@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -123,6 +125,37 @@ def _render_details(summary: str, body: str) -> list[str]:
         "",
         "</details>",
     ]
+
+
+@dataclass(frozen=True, slots=True)
+class MarkdownFormatNotice:
+    """Describe a non-fatal markdown formatting notice for the caller."""
+
+    message: str
+    severity: Literal["warning"] | None = None
+
+
+def format_markdown_export(path: Path) -> MarkdownFormatNotice | None:
+    """Format an exported markdown file with rumdl when uv is available."""
+    if shutil.which("uv") is None:
+        return MarkdownFormatNotice("Install uv to enable better markdown formatting on save.")
+
+    try:
+        _ = subprocess.run(
+            ["uv", "run", "rumdl", "fmt", "--disable", "MD013", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr_value = cast(object, exc.stderr)
+        stdout_value = cast(object, exc.stdout)
+        stderr = stderr_value if isinstance(stderr_value, str) else ""
+        stdout = stdout_value if isinstance(stdout_value, str) else ""
+        detail = stderr.strip() or stdout.strip() or str(exc)
+        return MarkdownFormatNotice(f"Markdown formatting failed: {detail}", severity="warning")
+
+    return None
 
 
 @dataclass(slots=True)
