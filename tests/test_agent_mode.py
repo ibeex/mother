@@ -512,6 +512,23 @@ def test_statusline_formats_model_and_context_size():
     assert StatusLine.format_status("test-model", True, 12345) == "test-model · on · 12.3k · auto"
 
 
+def test_statusline_formats_token_usage_when_known() -> None:
+    assert (
+        StatusLine.format_status(
+            "test-model",
+            True,
+            12345,
+            False,
+            "high",
+            1.25,
+            12345,
+            678,
+            9000,
+        )
+        == "test-model · on · 12.3k · in 12.3k · out 678 · cache 9.0k · manual · high · last 1.2s"
+    )
+
+
 def test_statusline_formats_manual_scroll_mode():
     assert (
         StatusLine.format_status("test-model", True, 256, False) == "test-model · on · 256 · manual"
@@ -566,6 +583,104 @@ def test_status_reasoning_effort_visible_for_reasoning_models() -> None:
     )
 
     assert app._status_reasoning_effort() == "off"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_refresh_context_size_tracks_session_token_totals() -> None:
+    app = MotherApp()
+    app.conversation = cast(
+        Conversation,
+        cast(
+            object,
+            SimpleNamespace(
+                responses=[
+                    SimpleNamespace(
+                        id="resp-1",
+                        input_tokens=12345,
+                        output_tokens=678,
+                        token_details={"prompt_tokens_details": {"cached_tokens": 9000}},
+                        response_json=None,
+                    )
+                ]
+            ),
+        ),
+    )
+
+    def call_from_thread(callback: Callable[..., object], *args: object) -> object:
+        return callback(*args)
+
+    with patch.object(app, "call_from_thread", side_effect=call_from_thread):
+        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
+
+    assert app._last_context_tokens == 12345  # pyright: ignore[reportPrivateUsage]
+    assert app._session_input_tokens == 12345  # pyright: ignore[reportPrivateUsage]
+    assert app._session_output_tokens == 678  # pyright: ignore[reportPrivateUsage]
+    assert app._session_cached_tokens == 9000  # pyright: ignore[reportPrivateUsage]
+
+
+def test_refresh_context_size_accumulates_session_totals_once_per_response() -> None:
+    app = MotherApp()
+    first_response = SimpleNamespace(
+        id="resp-1",
+        input_tokens=100,
+        output_tokens=10,
+        token_details={"prompt_tokens_details": {"cached_tokens": 5}},
+        response_json=None,
+    )
+    second_response = SimpleNamespace(
+        id="resp-2",
+        input_tokens=200,
+        output_tokens=20,
+        token_details={},
+        response_json={"usage": {"prompt_tokens_details": {"cached_tokens": 0}}},
+    )
+    responses_ns: list[SimpleNamespace] = [first_response]
+    conversation_ns = SimpleNamespace(responses=responses_ns)
+    app.conversation = cast(
+        Conversation,
+        cast(object, conversation_ns),
+    )
+
+    def call_from_thread(callback: Callable[..., object], *args: object) -> object:
+        return callback(*args)
+
+    with patch.object(app, "call_from_thread", side_effect=call_from_thread):
+        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
+        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
+        responses_ns.append(second_response)
+        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
+
+    assert app._session_input_tokens == 300  # pyright: ignore[reportPrivateUsage]
+    assert app._session_output_tokens == 30  # pyright: ignore[reportPrivateUsage]
+    assert app._session_cached_tokens == 5  # pyright: ignore[reportPrivateUsage]
+
+
+def test_refresh_context_size_reads_zero_cached_tokens_from_response_json() -> None:
+    app = MotherApp()
+    app.conversation = cast(
+        Conversation,
+        cast(
+            object,
+            SimpleNamespace(
+                responses=[
+                    SimpleNamespace(
+                        id="resp-1",
+                        input_tokens=12345,
+                        output_tokens=678,
+                        token_details={},
+                        response_json={"usage": {"prompt_tokens_details": {"cached_tokens": 0}}},
+                    )
+                ]
+            ),
+        ),
+    )
+
+    def call_from_thread(callback: Callable[..., object], *args: object) -> object:
+        return callback(*args)
+
+    with patch.object(app, "call_from_thread", side_effect=call_from_thread):
+        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
+
+    assert app._session_cached_tokens == 0  # pyright: ignore[reportPrivateUsage]
 
 
 def test_send_prompt_no_tools_when_conversational():

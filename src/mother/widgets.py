@@ -645,6 +645,9 @@ class StatusLine(Label):
         auto_scroll_enabled: bool = True,
         reasoning_effort: str | None = None,
         last_response_time_seconds: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cached_tokens: int | None = None,
     ) -> None:
         super().__init__(
             self.format_status(
@@ -654,6 +657,9 @@ class StatusLine(Label):
                 auto_scroll_enabled,
                 reasoning_effort,
                 last_response_time_seconds,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
             ),
             id="status-line",
             markup=False,
@@ -674,6 +680,15 @@ class StatusLine(Label):
         return f"{hours}h {remaining_minutes}m {remaining_seconds}s"
 
     @staticmethod
+    def format_token_count(tokens: int | None) -> str | None:
+        """Format a token count for compact display in the status line."""
+        if tokens is None:
+            return None
+        if tokens >= 1000:
+            return f"{tokens / 1000:.1f}k"
+        return str(tokens)
+
+    @staticmethod
     def format_status(
         model_name: str,
         agent_mode: bool,
@@ -681,18 +696,26 @@ class StatusLine(Label):
         auto_scroll_enabled: bool = True,
         reasoning_effort: str | None = None,
         last_response_time_seconds: float | None = None,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        cached_tokens: int | None = None,
     ) -> str:
         """Format the text displayed in the status line."""
         model = model_name or "?"
         agent = "on" if agent_mode else "off"
-        if context_tokens is None:
-            context = "?"
-        elif context_tokens >= 1000:
-            context = f"{context_tokens / 1000:.1f}k"
-        else:
-            context = str(context_tokens)
+        context = StatusLine.format_token_count(context_tokens) or "?"
         auto_scroll = "auto" if auto_scroll_enabled else "manual"
-        parts = [model, agent, context, auto_scroll]
+        parts = [model, agent, context]
+        formatted_input = StatusLine.format_token_count(input_tokens)
+        if formatted_input is not None:
+            parts.append(f"in {formatted_input}")
+        formatted_output = StatusLine.format_token_count(output_tokens)
+        if formatted_output is not None:
+            parts.append(f"out {formatted_output}")
+        formatted_cached = StatusLine.format_token_count(cached_tokens)
+        if formatted_cached is not None:
+            parts.append(f"cache {formatted_cached}")
+        parts.append(auto_scroll)
         if reasoning_effort is not None:
             parts.append(reasoning_effort)
         response_time = StatusLine.format_response_time(last_response_time_seconds)
@@ -709,8 +732,11 @@ class StatusLine(Label):
         auto_scroll_enabled: bool,
         reasoning_effort: str | None,
         last_response_time_seconds: float | None,
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_tokens: int | None,
     ) -> None:
-        """Update the displayed model, agent mode, context size, follow mode, reasoning, and last response time."""
+        """Update the displayed model, context, token usage, follow mode, reasoning, and last response time."""
         self.update(
             self.format_status(
                 model_name,
@@ -719,6 +745,9 @@ class StatusLine(Label):
                 auto_scroll_enabled,
                 reasoning_effort,
                 last_response_time_seconds,
+                input_tokens,
+                output_tokens,
+                cached_tokens,
             )
         )
 

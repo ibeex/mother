@@ -254,7 +254,7 @@ def build_cases() -> list[EvalCase]:
         EvalCase(
             "python_script_run",
             "python scripts/cleanup.py",
-            "Warning",
+            "Fatal",
             "python-warning",
         ),
         EvalCase(

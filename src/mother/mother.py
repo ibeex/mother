@@ -91,6 +91,59 @@ APP_CSS_PATHS: list[str | PurePath] = [
 ]
 
 
+def _token_detail_int(value: object, key: str) -> int | None:
+    """Find the first integer token-detail value for a key in nested data."""
+    if isinstance(value, dict):
+        mapping = cast(dict[str, object], value)
+        candidate = mapping.get(key)
+        if isinstance(candidate, int) and not isinstance(candidate, bool):
+            return candidate
+        for nested_value in mapping.values():
+            found = _token_detail_int(nested_value, key)
+            if found is not None:
+                return found
+        return None
+    if isinstance(value, list):
+        values = cast(list[object], value)
+        for nested_value in values:
+            found = _token_detail_int(nested_value, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _extract_cached_tokens(
+    token_details: dict[str, object] | None,
+    response_json: dict[str, object] | None = None,
+) -> int | None:
+    """Extract cached-token counts from provider-specific usage details when available."""
+    for source in (token_details, response_json):
+        if source is None:
+            continue
+        for key in ("cached_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
+            found = _token_detail_int(source, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _add_optional_token_total(total: int | None, value: int | None) -> int | None:
+    """Accumulate token counts while preserving unknown totals until first known value."""
+    if value is None:
+        return total
+    if total is None:
+        return value
+    return total + value
+
+
+def _response_usage_key(response: object) -> str:
+    """Return a stable key used to avoid double-counting response usage."""
+    response_id = getattr(response, "id", None)
+    if isinstance(response_id, str) and response_id:
+        return response_id
+    return str(id(response))
+
+
 class MotherApp(App[None]):
     """Simple app for chatting with an LLM via a conversation."""
 
@@ -126,7 +179,11 @@ class MotherApp(App[None]):
         self._pending_executions: list[BashExecution] = []
         self._pending_image_attachments: dict[str, Attachment] = {}
         self._tool_outputs: dict[str, ToolOutput] = {}
+        self._counted_response_usage_keys: set[str] = set()
         self._last_context_tokens: int | None = None
+        self._session_input_tokens: int | None = None
+        self._session_output_tokens: int | None = None
+        self._session_cached_tokens: int | None = None
         self._last_response_time_seconds: float | None = None
         self._suppress_prompt_completion_once: str | None = None
         self.auto_scroll_enabled: bool = True
@@ -154,6 +211,9 @@ class MotherApp(App[None]):
             self.auto_scroll_enabled,
             self._status_reasoning_effort(),
             self._last_response_time_seconds,
+            self._session_input_tokens,
+            self._session_output_tokens,
+            self._session_cached_tokens,
         )
         yield Footer()
 
@@ -483,6 +543,9 @@ class MotherApp(App[None]):
             auto_scroll_enabled=self.auto_scroll_enabled,
             reasoning_effort=self._status_reasoning_effort(),
             last_response_time_seconds=self._last_response_time_seconds,
+            input_tokens=self._session_input_tokens,
+            output_tokens=self._session_output_tokens,
+            cached_tokens=self._session_cached_tokens,
         )
 
     def _remember_last_response_time(self, duration_seconds: float) -> None:
@@ -491,12 +554,36 @@ class MotherApp(App[None]):
         self._update_statusline()
 
     def _refresh_context_size(self) -> None:
-        """Capture the latest context token count, if the provider reports one."""
+        """Capture the latest context size and accumulate token usage for the session."""
         conversation = self.conversation
         if conversation is None or not conversation.responses:
             self._last_context_tokens = None
-        else:
-            self._last_context_tokens = conversation.responses[-1].input_tokens
+            _ = self.call_from_thread(self._update_statusline)
+            return
+
+        latest_response = conversation.responses[-1]
+        self._last_context_tokens = latest_response.input_tokens
+
+        response_key = _response_usage_key(latest_response)
+        if response_key not in self._counted_response_usage_keys:
+            cached_tokens = _extract_cached_tokens(
+                cast(dict[str, object] | None, latest_response.token_details),
+                cast(dict[str, object] | None, latest_response.response_json),
+            )
+            self._session_input_tokens = _add_optional_token_total(
+                self._session_input_tokens,
+                latest_response.input_tokens,
+            )
+            self._session_output_tokens = _add_optional_token_total(
+                self._session_output_tokens,
+                latest_response.output_tokens,
+            )
+            self._session_cached_tokens = _add_optional_token_total(
+                self._session_cached_tokens,
+                cached_tokens,
+            )
+            self._counted_response_usage_keys.add(response_key)
+
         _ = self.call_from_thread(self._update_statusline)
 
     def _flush_pending_context(self, value: str) -> str:
