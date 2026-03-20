@@ -7,10 +7,19 @@ from click.testing import CliRunner
 
 from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherApp, MotherConfig, cli, load_config
 from mother.config import apply_cli_overrides
+from mother.models import ModelEntry
+
+
+def _test_model_entry(model_id: str = "gpt-5") -> ModelEntry:
+    return ModelEntry(
+        id=model_id,
+        name=model_id,
+        api_type="openai-responses",
+    )
 
 
 def test_default_model_constant():
-    assert DEFAULT_MODEL == "gpt-5"
+    assert DEFAULT_MODEL == ""
 
 
 def test_default_system_constant():
@@ -53,11 +62,12 @@ def test_cli_help():
 
 def test_cli_default_wiring():
     runner = CliRunner()
+    config = MotherConfig(model="gpt-5", models=[_test_model_entry()])
     with (
         patch("mother.mother.load_config") as mock_load,
         patch("mother.mother.MotherApp") as mock_app_cls,
     ):
-        mock_load.return_value = MotherConfig()
+        mock_load.return_value = config
         mock_app = MagicMock()
         mock_app_cls.return_value = mock_app
         _ = runner.invoke(cli, [])
@@ -71,7 +81,7 @@ def test_cli_custom_model():
         patch("mother.mother.load_config") as mock_load,
         patch("mother.mother.MotherApp") as mock_app_cls,
     ):
-        mock_load.return_value = MotherConfig()
+        mock_load.return_value = MotherConfig(models=[_test_model_entry("gpt-4o-mini")])
         mock_app = MagicMock()
         mock_app_cls.return_value = mock_app
         _ = runner.invoke(cli, ["-m", "gpt-4o-mini"])
@@ -86,13 +96,40 @@ def test_cli_custom_system():
         patch("mother.mother.load_config") as mock_load,
         patch("mother.mother.MotherApp") as mock_app_cls,
     ):
-        mock_load.return_value = MotherConfig()
+        mock_load.return_value = MotherConfig(model="gpt-5", models=[_test_model_entry()])
         mock_app = MagicMock()
         mock_app_cls.return_value = mock_app
         _ = runner.invoke(cli, ["-s", "Be a pirate."])
         call_kwargs = mock_app_cls.call_args
         passed_config: MotherConfig = call_kwargs.kwargs["config"]  # pyright: ignore[reportAny]
         assert passed_config.system_prompt == "Be a pirate."
+
+
+def test_cli_exits_before_tui_when_no_models_are_configured() -> None:
+    runner = CliRunner()
+    with (
+        patch("mother.mother.load_config", return_value=MotherConfig()),
+        patch("mother.mother.MotherApp") as mock_app_cls,
+    ):
+        result = runner.invoke(cli, [])
+    assert result.exit_code == 0
+    assert "No models configured" in result.output
+    mock_app_cls.assert_not_called()
+
+
+def test_cli_exits_before_tui_when_default_model_is_not_set() -> None:
+    runner = CliRunner()
+    with (
+        patch(
+            "mother.mother.load_config",
+            return_value=MotherConfig(models=[_test_model_entry()]),
+        ),
+        patch("mother.mother.MotherApp") as mock_app_cls,
+    ):
+        result = runner.invoke(cli, [])
+    assert result.exit_code == 0
+    assert "No default model selected" in result.output
+    mock_app_cls.assert_not_called()
 
 
 # Config tests

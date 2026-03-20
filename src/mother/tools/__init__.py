@@ -5,17 +5,20 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-import llm
+from pydantic_ai import Tool
 
 
 class ToolRegistry:
     def __init__(self) -> None:
-        self._tools: list[llm.Tool | type[llm.Toolbox] | Callable[..., object]] = []
+        self._tools: list[Tool[None]] = []
 
-    def register(self, tool: llm.Tool | type[llm.Toolbox] | Callable[..., object]) -> None:
-        self._tools.append(tool)
+    def register(self, tool: Tool[None] | Callable[..., object]) -> None:
+        if isinstance(tool, Tool):
+            self._tools.append(tool)
+            return
+        self._tools.append(Tool(tool, takes_ctx=False))
 
-    def tools(self) -> list[llm.Tool | type[llm.Toolbox] | Callable[..., object]]:
+    def tools(self) -> list[Tool[None]]:
         return list(self._tools)
 
     def is_empty(self) -> bool:

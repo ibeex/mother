@@ -276,7 +276,7 @@ def test_web_fetch_tool_rejects_local_jina_mode():
 def test_web_fetch_tool_registered_in_registry():
     registry = get_default_tools(tools_enabled=True)
     assert not registry.is_empty()
-    tool_names = [getattr(tool, "__name__", "") for tool in registry.tools()]
+    tool_names = [tool.name for tool in registry.tools()]
     assert "bash" in tool_names
     assert "web_search" in tool_names
     assert "web_fetch" in tool_names

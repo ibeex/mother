@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Literal, Protocol, cast
 
-import llm
+from pydantic_ai import Agent
+
+from mother.models import create_pydantic_model, fallback_model_entry, get_model_entry
 
 Label = Literal["OK", "Warning", "Fatal"]
 
@@ -70,19 +72,18 @@ _LABEL_RE = re.compile(rf"(?im)^LABEL:\s*(OK|Warning|Fatal|{_COMMON_WARNING_TYPO
 _FALLBACK_LABEL_RE = re.compile(rf"\b(OK|Warning|Fatal|{_COMMON_WARNING_TYPO})\b", re.IGNORECASE)
 
 
-class PromptResponse(Protocol):
-    def text(self) -> str: ...
+class GuardResult(Protocol):
+    output: object
 
 
-class PromptModel(Protocol):
-    def prompt(
+class GuardAgent(Protocol):
+    def run_sync(
         self,
-        prompt: str | None = None,
+        user_prompt: str | None = None,
         *,
-        system: str | None = None,
-        stream: bool = True,
-        temperature: float = 0.0,
-    ) -> PromptResponse: ...
+        instructions: object = None,
+        model_settings: object = None,
+    ) -> GuardResult: ...
 
 
 @dataclass(frozen=True)
@@ -100,8 +101,16 @@ class BashGuardDecision:
 
 
 @cache
-def _get_guard_model(model_name: str) -> PromptModel:
-    return cast(PromptModel, llm.get_model(model_name))
+def _get_guard_agent(model_name: str) -> GuardAgent:
+    entry = get_model_entry(model_name)
+    if entry is None:
+        entry = fallback_model_entry(model_name)
+    return cast(GuardAgent, cast(object, Agent(create_pydantic_model(entry))))
+
+
+def get_guard_agent(model_name: str) -> GuardAgent:
+    """Return the cached guard agent for a configured model id."""
+    return _get_guard_agent(model_name)
 
 
 def normalize_label(raw_label: str) -> Label | None:
@@ -178,7 +187,7 @@ def classify_command(
 ) -> BashGuardDecision:
     """Classify a shell command and fail closed on model/parse errors."""
     try:
-        model = _get_guard_model(model_name)
+        agent = _get_guard_agent(model_name)
     except Exception as exc:
         return _fatal_decision(
             command,
@@ -189,13 +198,13 @@ def classify_command(
         )
 
     try:
-        response = model.prompt(
+        result = agent.run_sync(
             build_eval_prompt(command),
-            system=SYSTEM_PROMPT,
-            stream=False,
-            temperature=temperature,
+            instructions=SYSTEM_PROMPT,
+            model_settings={"temperature": temperature},
         )
-        raw_output = response.text()
+        output_value = result.output
+        raw_output = output_value if isinstance(output_value, str) else str(output_value)
     except Exception as exc:
         return _fatal_decision(
             command,

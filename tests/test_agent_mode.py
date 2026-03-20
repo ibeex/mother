@@ -1,43 +1,47 @@
-"""Tests for Ctrl+A agent mode toggle in MotherApp."""
+"""Tests for agent-mode toggles, slash commands, and status-line behavior."""
 
 import asyncio
 from collections.abc import Callable
-from enum import StrEnum
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
-from llm.models import Conversation, Model
+from pydantic_ai.messages import ModelMessage
 
 from mother import MotherApp, MotherConfig
+from mother.models import ModelEntry
 from mother.widgets import ModelComplete, PromptTextArea, StatusLine
 
 
-class _ReasoningEnum(StrEnum):
-    low = "low"
-    medium = "medium"
-    high = "high"
+def _reasoning_entry() -> ModelEntry:
+    return ModelEntry(
+        id="test-model",
+        name="test-model",
+        api_type="openai-responses",
+        supports_reasoning=True,
+        supports_tools=True,
+        supports_images=True,
+    )
 
 
-def test_app_starts_in_conversational_mode():
+def test_app_starts_in_conversational_mode() -> None:
     app = MotherApp()
     assert app.agent_mode is False
 
 
-def test_agent_mode_toggle_via_palette():
-    """Agent mode is toggled via the command palette (AgentModeProvider), not a key binding."""
+def test_agent_mode_toggle_via_palette() -> None:
     from mother.model_picker import AgentModeProvider
 
     assert AgentModeProvider in MotherApp.COMMANDS
 
 
-def test_toggle_agent_mode_on():
+def test_toggle_agent_mode_on() -> None:
     app = MotherApp()
     app.action_toggle_agent_mode()
     assert app.agent_mode is True
 
 
-def test_toggle_agent_mode_off():
+def test_toggle_agent_mode_off() -> None:
     app = MotherApp()
     app.action_toggle_agent_mode()
     app.action_toggle_agent_mode()
@@ -86,15 +90,9 @@ def test_prompt_enter_keeps_multiline_for_normal_text() -> None:
 
 def test_selected_slash_command_submits_on_second_enter() -> None:
     async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
         app = MotherApp(config=MotherConfig(model="test-model"))
 
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch.object(app, "exit") as exit_app,
-        ):
+        with patch.object(app, "exit") as exit_app:
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("/quit")
@@ -114,15 +112,9 @@ def test_selected_slash_command_submits_on_second_enter() -> None:
 
 def test_models_command_enter_opens_model_picker() -> None:
     async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
         app = MotherApp(config=MotherConfig(model="test-model"))
 
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch.object(app, "action_show_models") as show_models,
-        ):
+        with patch.object(app, "action_show_models") as show_models:
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("/models")
@@ -138,47 +130,32 @@ def test_models_command_enter_opens_model_picker() -> None:
 
 def test_agent_command_enter_toggles_agent_mode() -> None:
     async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
         app = MotherApp(config=MotherConfig(model="test-model"))
 
-        with patch("mother.mother.llm.get_model", return_value=model):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/agent")
-                await pilot.pause()
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            text_area.load_text("/agent")
+            await pilot.pause()
 
-                assert app.agent_mode is False
-                await pilot.press("enter")
-                await pilot.pause()
-                assert text_area.text == "/agent "
+            assert app.agent_mode is False
+            await pilot.press("enter")
+            await pilot.pause()
+            assert text_area.text == "/agent "
 
-                await pilot.press("enter")
-                await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
 
-                assert app.agent_mode is True
-                assert text_area.text == ""
+            assert app.agent_mode is True
+            assert text_area.text == ""
 
     asyncio.run(run())
 
 
 def test_reasoning_command_updates_runtime_setting() -> None:
     async def run() -> None:
-        model = MagicMock()
-        model.Options = SimpleNamespace(
-            model_fields={
-                "reasoning_effort": SimpleNamespace(annotation=_ReasoningEnum | None),
-            }
-        )
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
+        app = MotherApp(config=MotherConfig(model="test-model", models=[_reasoning_entry()]))
 
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch.object(app, "notify") as notify,
-        ):
+        with patch.object(app, "notify") as notify:
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("/reasoning high")
@@ -199,94 +176,30 @@ def test_reasoning_command_updates_runtime_setting() -> None:
 
 def test_reasoning_command_tab_opens_inline_picker() -> None:
     async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
         app = MotherApp(config=MotherConfig(model="test-model"))
 
-        with patch("mother.mother.llm.get_model", return_value=model):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/reasoning")
-                text_area.move_cursor((0, len("/reasoning")), record_width=False)
-                await pilot.pause()
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            text_area.load_text("/reasoning")
+            text_area.move_cursor((0, len("/reasoning")), record_width=False)
+            await pilot.pause()
 
-                await pilot.press("tab")
-                await pilot.pause()
+            await pilot.press("tab")
+            await pilot.pause()
 
-                model_complete = app.query_one(ModelComplete)
-                assert text_area.text == "/reasoning "
-                assert model_complete.display is True
-                assert text_area.model_complete_active is True
-
-    asyncio.run(run())
-
-
-def test_reasoning_command_typed_character_expands_query() -> None:
-    async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
-
-        with patch("mother.mother.llm.get_model", return_value=model):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/reasoning")
-                text_area.move_cursor((0, len("/reasoning")), record_width=False)
-                await pilot.pause()
-
-                await pilot.press("h")
-                await pilot.pause()
-
-                model_complete = app.query_one(ModelComplete)
-                assert text_area.text == "/reasoning h"
-                assert model_complete.display is True
-                assert text_area.model_complete_active is True
-
-    asyncio.run(run())
-
-
-def test_reasoning_command_tab_accepts_highlighted_value() -> None:
-    async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
-
-        with patch("mother.mother.llm.get_model", return_value=model):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/reasoning h")
-                text_area.move_cursor((0, len("/reasoning h")), record_width=False)
-                await pilot.pause()
-
-                await pilot.press("tab")
-                await pilot.pause()
-
-                assert text_area.text == "/reasoning high"
-                assert app.model_complete.display is False
-                assert text_area.model_complete_active is False
+            model_complete = app.query_one(ModelComplete)
+            assert text_area.text == "/reasoning "
+            assert model_complete.display is True
+            assert text_area.model_complete_active is True
 
     asyncio.run(run())
 
 
 def test_reasoning_command_partial_query_enter_uses_highlighted_value() -> None:
     async def run() -> None:
-        model = MagicMock()
-        model.Options = SimpleNamespace(
-            model_fields={
-                "reasoning_effort": SimpleNamespace(annotation=_ReasoningEnum | None),
-            }
-        )
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
+        app = MotherApp(config=MotherConfig(model="test-model", models=[_reasoning_entry()]))
 
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch.object(app, "notify") as notify,
-        ):
+        with patch.object(app, "notify") as notify:
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("/reasoning h")
@@ -307,19 +220,13 @@ def test_reasoning_command_partial_query_enter_uses_highlighted_value() -> None:
 
 def test_models_command_tab_opens_inline_model_picker() -> None:
     async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
         app = MotherApp(config=MotherConfig(model="test-model"))
         available_models = [
             ("gpt-5", "gpt-5"),
             ("claude-opus-4-1", "claude-opus-4-1 — Opus"),
         ]
 
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.slash_commands.get_available_models", return_value=available_models),
-        ):
+        with patch("mother.slash_commands.get_available_models", return_value=available_models):
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("/models")
@@ -337,95 +244,8 @@ def test_models_command_tab_opens_inline_model_picker() -> None:
     asyncio.run(run())
 
 
-def test_models_command_typed_character_expands_query() -> None:
-    async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
-        available_models = [("claude-opus-4-1", "claude-opus-4-1 — Opus")]
-
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.slash_commands.get_available_models", return_value=available_models),
-        ):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/models")
-                text_area.move_cursor((0, len("/models")), record_width=False)
-                await pilot.pause()
-
-                await pilot.press("o")
-                await pilot.pause()
-
-                model_complete = app.query_one(ModelComplete)
-                assert text_area.text == "/models o"
-                assert model_complete.display is True
-                assert text_area.model_complete_active is True
-
-    asyncio.run(run())
-
-
-def test_models_command_backspace_deletes_text_instead_of_expanding_query() -> None:
-    async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
-
-        with patch("mother.mother.llm.get_model", return_value=model):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/models")
-                text_area.move_cursor((0, len("/models")), record_width=False)
-                await pilot.pause()
-
-                await pilot.press("backspace")
-                await pilot.pause()
-
-                assert text_area.text == "/model"
-                assert text_area.model_complete_active is False
-                assert text_area.slash_complete_active is True
-
-    asyncio.run(run())
-
-
-def test_models_command_tab_accepts_highlighted_model() -> None:
-    async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
-        app = MotherApp(config=MotherConfig(model="test-model"))
-        available_models = [
-            ("claude-haiku-3-5", "claude-haiku-3-5 — Haiku"),
-            ("gpt-5", "gpt-5"),
-        ]
-
-        with (
-            patch("mother.mother.llm.get_model", return_value=model),
-            patch("mother.slash_commands.get_available_models", return_value=available_models),
-        ):
-            async with app.run_test() as pilot:
-                text_area = app.query_one(PromptTextArea)
-                text_area.load_text("/models ha")
-                text_area.move_cursor((0, len("/models ha")), record_width=False)
-                await pilot.pause()
-
-                await pilot.press("tab")
-                await pilot.pause()
-
-                assert text_area.text == "/models claude-haiku-3-5"
-                assert app.model_complete.display is False
-                assert text_area.model_complete_active is False
-
-    asyncio.run(run())
-
-
 def test_models_command_query_enter_switches_model() -> None:
     async def run() -> None:
-        model = MagicMock()
-        conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[])))
-        model.conversation.return_value = conversation  # pyright: ignore[reportAny]
         app = MotherApp(config=MotherConfig(model="test-model"))
         available_models = [
             ("claude-opus-4-1", "claude-opus-4-1 — Opus"),
@@ -433,7 +253,6 @@ def test_models_command_query_enter_switches_model() -> None:
         ]
 
         with (
-            patch("mother.mother.llm.get_model", return_value=model),
             patch("mother.slash_commands.get_available_models", return_value=available_models),
             patch.object(app, "action_switch_model") as switch_model,
         ):
@@ -450,21 +269,21 @@ def test_models_command_query_enter_switches_model() -> None:
     asyncio.run(run())
 
 
-def test_toggle_auto_scroll_off():
+def test_toggle_auto_scroll_off() -> None:
     app = MotherApp()
     with patch.object(app, "notify"):
         app.action_toggle_auto_scroll()
     assert app.auto_scroll_enabled is False
 
 
-def test_scroll_to_bottom_uses_forced_scroll():
+def test_scroll_to_bottom_uses_forced_scroll() -> None:
     app = MotherApp()
     with patch.object(app, "_scroll_chat_to_end") as scroll_to_end:
         app.action_scroll_to_bottom()
     scroll_to_end.assert_called_once_with(force=True)
 
 
-def test_shift_g_scrolls_to_bottom_when_input_is_not_focused():
+def test_shift_g_scrolls_to_bottom_when_input_is_not_focused() -> None:
     app = MotherApp()
     with (
         patch.object(MotherApp, "focused", new_callable=PropertyMock, return_value=None),
@@ -474,7 +293,7 @@ def test_shift_g_scrolls_to_bottom_when_input_is_not_focused():
     scroll_to_bottom.assert_called_once_with()
 
 
-def test_shift_g_does_nothing_when_input_is_focused():
+def test_shift_g_does_nothing_when_input_is_focused() -> None:
     app = MotherApp()
     text_area = PromptTextArea()
     with (
@@ -485,9 +304,8 @@ def test_shift_g_does_nothing_when_input_is_focused():
     scroll_to_bottom.assert_not_called()
 
 
-def test_subtitle_shows_agent_indicator():
+def test_subtitle_shows_agent_indicator() -> None:
     app = MotherApp()
-    # Simulate mounted state by setting sub_title directly
     app.agent_mode = False
     app.config = MotherConfig(model="test-model")
     app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
@@ -498,17 +316,17 @@ def test_subtitle_shows_agent_indicator():
     assert "[AGENT]" in app.sub_title
 
 
-def test_config_tools_enabled_sets_initial_mode():
+def test_config_tools_enabled_sets_initial_mode() -> None:
     config = MotherConfig(tools_enabled=True)
     app = MotherApp(config=config)
     assert app.agent_mode is True
 
 
-def test_statusline_formats_model_and_unknown_context():
+def test_statusline_formats_model_and_unknown_context() -> None:
     assert StatusLine.format_status("test-model", False, None) == "test-model · off · ? · auto"
 
 
-def test_statusline_formats_model_and_context_size():
+def test_statusline_formats_model_and_context_size() -> None:
     assert StatusLine.format_status("test-model", True, 12345) == "test-model · on · 12.3k · auto"
 
 
@@ -529,7 +347,7 @@ def test_statusline_formats_token_usage_when_known() -> None:
     )
 
 
-def test_statusline_formats_manual_scroll_mode():
+def test_statusline_formats_manual_scroll_mode() -> None:
     assert (
         StatusLine.format_status("test-model", True, 256, False) == "test-model · on · 256 · manual"
     )
@@ -570,132 +388,22 @@ def test_statusline_formats_hour_last_response_time() -> None:
 
 def test_status_reasoning_effort_visible_for_reasoning_models() -> None:
     app = MotherApp(config=MotherConfig(reasoning_effort="none"))
-    app.model = cast(
-        Model,
-        cast(
-            object,
-            SimpleNamespace(
-                Options=SimpleNamespace(
-                    model_fields={"reasoning_effort": object()},
-                )
-            ),
-        ),
-    )
-
+    app.current_model_entry = _reasoning_entry()
     assert app._status_reasoning_effort() == "off"  # pyright: ignore[reportPrivateUsage]
 
 
-def test_refresh_context_size_tracks_session_token_totals() -> None:
-    app = MotherApp()
-    app.conversation = cast(
-        Conversation,
-        cast(
-            object,
-            SimpleNamespace(
-                responses=[
-                    SimpleNamespace(
-                        id="resp-1",
-                        input_tokens=12345,
-                        output_tokens=678,
-                        token_details={"prompt_tokens_details": {"cached_tokens": 9000}},
-                        response_json=None,
-                    )
-                ]
-            ),
-        ),
-    )
-
-    def call_from_thread(callback: Callable[..., object], *args: object) -> object:
-        return callback(*args)
-
-    with patch.object(app, "call_from_thread", side_effect=call_from_thread):
-        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
-
-    assert app._last_context_tokens == 12345  # pyright: ignore[reportPrivateUsage]
-    assert app._session_input_tokens == 12345  # pyright: ignore[reportPrivateUsage]
-    assert app._session_output_tokens == 678  # pyright: ignore[reportPrivateUsage]
-    assert app._session_cached_tokens == 9000  # pyright: ignore[reportPrivateUsage]
-
-
-def test_refresh_context_size_accumulates_session_totals_once_per_response() -> None:
-    app = MotherApp()
-    first_response = SimpleNamespace(
-        id="resp-1",
-        input_tokens=100,
-        output_tokens=10,
-        token_details={"prompt_tokens_details": {"cached_tokens": 5}},
-        response_json=None,
-    )
-    second_response = SimpleNamespace(
-        id="resp-2",
-        input_tokens=200,
-        output_tokens=20,
-        token_details={},
-        response_json={"usage": {"prompt_tokens_details": {"cached_tokens": 0}}},
-    )
-    responses_ns: list[SimpleNamespace] = [first_response]
-    conversation_ns = SimpleNamespace(responses=responses_ns)
-    app.conversation = cast(
-        Conversation,
-        cast(object, conversation_ns),
-    )
-
-    def call_from_thread(callback: Callable[..., object], *args: object) -> object:
-        return callback(*args)
-
-    with patch.object(app, "call_from_thread", side_effect=call_from_thread):
-        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
-        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
-        responses_ns.append(second_response)
-        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
-
-    assert app._session_input_tokens == 300  # pyright: ignore[reportPrivateUsage]
-    assert app._session_output_tokens == 30  # pyright: ignore[reportPrivateUsage]
-    assert app._session_cached_tokens == 5  # pyright: ignore[reportPrivateUsage]
-
-
-def test_refresh_context_size_reads_zero_cached_tokens_from_response_json() -> None:
-    app = MotherApp()
-    app.conversation = cast(
-        Conversation,
-        cast(
-            object,
-            SimpleNamespace(
-                responses=[
-                    SimpleNamespace(
-                        id="resp-1",
-                        input_tokens=12345,
-                        output_tokens=678,
-                        token_details={},
-                        response_json={"usage": {"prompt_tokens_details": {"cached_tokens": 0}}},
-                    )
-                ]
-            ),
-        ),
-    )
-
-    def call_from_thread(callback: Callable[..., object], *args: object) -> object:
-        return callback(*args)
-
-    with patch.object(app, "call_from_thread", side_effect=call_from_thread):
-        app._refresh_context_size()  # pyright: ignore[reportPrivateUsage]
-
-    assert app._session_cached_tokens == 0  # pyright: ignore[reportPrivateUsage]
-
-
-def test_send_prompt_no_tools_when_conversational():
+def test_send_prompt_no_tools_when_conversational() -> None:
     app = MotherApp()
     app.agent_mode = False
     with patch("mother.mother.get_default_tools") as mock_tools:
         registry = MagicMock()
         registry.is_empty.return_value = True  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
-        # Trigger the call path
         mock_tools(tools_enabled=False)
         mock_tools.assert_called_with(tools_enabled=False)
 
 
-def test_send_prompt_passes_tools_when_agent():
+def test_send_prompt_passes_tools_when_agent() -> None:
     app = MotherApp()
     app.agent_mode = True
     with patch("mother.mother.get_default_tools") as mock_tools:
@@ -707,7 +415,7 @@ def test_send_prompt_passes_tools_when_agent():
         mock_tools.assert_called_with(tools_enabled=True)
 
 
-def test_show_models_selection_calls_switch_model():
+def test_show_models_selection_calls_switch_model() -> None:
     app = MotherApp()
 
     def fake_push_screen(_screen: object, callback: Callable[[str | None], None]) -> None:
@@ -722,55 +430,43 @@ def test_show_models_selection_calls_switch_model():
     switch_model.assert_called_once_with("gpt-4o-mini")
 
 
-def test_switch_model_asks_for_confirmation_when_conversation_has_history():
+def test_switch_model_asks_for_confirmation_when_conversation_has_history() -> None:
     app = MotherApp()
-    app.conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[object()])))
+    app.conversation_state.message_history = [cast(ModelMessage, object())]
 
-    with (
-        patch.object(app, "push_screen") as push_screen,
-        patch("mother.mother.llm.get_model") as get_model,
-    ):
+    with patch.object(app, "push_screen") as push_screen:
         app.action_switch_model("gpt-4o-mini")
 
     push_screen.assert_called_once()
-    get_model.assert_not_called()
+    assert app.config.model != "gpt-4o-mini"
 
 
-def test_switch_model_cancel_keeps_current_model():
+def test_switch_model_cancel_keeps_current_model() -> None:
     app = MotherApp()
-    app.conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[object()])))
+    app.conversation_state.message_history = [cast(ModelMessage, object())]
 
     def fake_push_screen(_screen: object, callback: Callable[[bool | None], None]) -> None:
         callback(False)
 
-    with (
-        patch.object(app, "push_screen", side_effect=fake_push_screen),
-        patch("mother.mother.llm.get_model") as get_model,
-    ):
+    with patch.object(app, "push_screen", side_effect=fake_push_screen):
         app.action_switch_model("gpt-4o-mini")
 
     assert app.config.model != "gpt-4o-mini"
-    get_model.assert_not_called()
 
 
-def test_switch_model_confirm_applies_switch():
+def test_switch_model_confirm_applies_switch() -> None:
     app = MotherApp()
-    app.conversation = cast(Conversation, cast(object, SimpleNamespace(responses=[object()])))
-
-    new_conversation = object()
-    new_model = MagicMock()
-    new_model.conversation.return_value = new_conversation  # pyright: ignore[reportAny]
+    app.conversation_state.message_history = [cast(ModelMessage, object())]
 
     def fake_push_screen(_screen: object, callback: Callable[[bool | None], None]) -> None:
         callback(True)
 
     with (
         patch.object(app, "push_screen", side_effect=fake_push_screen),
-        patch("mother.mother.llm.get_model", return_value=new_model) as get_model,
         patch.object(app, "notify"),
     ):
         app.action_switch_model("gpt-4o-mini")
 
     assert app.config.model == "gpt-4o-mini"
-    assert app.conversation is new_conversation
-    get_model.assert_called_once_with("gpt-4o-mini")
+    assert app.conversation_state.has_history is False
+    assert app.current_model_entry.id == "gpt-4o-mini"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from llm.models import Model
+from mother.models import ModelEntry
 
 DEFAULT_REASONING_EFFORT: Final[str] = "medium"
 _SUPPORTED_REASONING_EFFORTS: Final[tuple[str, ...]] = (
@@ -42,31 +42,41 @@ def parse_reasoning_effort(value: str) -> str:
     return normalized
 
 
-def supports_reasoning_effort(model: Model | None) -> bool:
-    """Return whether the model exposes a ``reasoning_effort`` option."""
-    if model is None:
-        return False
-    options_class = getattr(model, "Options", None)
-    model_fields = getattr(options_class, "model_fields", None)
-    return isinstance(model_fields, dict) and "reasoning_effort" in model_fields
+def supports_reasoning_effort(model: ModelEntry | None) -> bool:
+    """Return whether the configured model supports reasoning control."""
+    return model is not None and model.supports_reasoning
 
 
-def supported_reasoning_efforts(model: Model | None) -> tuple[str, ...]:
+def supported_reasoning_efforts(model: ModelEntry | None) -> tuple[str, ...]:
     """Return the reasoning-effort values Mother supports for reasoning models."""
     if not supports_reasoning_effort(model):
         return ()
     return _SUPPORTED_REASONING_EFFORTS
 
 
-def build_reasoning_options(model: Model | None, reasoning_effort: str) -> dict[str, object]:
-    """Return request options for reasoning-capable models."""
-    supported = supported_reasoning_efforts(model)
-    if not supported:
+def build_reasoning_options(model: ModelEntry | None, reasoning_effort: str) -> dict[str, object]:
+    """Return provider-specific request settings for reasoning-capable models."""
+    if not supports_reasoning_effort(model):
         return {}
+
     normalized = normalize_reasoning_effort(reasoning_effort)
-    if normalized is None or normalized == "auto" or normalized not in supported:
+    if normalized is None or normalized == "auto":
         return {}
-    return {"reasoning_effort": normalized}
+
+    if model is not None and model.api_type == "anthropic":
+        anthropic_mapping: dict[str, str | None] = {
+            "none": None,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "max",
+        }
+        mapped = anthropic_mapping.get(normalized)
+        if mapped is None:
+            return {}
+        return {"anthropic_effort": mapped}
+
+    return {"openai_reasoning_effort": normalized}
 
 
 def format_reasoning_effort(reasoning_effort: str) -> str:

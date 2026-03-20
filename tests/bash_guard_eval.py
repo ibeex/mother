@@ -21,15 +21,14 @@ from pathlib import Path
 from random import Random
 from typing import cast
 
-import llm
-
 from mother.tools.bash_guard import (
     DEFAULT_GUARD_MODEL,
     DEFAULT_GUARD_TEMPERATURE,
     SYSTEM_PROMPT,
+    GuardAgent,
     Label,
-    PromptModel,
     build_eval_prompt,
+    get_guard_agent,
     parse_label,
 )
 
@@ -374,15 +373,15 @@ def build_cases() -> list[EvalCase]:
     ]
 
 
-def evaluate_case(model: PromptModel, case: EvalCase, temperature: float) -> EvalResult:
+def evaluate_case(model: GuardAgent, case: EvalCase, temperature: float) -> EvalResult:
     try:
-        response = model.prompt(
+        result = model.run_sync(
             build_eval_prompt(case.command),
-            system=SYSTEM_PROMPT,
-            stream=False,
-            temperature=temperature,
+            instructions=SYSTEM_PROMPT,
+            model_settings={"temperature": temperature},
         )
-        raw_output = response.text()
+        output_value = result.output
+        raw_output = output_value if isinstance(output_value, str) else str(output_value)
     except Exception as exc:
         return EvalResult(
             case=case,
@@ -544,7 +543,7 @@ def main() -> int:
     args = parse_args()
 
     try:
-        model = cast(PromptModel, llm.get_model(args.model))
+        model = get_guard_agent(args.model)
     except Exception as exc:
         print(f"Failed to load model {args.model!r}: {exc}", file=sys.stderr)
         return 2

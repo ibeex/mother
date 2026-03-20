@@ -1,0 +1,230 @@
+"""pydantic-ai runtime adapter used by Mother's TUI."""
+
+from __future__ import annotations
+
+import mimetypes
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import wraps
+from inspect import signature
+from pathlib import Path
+from time import perf_counter
+from typing import Literal, cast
+
+from pydantic_ai import Agent, Tool
+from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.usage import UsageLimits
+
+from mother.models import ModelEntry, create_pydantic_model
+from mother.stats import TurnUsage
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeToolEvent:
+    phase: Literal["started", "finished"]
+    tool_name: str
+    tool_call_id: str | None
+    arguments: dict[str, object]
+    output: str | None = None
+    is_error: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeResponse:
+    text: str
+    all_messages: list[ModelMessage]
+    usage: TurnUsage
+    agent_mode_used: bool
+
+
+class ChatRuntime:
+    """Thin adapter around pydantic-ai streaming APIs."""
+
+    def __init__(self, model_entry: ModelEntry) -> None:
+        self.model_entry: ModelEntry = model_entry
+
+    @staticmethod
+    def _guess_media_type(path: Path) -> str:
+        guessed, _ = mimetypes.guess_type(path.name)
+        return guessed or "application/octet-stream"
+
+    def _build_user_prompt(
+        self,
+        prompt_text: str,
+        attachments: list[Path],
+    ) -> str | list[UserContent]:
+        if not attachments:
+            return prompt_text
+
+        parts: list[UserContent] = [prompt_text]
+        for path in attachments:
+            parts.append(
+                BinaryContent(
+                    path.read_bytes(),
+                    media_type=self._guess_media_type(path),
+                    identifier=path.name,
+                )
+            )
+        return parts
+
+    @staticmethod
+    def _tool_arguments(
+        tool: Tool[None], args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> dict[str, object]:
+        bound = signature(tool.function).bind_partial(*args, **kwargs)
+        raw_arguments = cast(dict[str, object], bound.arguments)
+        arguments = dict(raw_arguments)
+        if tool.takes_ctx:
+            _ = arguments.pop("ctx", None)
+        return arguments
+
+    @staticmethod
+    def _wrapped_tool(
+        tool: Tool[None],
+        *,
+        on_tool_event: Callable[[RuntimeToolEvent], None] | None,
+        tool_state: dict[str, int],
+    ) -> Tool[None]:
+        original = cast(Callable[..., object], tool.function)
+
+        @wraps(original)
+        def wrapped(*args: object, **kwargs: object) -> object:
+            arguments = ChatRuntime._tool_arguments(tool, args, kwargs)
+            tool_state["started"] += 1
+            if on_tool_event is not None:
+                _ = on_tool_event(
+                    RuntimeToolEvent(
+                        phase="started",
+                        tool_name=tool.name,
+                        tool_call_id=None,
+                        arguments=arguments,
+                    )
+                )
+            try:
+                result = original(*args, **kwargs)
+            except Exception as exc:
+                tool_state["errors"] += 1
+                tool_state["finished"] += 1
+                if on_tool_event is not None:
+                    _ = on_tool_event(
+                        RuntimeToolEvent(
+                            phase="finished",
+                            tool_name=tool.name,
+                            tool_call_id=None,
+                            arguments=arguments,
+                            output=str(exc),
+                            is_error=True,
+                        )
+                    )
+                raise
+
+            output = result if isinstance(result, str) else str(result)
+            tool_state["finished"] += 1
+            if on_tool_event is not None:
+                _ = on_tool_event(
+                    RuntimeToolEvent(
+                        phase="finished",
+                        tool_name=tool.name,
+                        tool_call_id=None,
+                        arguments=arguments,
+                        output=output,
+                    )
+                )
+            return result
+
+        return Tool(
+            wrapped,
+            takes_ctx=tool.takes_ctx,
+            name=tool.name,
+            description=tool.description,
+            max_retries=tool.max_retries,
+            docstring_format=tool.docstring_format,
+            require_parameter_descriptions=tool.require_parameter_descriptions,
+            strict=tool.strict,
+            sequential=tool.sequential,
+            requires_approval=tool.requires_approval,
+            metadata=tool.metadata,
+            timeout=tool.timeout,
+        )
+
+    @staticmethod
+    def _is_unsupported_tools_error(error: Exception) -> bool:
+        message = str(error).lower()
+        return "does not support tools" in message or (
+            "tool" in message and ("unsupported" in message or "not support" in message)
+        )
+
+    async def run_stream(
+        self,
+        *,
+        prompt_text: str,
+        system_prompt: str,
+        message_history: list[ModelMessage],
+        attachments: list[Path],
+        tools: list[Tool[None]],
+        model_settings: dict[str, object],
+        allow_tool_fallback: bool = True,
+        on_text_delta: Callable[[str], None] | None = None,
+        on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
+    ) -> RuntimeResponse:
+        tool_state = {"started": 0, "finished": 0, "errors": 0}
+        wrapped_tools = [
+            self._wrapped_tool(tool, on_tool_event=on_tool_event, tool_state=tool_state)
+            for tool in tools
+        ]
+        user_prompt = self._build_user_prompt(prompt_text, attachments)
+        agent = Agent(
+            create_pydantic_model(self.model_entry),
+            tools=wrapped_tools,
+            instructions=system_prompt,
+        )
+        usage_limits = UsageLimits(tool_calls_limit=1) if wrapped_tools else None
+        started_at = perf_counter()
+
+        try:
+            async with agent.run_stream(
+                user_prompt,
+                message_history=message_history,
+                model_settings=cast(ModelSettings, cast(object, model_settings)),
+                usage_limits=usage_limits,
+            ) as result:
+                full_text = ""
+                async for delta in result.stream_text(delta=True):
+                    full_text += delta
+                    if on_text_delta is not None:
+                        on_text_delta(delta)
+
+                return RuntimeResponse(
+                    text=full_text,
+                    all_messages=list(result.all_messages()),
+                    usage=TurnUsage.from_run_usage(
+                        result.usage(),
+                        provider=self.model_entry.api_type,
+                        model_id=self.model_entry.id,
+                        image_count=len(attachments),
+                        duration_seconds=perf_counter() - started_at,
+                        tool_calls_started=tool_state["started"],
+                        tool_calls_finished=tool_state["finished"],
+                        tool_call_errors=tool_state["errors"],
+                    ),
+                    agent_mode_used=bool(wrapped_tools),
+                )
+        except Exception as exc:
+            if (
+                not wrapped_tools
+                or not allow_tool_fallback
+                or not self._is_unsupported_tools_error(exc)
+            ):
+                raise
+            return await self.run_stream(
+                prompt_text=prompt_text,
+                system_prompt=system_prompt,
+                message_history=message_history,
+                attachments=attachments,
+                tools=[],
+                model_settings=model_settings,
+                allow_tool_fallback=False,
+                on_text_delta=on_text_delta,
+                on_tool_event=on_tool_event,
+            )

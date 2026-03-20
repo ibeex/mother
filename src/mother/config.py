@@ -7,20 +7,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from mother.models import ModelEntry, default_model_entries, load_model_entries
 from mother.reasoning import DEFAULT_REASONING_EFFORT, parse_reasoning_effort
 from mother.session import default_markdown_export_dir
 from mother.system_prompt import DEFAULT_BASE_SYSTEM
 
 CONFIG_DIR = Path.home() / ".config" / "mother"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
+LEGACY_CONFIG_FILE = Path.home() / ".mother" / "config.toml"
 
 _DEFAULT_SYSTEM = DEFAULT_BASE_SYSTEM
 
 _DEFAULT_CONFIG_TEMPLATE = """\
 # Mother TUI configuration
 
-# LLM model to use (e.g. "gpt-4o", "gpt-5", "claude-3-5-sonnet-latest")
-# model = "gpt-5"
+# Selected model id from the [[models]] registry below.
+# Leave empty until you configure your models.
+model = ""
 
 # Built-in Textual theme.
 # theme = "catppuccin-mocha"
@@ -29,7 +32,7 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Mother appends runtime context such as date, OS, current directory, mode, and tools.
 # system_prompt = "You are Mother, a concise and helpful assistant."
 
-# Reasoning effort for models that expose a `reasoning_effort` option.
+# Reasoning effort for models that support it.
 # Supported values: "auto", "none", "low", "medium", "high", "xhigh"
 # reasoning_effort = "medium"
 
@@ -48,12 +51,32 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Retained for backwards compatibility but ignored by the current
 # LLM-based bash guard.
 # allowlist = ["ls", "cat"]
+
+# Add your own [[models]] entries below.
+# Default config intentionally ships with no models.
+# Put named secrets in ~/.config/mother/keys.json and reference them here.
+# Example keys.json:
+# {
+#   "CODY_KEY": "paste-remote-key-here",
+#   "LOCAL_KEY": "lm-studio"
+# }
+#
+# Example model:
+# [[models]]
+# id = "my-model"
+# name = "provider-model-name"
+# api_type = "openai-responses"  # openai-responses | openai-chat | anthropic
+# base_url = "https://example.com/"
+# api_key = "CODY_KEY"
+# supports_tools = true
+# supports_reasoning = true
+# supports_images = true
 """
 
 
 @dataclass
 class MotherConfig:
-    model: str = "gpt-5"
+    model: str = ""
     theme: str = "catppuccin-mocha"
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     reasoning_effort: str = DEFAULT_REASONING_EFFORT
@@ -61,6 +84,7 @@ class MotherConfig:
     ca_bundle_path: str = ""
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
     allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
+    models: list[ModelEntry] = field(default_factory=default_model_entries)
 
 
 DEFAULT_MODEL = MotherConfig().model
@@ -74,8 +98,10 @@ def save_default_config(path: Path) -> None:
 
 def load_config(path: Path | None = None) -> MotherConfig:
     resolved = path or CONFIG_FILE
+    if path is None and not resolved.exists() and LEGACY_CONFIG_FILE.exists():
+        resolved = LEGACY_CONFIG_FILE
     if not resolved.exists():
-        save_default_config(resolved)
+        save_default_config(CONFIG_FILE if path is None else resolved)
         return MotherConfig()
 
     with resolved.open("rb") as f:
@@ -101,6 +127,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
             data.get("session_markdown_dir", MotherConfig().session_markdown_dir),
         ),
         allowlist=allowlist,
+        models=load_model_entries(cast(dict[str, object], data)),
     )
 
 
@@ -118,4 +145,5 @@ def apply_cli_overrides(
         ca_bundle_path=config.ca_bundle_path,
         session_markdown_dir=config.session_markdown_dir,
         allowlist=config.allowlist,
+        models=list(config.models),
     )

@@ -1,9 +1,6 @@
 """Tests for reasoning-effort helpers."""
 
-from typing import ClassVar, cast, final
-
-from llm.models import Model
-
+from mother.models import ModelEntry
 from mother.reasoning import (
     build_reasoning_options,
     format_reasoning_effort,
@@ -13,25 +10,26 @@ from mother.reasoning import (
     supports_reasoning_effort,
 )
 
+_REASONING_MODEL = ModelEntry(
+    id="gpt-5",
+    name="gpt-5.4",
+    api_type="openai-responses",
+    supports_reasoning=True,
+)
 
-@final
-class _ReasoningOptions:
-    model_fields: ClassVar[dict[str, object]] = {"reasoning_effort": object()}
+_ANTHROPIC_REASONING_MODEL = ModelEntry(
+    id="claude",
+    name="sonnet",
+    api_type="anthropic",
+    supports_reasoning=True,
+)
 
-
-@final
-class _PlainOptions:
-    model_fields: ClassVar[dict[str, object]] = {"temperature": object()}
-
-
-@final
-class _ReasoningModel:
-    Options: ClassVar[type[_ReasoningOptions]] = _ReasoningOptions
-
-
-@final
-class _PlainModel:
-    Options: ClassVar[type[_PlainOptions]] = _PlainOptions
+_PLAIN_MODEL = ModelEntry(
+    id="plain",
+    name="plain",
+    api_type="openai-chat",
+    supports_reasoning=False,
+)
 
 
 def test_normalize_reasoning_effort_accepts_aliases() -> None:
@@ -50,16 +48,14 @@ def test_parse_reasoning_effort_rejects_unknown_values() -> None:
             raise AssertionError("Expected invalid reasoning effort to raise ValueError")
 
 
-def test_supports_reasoning_effort_checks_model_options() -> None:
-    assert supports_reasoning_effort(cast(Model, cast(object, _ReasoningModel()))) is True
-    assert supports_reasoning_effort(cast(Model, cast(object, _PlainModel()))) is False
+def test_supports_reasoning_effort_checks_model_capability() -> None:
+    assert supports_reasoning_effort(_REASONING_MODEL) is True
+    assert supports_reasoning_effort(_PLAIN_MODEL) is False
     assert supports_reasoning_effort(None) is False
 
 
 def test_supported_reasoning_efforts_returns_mother_supported_values() -> None:
-    reasoning_model = cast(Model, cast(object, _ReasoningModel()))
-
-    assert supported_reasoning_efforts(reasoning_model) == (
+    assert supported_reasoning_efforts(_REASONING_MODEL) == (
         "none",
         "low",
         "medium",
@@ -68,15 +64,26 @@ def test_supported_reasoning_efforts_returns_mother_supported_values() -> None:
     )
 
 
-def test_build_reasoning_options_only_for_reasoning_models() -> None:
-    reasoning_model = cast(Model, cast(object, _ReasoningModel()))
-    plain_model = cast(Model, cast(object, _PlainModel()))
+def test_build_reasoning_options_for_openai_models() -> None:
+    assert build_reasoning_options(_REASONING_MODEL, "medium") == {
+        "openai_reasoning_effort": "medium"
+    }
+    assert build_reasoning_options(_REASONING_MODEL, "xhigh") == {
+        "openai_reasoning_effort": "xhigh"
+    }
+    assert build_reasoning_options(_REASONING_MODEL, "auto") == {}
+    assert build_reasoning_options(_REASONING_MODEL, "off") == {"openai_reasoning_effort": "none"}
+    assert build_reasoning_options(_PLAIN_MODEL, "medium") == {}
 
-    assert build_reasoning_options(reasoning_model, "medium") == {"reasoning_effort": "medium"}
-    assert build_reasoning_options(reasoning_model, "xhigh") == {"reasoning_effort": "xhigh"}
-    assert build_reasoning_options(reasoning_model, "auto") == {}
-    assert build_reasoning_options(reasoning_model, "off") == {"reasoning_effort": "none"}
-    assert build_reasoning_options(plain_model, "medium") == {}
+
+def test_build_reasoning_options_for_anthropic_models() -> None:
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "high") == {
+        "anthropic_effort": "high"
+    }
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "xhigh") == {
+        "anthropic_effort": "max"
+    }
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "off") == {}
 
 
 def test_format_reasoning_effort_uses_user_facing_labels() -> None:

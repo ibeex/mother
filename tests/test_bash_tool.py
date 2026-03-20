@@ -112,4 +112,4 @@ def test_tool_registered_in_registry():
     assert not registry.is_empty()
     tools = registry.tools()
     assert len(tools) == 3
-    assert all(callable(tool) for tool in tools)
+    assert [tool.name for tool in tools] == ["bash", "web_search", "web_fetch"]

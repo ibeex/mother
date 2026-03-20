@@ -7,32 +7,27 @@ from mother.tools.bash_guard import classify_command, parse_label
 
 
 @final
-class _FakeResponse:
-    def __init__(self, text: str) -> None:
-        self._text: str = text
-
-    def text(self) -> str:
-        return self._text
+class _FakeResult:
+    def __init__(self, output: object) -> None:
+        self.output = output
 
 
 @final
-class _FakeModel:
-    def __init__(self, text: str) -> None:
-        self._text: str = text
+class _FakeAgent:
+    def __init__(self, output: object) -> None:
+        self.output = output
 
-    def prompt(
+    def run_sync(
         self,
-        prompt: str | None = None,
+        user_prompt: str | None = None,
         *,
-        system: str | None = None,
-        stream: bool = True,
-        temperature: float = 0.0,
-    ) -> _FakeResponse:
-        _ = prompt
-        _ = system
-        _ = stream
-        _ = temperature
-        return _FakeResponse(self._text)
+        instructions: object = None,
+        model_settings: object = None,
+    ) -> _FakeResult:
+        _ = user_prompt
+        _ = instructions
+        _ = model_settings
+        return _FakeResult(self.output)
 
 
 def test_parse_label_prefers_final_label_line():
@@ -49,8 +44,8 @@ def test_parse_label_supports_common_local_model_typo():
 
 def test_classify_command_returns_ok_label():
     with patch(
-        "mother.tools.bash_guard.llm.get_model",
-        return_value=_FakeModel("LABEL: OK"),
+        "mother.tools.bash_guard._get_guard_agent",
+        return_value=_FakeAgent("LABEL: OK"),
     ):
         decision = classify_command("ls -al", model_name="local_guard_ok")
     assert decision.label == "OK"
@@ -60,8 +55,8 @@ def test_classify_command_returns_ok_label():
 
 def test_classify_command_fails_closed_when_output_is_unparsed():
     with patch(
-        "mother.tools.bash_guard.llm.get_model",
-        return_value=_FakeModel("I refuse to answer"),
+        "mother.tools.bash_guard._get_guard_agent",
+        return_value=_FakeAgent("I refuse to answer"),
     ):
         decision = classify_command("ls -al", model_name="local_guard_unparsed")
     assert decision.label == "Fatal"
@@ -72,7 +67,7 @@ def test_classify_command_fails_closed_when_output_is_unparsed():
 
 def test_classify_command_fails_closed_when_model_load_fails():
     with patch(
-        "mother.tools.bash_guard.llm.get_model",
+        "mother.tools.bash_guard._get_guard_agent",
         side_effect=RuntimeError("missing model local_guard_missing"),
     ):
         decision = classify_command("ls -al", model_name="local_guard_missing")

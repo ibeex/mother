@@ -1,25 +1,17 @@
 """Mother TUI chatbot — a Textual interface for chatting with an LLM."""
 
-from collections.abc import Callable, Iterable
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Iterable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path, PurePath
 from time import perf_counter
-from typing import ClassVar, cast, override
+from typing import ClassVar, override
 
 import click
-import llm
-from llm.models import (
-    AfterCallSync,
-    Attachment,
-    BeforeCallSync,
-    Conversation,
-    Model,
-    Tool,
-    ToolCall,
-    ToolDef,
-    ToolResult,
-)
+from pydantic_ai import Tool
 from textual import on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
@@ -31,12 +23,14 @@ from textual.worker import Worker, WorkerState
 from mother.bash_execution import BashExecution, format_for_context
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
+from mother.conversation import ConversationState
 from mother.model_picker import (
     AgentModeProvider,
     ModelPickerScreen,
     ModelProvider,
     ModelSwitchConfirmScreen,
 )
+from mother.models import ModelEntry, resolve_model_entry
 from mother.reasoning import (
     REASONING_EFFORT_HELP,
     build_reasoning_options,
@@ -45,6 +39,7 @@ from mother.reasoning import (
     supported_reasoning_efforts,
     supports_reasoning_effort,
 )
+from mother.runtime import ChatRuntime, RuntimeToolEvent
 from mother.session import SessionManager, format_markdown_export
 from mother.slash_commands import (
     SLASH_COMMANDS,
@@ -53,6 +48,7 @@ from mother.slash_commands import (
     current_slash_query,
     get_slash_argument_spec,
 )
+from mother.stats import SessionUsage, TurnUsage
 from mother.system_prompt import build_system_prompt
 from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
@@ -91,59 +87,6 @@ APP_CSS_PATHS: list[str | PurePath] = [
 ]
 
 
-def _token_detail_int(value: object, key: str) -> int | None:
-    """Find the first integer token-detail value for a key in nested data."""
-    if isinstance(value, dict):
-        mapping = cast(dict[str, object], value)
-        candidate = mapping.get(key)
-        if isinstance(candidate, int) and not isinstance(candidate, bool):
-            return candidate
-        for nested_value in mapping.values():
-            found = _token_detail_int(nested_value, key)
-            if found is not None:
-                return found
-        return None
-    if isinstance(value, list):
-        values = cast(list[object], value)
-        for nested_value in values:
-            found = _token_detail_int(nested_value, key)
-            if found is not None:
-                return found
-    return None
-
-
-def _extract_cached_tokens(
-    token_details: dict[str, object] | None,
-    response_json: dict[str, object] | None = None,
-) -> int | None:
-    """Extract cached-token counts from provider-specific usage details when available."""
-    for source in (token_details, response_json):
-        if source is None:
-            continue
-        for key in ("cached_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-            found = _token_detail_int(source, key)
-            if found is not None:
-                return found
-    return None
-
-
-def _add_optional_token_total(total: int | None, value: int | None) -> int | None:
-    """Accumulate token counts while preserving unknown totals until first known value."""
-    if value is None:
-        return total
-    if total is None:
-        return value
-    return total + value
-
-
-def _response_usage_key(response: object) -> str:
-    """Return a stable key used to avoid double-counting response usage."""
-    response_id = getattr(response, "id", None)
-    if isinstance(response_id, str) and response_id:
-        return response_id
-    return str(id(response))
-
-
 class MotherApp(App[None]):
     """Simple app for chatting with an LLM via a conversation."""
 
@@ -173,13 +116,17 @@ class MotherApp(App[None]):
         self.config: MotherConfig = apply_cli_overrides(base, model_name, system)
         self.theme = self.config.theme  # pyright: ignore[reportUnannotatedClassAttribute]
         self.agent_mode: bool = self.config.tools_enabled
-        self.model: Model | None = None
-        self.conversation: Conversation | None = None
+        self.current_model_entry: ModelEntry = resolve_model_entry(
+            self.config.model,
+            self.config.models,
+        )
+        self.conversation_state: ConversationState = ConversationState()
         self.session_manager: SessionManager | None = session_manager
         self._pending_executions: list[BashExecution] = []
-        self._pending_image_attachments: dict[str, Attachment] = {}
+        self._pending_image_attachments: dict[str, Path] = {}
         self._tool_outputs: dict[str, ToolOutput] = {}
-        self._counted_response_usage_keys: set[str] = set()
+        self._session_usage: SessionUsage = SessionUsage()
+        self._last_turn_usage: TurnUsage | None = None
         self._last_context_tokens: int | None = None
         self._session_input_tokens: int | None = None
         self._session_output_tokens: int | None = None
@@ -218,8 +165,8 @@ class MotherApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.model = llm.get_model(self.config.model)
-        self.conversation = self.model.conversation()
+        self.current_model_entry = resolve_model_entry(self.config.model, self.config.models)
+        self.conversation_state = ConversationState()
         _ = self.query_one("#chat-view").anchor()
         self._update_subtitle()
         self._update_statusline()
@@ -334,8 +281,7 @@ class MotherApp(App[None]):
 
     def _conversation_has_history(self) -> bool:
         """Return whether the active conversation already contains model-visible history."""
-        conversation = self.conversation
-        return conversation is not None and bool(conversation.responses)
+        return self.conversation_state.has_history
 
     def action_show_models(self) -> None:
         """Open the model picker."""
@@ -359,12 +305,12 @@ class MotherApp(App[None]):
 
     def _reasoning_options(self) -> dict[str, object]:
         """Return supported model options for reasoning-capable models."""
-        return build_reasoning_options(self.model, self.config.reasoning_effort)
+        return build_reasoning_options(self.current_model_entry, self.config.reasoning_effort)
 
     def _show_reasoning_status(self) -> None:
         """Notify the user of the current reasoning setting and model support."""
         configured = format_reasoning_effort(self.config.reasoning_effort)
-        supported = supported_reasoning_efforts(self.model)
+        supported = supported_reasoning_efforts(self.current_model_entry)
         if supported:
             if (
                 self.config.reasoning_effort != "auto"
@@ -405,7 +351,7 @@ class MotherApp(App[None]):
             )
             return
 
-        supported = supported_reasoning_efforts(self.model)
+        supported = supported_reasoning_efforts(self.current_model_entry)
         if supported and normalized != "auto" and normalized not in supported:
             supported_text = "|".join(format_reasoning_effort(value) for value in supported)
             self.notify(
@@ -431,7 +377,7 @@ class MotherApp(App[None]):
         )
         self._update_statusline()
         configured = format_reasoning_effort(normalized)
-        if supports_reasoning_effort(self.model):
+        if supports_reasoning_effort(self.current_model_entry):
             self.notify(
                 f"Reasoning set to {configured} for {self.config.model}",
                 title="Reasoning",
@@ -450,8 +396,8 @@ class MotherApp(App[None]):
         """Switch to a different LLM model and start a fresh conversation."""
         previous_model = self.config.model
         self.config = replace(self.config, model=model_id, tools_enabled=self.agent_mode)
-        self.model = llm.get_model(model_id)
-        self.conversation = self.model.conversation()
+        self.current_model_entry = resolve_model_entry(model_id, self.config.models)
+        self.conversation_state = ConversationState()
         self._last_context_tokens = None
         self._last_response_time_seconds = None
         self._record_session_event(
@@ -526,7 +472,7 @@ class MotherApp(App[None]):
 
     def _status_reasoning_effort(self) -> str | None:
         """Return the visible reasoning setting for reasoning-capable models."""
-        if not supports_reasoning_effort(self.model):
+        if not supports_reasoning_effort(self.current_model_entry):
             return None
         return format_reasoning_effort(self.config.reasoning_effort)
 
@@ -553,37 +499,19 @@ class MotherApp(App[None]):
         self._last_response_time_seconds = max(0.0, duration_seconds)
         self._update_statusline()
 
+    def _apply_turn_usage(self, usage: TurnUsage) -> None:
+        """Accumulate normalized turn statistics and refresh the status line."""
+        self._last_turn_usage = usage
+        self._session_usage.add_turn(usage)
+        self._last_context_tokens = self._session_usage.last_context_tokens
+        self._last_response_time_seconds = self._session_usage.last_response_time_seconds
+        self._session_input_tokens = self._session_usage.request_tokens
+        self._session_output_tokens = self._session_usage.response_tokens
+        self._session_cached_tokens = self._session_usage.cache_read_tokens
+        self._update_statusline()
+
     def _refresh_context_size(self) -> None:
-        """Capture the latest context size and accumulate token usage for the session."""
-        conversation = self.conversation
-        if conversation is None or not conversation.responses:
-            self._last_context_tokens = None
-            _ = self.call_from_thread(self._update_statusline)
-            return
-
-        latest_response = conversation.responses[-1]
-        self._last_context_tokens = latest_response.input_tokens
-
-        response_key = _response_usage_key(latest_response)
-        if response_key not in self._counted_response_usage_keys:
-            cached_tokens = _extract_cached_tokens(
-                cast(dict[str, object] | None, latest_response.token_details),
-                cast(dict[str, object] | None, latest_response.response_json),
-            )
-            self._session_input_tokens = _add_optional_token_total(
-                self._session_input_tokens,
-                latest_response.input_tokens,
-            )
-            self._session_output_tokens = _add_optional_token_total(
-                self._session_output_tokens,
-                latest_response.output_tokens,
-            )
-            self._session_cached_tokens = _add_optional_token_total(
-                self._session_cached_tokens,
-                cached_tokens,
-            )
-            self._counted_response_usage_keys.add(response_key)
-
+        """Refresh the status line for the latest normalized usage state."""
         _ = self.call_from_thread(self._update_statusline)
 
     def _flush_pending_context(self, value: str) -> str:
@@ -608,11 +536,11 @@ class MotherApp(App[None]):
         if path is None:
             return None
 
-        self._pending_image_attachments[str(path)] = Attachment(path=str(path))
+        self._pending_image_attachments[str(path)] = path
         self.notify(f"Attached image: {path.name}", title="Clipboard")
         return str(path)
 
-    def _consume_attachments_for_text(self, text: str) -> list[Attachment]:
+    def _consume_attachments_for_text(self, text: str) -> list[Path]:
         """Return and clear any pending image attachments referenced by the prompt text."""
         attachment_paths = [path for path in self._pending_image_attachments if path in text]
         return [self._pending_image_attachments.pop(path) for path in attachment_paths]
@@ -822,6 +750,13 @@ class MotherApp(App[None]):
             return
 
         attachments = self._consume_attachments_for_text(value)
+        if attachments and not self.current_model_entry.supports_images:
+            self.notify(
+                f"{self.config.model} does not support image attachments — sending text only",
+                title="Images",
+                severity="warning",
+            )
+            attachments = []
         self._record_session_message("user", value)
         chat_view = self.query_one("#chat-view")
         should_follow = self._should_follow_chat_updates()
@@ -1028,51 +963,40 @@ class MotherApp(App[None]):
 
         return full_text
 
-    @staticmethod
-    def _tool_call_arguments(tool_call: ToolCall) -> dict[str, object]:
-        """Convert tool call arguments into a regular dictionary."""
-        arguments = cast(
-            dict[object, object],
-            tool_call.arguments,
-        )
-        return {str(key): value for key, value in arguments.items()}
-
-    def _before_tool_call(self, tool: Tool | None, tool_call: ToolCall) -> None:
-        """Show a trace entry when an agent tool call starts."""
-        tool_name = tool.name if tool is not None else tool_call.name
-        arguments = self._tool_call_arguments(tool_call)
-        if self.session_manager is not None:
-            self.session_manager.record_tool_call(
-                tool_name=tool_name,
-                tool_call_id=tool_call.tool_call_id,
-                arguments=arguments,
+    def _handle_runtime_tool_event(self, event: RuntimeToolEvent) -> None:
+        """Mirror runtime tool events into the TUI and session log."""
+        if event.phase == "started":
+            if self.session_manager is not None:
+                self.session_manager.record_tool_call(
+                    tool_name=event.tool_name,
+                    tool_call_id=event.tool_call_id,
+                    arguments=event.arguments,
+                )
+            _ = self.call_from_thread(
+                self._show_tool_started,
+                event.tool_name,
+                event.tool_call_id,
+                event.arguments,
             )
-        _ = self.call_from_thread(
-            self._show_tool_started,
-            tool_name,
-            tool_call.tool_call_id,
-            arguments,
-        )
+            return
 
-    def _after_tool_call(self, tool: Tool, tool_call: ToolCall, tool_result: ToolResult) -> None:
-        """Update the trace entry when an agent tool call finishes."""
-        arguments = self._tool_call_arguments(tool_call)
         if self.session_manager is not None:
             self.session_manager.record_tool_result(
-                tool_name=tool.name,
-                tool_call_id=tool_call.tool_call_id,
-                arguments=arguments,
-                output=tool_result.output,
+                tool_name=event.tool_name,
+                tool_call_id=event.tool_call_id,
+                arguments=event.arguments,
+                output=event.output or "",
+                is_error=event.is_error,
             )
         _ = self.call_from_thread(
             self._show_tool_finished,
-            tool.name,
-            tool_call.tool_call_id,
-            arguments,
-            tool_result.output,
+            event.tool_name,
+            event.tool_call_id,
+            event.arguments,
+            event.output or "",
         )
 
-    def _get_enabled_tools(self) -> list[ToolDef] | None:
+    def _get_enabled_tools(self) -> list[Tool[None]]:
         """Return the active tool definitions, if any are enabled and available."""
         tool_registry = get_default_tools(
             tools_enabled=self.agent_mode,
@@ -1080,13 +1004,13 @@ class MotherApp(App[None]):
             ca_bundle_path=self.config.ca_bundle_path,
         )
         if tool_registry.is_empty():
-            return None
+            return []
         return tool_registry.tools()
 
     @staticmethod
-    def _tool_names(tools: list[ToolDef] | None) -> list[str]:
+    def _tool_names(tools: list[Tool[None]]) -> list[str]:
         """Extract stable prompt-friendly tool names from tool definitions."""
-        if tools is None:
+        if not tools:
             return []
 
         names: list[str] = []
@@ -1103,7 +1027,7 @@ class MotherApp(App[None]):
 
     def _build_system_prompt(
         self,
-        tools: list[ToolDef] | None,
+        tools: list[Tool[None]],
         *,
         agent_mode: bool | None = None,
     ) -> str:
@@ -1116,105 +1040,88 @@ class MotherApp(App[None]):
             tool_names=self._tool_names(tools),
         )
 
-    def _build_llm_response(
+    async def _run_runtime_request(
         self,
-        conversation: Conversation,
         prompt: str,
-        system: str | None,
-        tools: list[ToolDef] | None,
-        attachments: list[Attachment] | None,
-        before_tool_call: BeforeCallSync | None,
-        after_tool_call: AfterCallSync | None,
-    ) -> Iterable[str]:
-        """Build the LLM response stream, with tool callbacks when agent mode is active."""
-        request_options = self._reasoning_options()
-        if tools is None:
-            prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
-            return prompt_fn(prompt, system=system, attachments=attachments, **request_options)
+        response: Response,
+        system: str,
+        tools: list[Tool[None]],
+        attachments: list[Path],
+        thinking_output: ThinkingOutput | None,
+    ) -> str | None:
+        runtime = ChatRuntime(self.current_model_entry)
+        visible_text = ""
+        parser: ThinkTagStreamParser | None = None
+        thinking_text = ""
+        thinking_streaming = False
+        if thinking_output is None:
 
-        chain_fn = cast(Callable[..., Iterable[str]], conversation.chain)
-        if request_options:
-            return chain_fn(
-                prompt,
-                system=system,
+            def on_text_delta(delta: str) -> None:
+                nonlocal visible_text
+                visible_text += delta
+                _ = self.call_from_thread(self._update_response_output, response, visible_text)
+        else:
+            parser = ThinkTagStreamParser()
+
+            def on_text_delta(delta: str) -> None:
+                nonlocal visible_text, thinking_text, thinking_streaming
+                thinking_delta, response_delta = parser.feed(delta)
+                if thinking_delta:
+                    thinking_text += thinking_delta
+                    if not thinking_streaming:
+                        _ = self.call_from_thread(self._start_thinking_output, thinking_output)
+                        thinking_streaming = True
+                    _ = self.call_from_thread(
+                        self._update_thinking_output,
+                        thinking_output,
+                        thinking_text,
+                    )
+                if thinking_streaming and not parser.in_think:
+                    _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+                    thinking_streaming = False
+                if response_delta:
+                    visible_text += response_delta
+                    _ = self.call_from_thread(self._update_response_output, response, visible_text)
+
+        try:
+            runtime_response = await runtime.run_stream(
+                prompt_text=prompt,
+                system_prompt=system,
+                message_history=self.conversation_state.message_history,
                 attachments=attachments,
                 tools=tools,
-                chain_limit=3,
-                before_call=before_tool_call,
-                after_call=after_tool_call,
-                options=request_options,
-            )
-        return chain_fn(
-            prompt,
-            system=system,
-            attachments=attachments,
-            tools=tools,
-            chain_limit=3,
-            before_call=before_tool_call,
-            after_call=after_tool_call,
-        )
-
-    @staticmethod
-    def _is_unsupported_tools_error(error: Exception) -> bool:
-        """Return whether the model error indicates tool support is unavailable."""
-        return "does not support tools" in str(error)
-
-    def _request_llm_response(
-        self,
-        conversation: Conversation,
-        prompt: str,
-        system: str | None,
-        tools: list[ToolDef] | None,
-        attachments: list[Attachment] | None,
-        response: Response,
-    ) -> Iterable[str] | None:
-        """Request an LLM response stream, falling back if the model rejects tools."""
-        before_tool_call: BeforeCallSync | None = None
-        after_tool_call: AfterCallSync | None = None
-        if tools is not None:
-            tool_calls_this_turn = 0
-
-            def limited_before_tool_call(tool: Tool | None, tool_call: ToolCall) -> None:
-                nonlocal tool_calls_this_turn
-                if tool_calls_this_turn >= 1:
-                    raise llm.CancelToolCall(
-                        "Only one tool call is allowed per turn. Report findings and wait for the user before continuing."
-                    )
-                tool_calls_this_turn += 1
-                self._before_tool_call(tool, tool_call)
-
-            before_tool_call = limited_before_tool_call
-            after_tool_call = self._after_tool_call
-
-        try:
-            return self._build_llm_response(
-                conversation,
-                prompt,
-                system,
-                tools,
-                attachments,
-                before_tool_call,
-                after_tool_call,
-            )
-        except Exception as exc:
-            if tools is None or not self._is_unsupported_tools_error(exc):
-                self._show_error(response, f"**Error:** {exc}")
-                return None
-
-        _ = self.call_from_thread(self._disable_agent_mode_unsupported)
-        prompt_fn = cast(Callable[..., Iterable[str]], conversation.prompt)
-        fallback_system = self._build_system_prompt(None, agent_mode=False)
-        fallback_options = self._reasoning_options()
-        try:
-            return prompt_fn(
-                prompt,
-                system=fallback_system,
-                attachments=attachments,
-                **fallback_options,
+                model_settings=self._reasoning_options(),
+                on_text_delta=on_text_delta,
+                on_tool_event=self._handle_runtime_tool_event,
             )
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return None
+
+        if thinking_output is not None:
+            assert parser is not None
+            thinking_delta, response_delta = parser.flush()
+            if thinking_delta:
+                thinking_text += thinking_delta
+                if not thinking_streaming:
+                    _ = self.call_from_thread(self._start_thinking_output, thinking_output)
+                    thinking_streaming = True
+                _ = self.call_from_thread(
+                    self._update_thinking_output, thinking_output, thinking_text
+                )
+            if thinking_streaming:
+                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+            if response_delta:
+                visible_text += response_delta
+                _ = self.call_from_thread(self._update_response_output, response, visible_text)
+
+        self.conversation_state.message_history = list(runtime_response.all_messages)
+        response.reset_state(visible_text)
+        self._record_session_event("turn_usage", runtime_response.usage.to_event_details())
+        _ = self.call_from_thread(self._apply_turn_usage, runtime_response.usage)
+        if tools and not runtime_response.agent_mode_used:
+            _ = self.call_from_thread(self._disable_agent_mode_unsupported)
+        return visible_text
 
     def _stream_llm_response(
         self,
@@ -1251,19 +1158,15 @@ class MotherApp(App[None]):
         user_text: str,
         response: Response,
         thinking_output: ThinkingOutput | None = None,
-        attachments: list[Attachment] | None = None,
+        attachments: list[Path] | None = None,
     ) -> None:
         """Get the response in a thread, maintaining conversation history."""
         _ = self.call_from_thread(self._update_response_output, response, "*Thinking...*")
-        conversation = self.conversation
-        if conversation is None:
-            self._show_error(response, "**Error:** Conversation is not initialized.")
-            return
 
         tools = self._get_enabled_tools()
         tool_names = self._tool_names(tools)
         system = self._build_system_prompt(tools)
-        attachment_paths = [attachment.path for attachment in attachments or [] if attachment.path]
+        attachment_paths = [str(path) for path in attachments or []]
         self._record_prompt_context(
             user_text=user_text,
             prompt_text=prompt,
@@ -1271,24 +1174,24 @@ class MotherApp(App[None]):
             tool_names=tool_names,
             attachment_paths=attachment_paths,
         )
-        started_at = perf_counter()
-        llm_response = self._request_llm_response(
-            conversation=conversation,
-            prompt=prompt,
-            system=system,
-            tools=tools,
-            attachments=attachments,
-            response=response,
-        )
-        if llm_response is None:
-            return
 
-        full_text = self._stream_llm_response(
-            llm_response,
-            response,
-            thinking_output,
-            started_at=started_at,
-        )
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            full_text = loop.run_until_complete(
+                self._run_runtime_request(
+                    prompt,
+                    response,
+                    system,
+                    tools,
+                    attachments or [],
+                    thinking_output,
+                )
+            )
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
         if full_text is not None:
             self._record_session_message("assistant", full_text)
 
@@ -1300,6 +1203,7 @@ class MotherApp(App[None]):
             {"model": self.config.model},
         )
         self._update_subtitle()
+        self._update_statusline()
         self.notify(
             f"{self.config.model} does not support tools — agent mode disabled",
             title="Agent mode",
@@ -1325,6 +1229,24 @@ def cli(model: str | None, system: str | None, save_last: bool) -> None:
         notice = format_markdown_export(output_path)
         if notice is not None:
             click.echo(notice.message)
+        return
+
+    if not config.models:
+        click.echo(
+            'No models configured. Edit ~/.config/mother/config.toml, add at least one [[models]] entry, and set model = "...".'
+        )
+        return
+
+    if not config.model:
+        click.echo('No default model selected. Set model = "..." in ~/.config/mother/config.toml.')
+        return
+
+    if resolve_model_entry(config.model, config.models).id != config.model and not any(
+        entry.id == config.model for entry in config.models
+    ):
+        click.echo(
+            f"Configured default model {config.model!r} was not found in ~/.config/mother/config.toml."
+        )
         return
 
     session_manager = SessionManager.create(

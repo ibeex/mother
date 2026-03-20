@@ -6,7 +6,6 @@ from collections.abc import AsyncGenerator
 from pathlib import Path, PurePath
 from typing import ClassVar, Protocol, cast, override
 
-import llm
 from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.command import Hit, Provider
@@ -16,6 +15,7 @@ from textual.widgets import Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 from mother.config import MotherConfig
+from mother.models import get_all_entries
 
 _CSS_DIR = Path(__file__).resolve().parent / "css"
 
@@ -29,26 +29,8 @@ class _MotherAppProto(Protocol):
 
 
 def get_available_models() -> list[tuple[str, str]]:
-    """Return available models for the picker.
-
-    Prefer custom models configured via ``extra-openai-models.yaml`` (they have
-    a custom ``api_base``). If none are configured, fall back to all models.
-    """
-    all_models = list(llm.get_models())
-    preferred_models = [model for model in all_models if getattr(model, "api_base", None)]
-    source_models = preferred_models or all_models
-
-    seen: set[str] = set()
-    available_models: list[tuple[str, str]] = []
-    for model in source_models:
-        model_id = model.model_id
-        if model_id in seen:
-            continue
-        seen.add(model_id)
-        model_name = getattr(model, "model_name", None)
-        label = f"{model_id} — {model_name}" if model_name else model_id
-        available_models.append((model_id, label))
-    return available_models
+    """Return available configured models for the picker."""
+    return [(entry.id, f"{entry.id} — {entry.name}") for entry in get_all_entries()]
 
 
 def filter_available_models(

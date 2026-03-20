@@ -1,14 +1,19 @@
-"""Tests for the refactored LLM request flow in MotherApp."""
+"""Tests for the pydantic-ai request flow in MotherApp."""
 
-from collections.abc import Callable, Iterable, Iterator
-from enum import StrEnum
-from typing import ClassVar, cast, final
+import asyncio
+from collections.abc import Callable
+from pathlib import Path
+from typing import cast, final
 from unittest.mock import patch
 
-from llm.models import Attachment, Conversation, Model, ToolDef
+from pydantic_ai import Tool
+from pydantic_ai.messages import ModelMessage
 
 from mother import MotherApp, MotherConfig
-from mother.widgets import Response
+from mother.models import ModelEntry
+from mother.runtime import RuntimeResponse, RuntimeToolEvent
+from mother.stats import TurnUsage
+from mother.widgets import Response, ThinkingOutput
 
 
 @final
@@ -25,429 +30,212 @@ class _FakeResponse:
 
 
 @final
-class _FakeChatView:
-    def __init__(self, *, scroll_y: float, max_scroll_y: float) -> None:
-        self.scroll_y = scroll_y
-        self.max_scroll_y = max_scroll_y
-        self.scroll_end_calls: int = 0
-
-    def scroll_end(self, *, animate: bool = False) -> None:
-        _ = animate
-        self.scroll_end_calls += 1
-
-
-@final
-class _UnsupportedToolsConversation:
+class _FakeThinkingOutput:
     def __init__(self) -> None:
-        self.chain_calls: int = 0
-        self.prompt_calls: int = 0
-        self.chain_limit: int | None = None
-        self.prompt_systems: list[str | None] = []
-        self.chain_attachments: list[list[Attachment] | None] = []
-        self.prompt_attachments: list[list[Attachment] | None] = []
+        self.display = False
+        self.updated_texts: list[str] = []
+        self.started = 0
+        self.finished = 0
 
-    def chain(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-        tools: list[ToolDef] | None = None,
-        chain_limit: int | None = None,
-        before_call: object | None = None,
-        after_call: object | None = None,
-    ) -> Iterable[str]:
-        _ = prompt
-        _ = system
-        _ = tools
-        _ = before_call
-        _ = after_call
-        self.chain_calls += 1
-        self.chain_limit = chain_limit
-        self.chain_attachments.append(attachments)
-        raise RuntimeError("test-model does not support tools")
+    def start_streaming(self) -> None:
+        self.started += 1
 
-    def prompt(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-    ) -> Iterable[str]:
-        _ = prompt
-        self.prompt_systems.append(system)
-        self.prompt_calls += 1
-        self.prompt_attachments.append(attachments)
-        return ["fallback", " response"]
+    def finish_streaming(self) -> None:
+        self.finished += 1
+
+    def set_text(self, text: str) -> None:
+        self.updated_texts.append(text)
+        self.display = bool(text.strip())
 
 
 @final
-class _FailingConversation:
-    def chain(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-        tools: list[ToolDef] | None = None,
-        chain_limit: int | None = None,
-        before_call: object | None = None,
-        after_call: object | None = None,
-    ) -> Iterable[str]:
-        _ = prompt
-        _ = system
-        _ = attachments
-        _ = tools
-        _ = chain_limit
-        _ = before_call
-        _ = after_call
-        raise RuntimeError("boom")
-
-    def prompt(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-    ) -> Iterable[str]:
-        _ = prompt
-        _ = system
-        _ = attachments
-        raise AssertionError("prompt should not be called")
-
-
-@final
-class _PromptOnlyConversation:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, str | None, list[Attachment] | None]] = []
-
-    def prompt(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-    ) -> Iterable[str]:
-        self.calls.append((prompt, system, attachments))
-        return ["ok"]
-
-
-@final
-class _ReasoningPromptConversation:
-    def __init__(self) -> None:
+class _FakeRuntime:
+    def __init__(self, response: RuntimeResponse, deltas: list[str]) -> None:
+        self.response = response
+        self.deltas = deltas
         self.calls: list[dict[str, object]] = []
 
-    def prompt(
+    async def run_stream(
         self,
-        prompt: str,
         *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-        reasoning_effort: str | None = None,
-    ) -> Iterable[str]:
+        prompt_text: str,
+        system_prompt: str,
+        message_history: list[object],
+        attachments: list[Path],
+        tools: list[object],
+        model_settings: dict[str, object],
+        allow_tool_fallback: bool = True,
+        on_text_delta: Callable[[str], None] | None = None,
+        on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
+    ) -> RuntimeResponse:
         self.calls.append(
             {
-                "prompt": prompt,
-                "system": system,
-                "attachments": attachments,
-                "reasoning_effort": reasoning_effort,
-            }
-        )
-        return ["ok"]
-
-
-@final
-class _ReasoningChainConversation:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, object]] = []
-
-    def chain(
-        self,
-        prompt: str,
-        *,
-        system: str | None = None,
-        attachments: list[Attachment] | None = None,
-        tools: list[ToolDef] | None = None,
-        chain_limit: int | None = None,
-        before_call: object | None = None,
-        after_call: object | None = None,
-        options: dict[str, object] | None = None,
-    ) -> Iterable[str]:
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "system": system,
+                "prompt_text": prompt_text,
+                "system_prompt": system_prompt,
+                "message_history": list(message_history),
                 "attachments": attachments,
                 "tools": tools,
-                "chain_limit": chain_limit,
-                "before_call": before_call,
-                "after_call": after_call,
-                "options": options,
+                "model_settings": model_settings,
+                "allow_tool_fallback": allow_tool_fallback,
+                "has_tool_callback": on_tool_event is not None,
             }
         )
-        return ["ok"]
-
-
-class _ReasoningEnum(StrEnum):
-    low = "low"
-    medium = "medium"
-    high = "high"
+        for delta in self.deltas:
+            if on_text_delta is not None:
+                on_text_delta(delta)
+        return self.response
 
 
 @final
-class _Field:
-    def __init__(self, annotation: object) -> None:
-        self.annotation = annotation
-
-
-@final
-class _ModelWithReasoningOptions:
-    @final
-    class Options:
-        model_fields: ClassVar[dict[str, object]] = {
-            "reasoning_effort": _Field(_ReasoningEnum | None)
-        }
+class _FailingRuntime:
+    async def run_stream(self, **_: object) -> RuntimeResponse:
+        raise RuntimeError("boom")
 
 
 def _call_from_thread(callback: object, *args: object) -> object:
     return cast(Callable[..., object], callback)(*args)
 
 
-def _broken_stream() -> Iterator[str]:
-    yield "partial"
-    raise RuntimeError("stream failed")
+def _make_app(*, reasoning: bool = False, agent_mode: bool = False) -> MotherApp:
+    app = MotherApp(config=MotherConfig(model="test-model", reasoning_effort="high"))
+    app.current_model_entry = ModelEntry(
+        id="test-model",
+        name="test-model",
+        api_type="openai-responses",
+        supports_reasoning=reasoning,
+        supports_tools=True,
+        supports_images=True,
+    )
+    app.agent_mode = agent_mode
+    return app
 
 
-def test_request_llm_response_falls_back_when_model_rejects_tools():
-    app = MotherApp(config=MotherConfig(model="test-model", tools_enabled=True))
-    app.agent_mode = True
+def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
+    app = _make_app(reasoning=True)
+    app.conversation_state.message_history = [cast(ModelMessage, object())]
     response = _FakeResponse()
-    conversation = _UnsupportedToolsConversation()
-    tools = cast(list[ToolDef], [object()])
-
-    attachment = Attachment(path="/tmp/pasted.png")
+    thinking_output = _FakeThinkingOutput()
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="<think>step 1\nstep 2</think>final answer",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(
+                request_tokens=123,
+                response_tokens=45,
+                cache_read_tokens=6,
+                duration_seconds=1.5,
+                model_id="test-model",
+                provider="openai-responses",
+            ),
+            agent_mode_used=False,
+        ),
+        ["<th", "ink>step 1\n", "step 2</think>", "final", " answer"],
+    )
 
     with (
+        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "notify"),
+        patch.object(app, "_scroll_chat_to_end"),
     ):
-        llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
-            conversation=cast(Conversation, cast(object, conversation)),
-            prompt="hello",
-            system="system",
-            tools=tools,
-            attachments=[attachment],
-            response=cast(Response, cast(object, response)),
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[],
+                attachments=[Path("/tmp/pasted.png")],
+                thinking_output=cast(ThinkingOutput, cast(object, thinking_output)),
+            )
         )
 
-    assert llm_response is not None
-    assert list(llm_response) == ["fallback", " response"]
-    assert app.agent_mode is False
-    assert conversation.chain_calls == 1
-    assert conversation.chain_limit == 3
-    assert conversation.chain_attachments == [[attachment]]
-    assert conversation.prompt_calls == 1
-    assert conversation.prompt_systems == [app._build_system_prompt(None, agent_mode=False)]  # pyright: ignore[reportPrivateUsage]
-    assert conversation.prompt_attachments == [[attachment]]
-    assert response.updated_texts == []
-    assert response.reset_texts == []
-
-
-def test_request_llm_response_shows_error_for_non_tool_failures():
-    app = MotherApp(config=MotherConfig(model="test-model", tools_enabled=True))
-    app.agent_mode = True
-    response = _FakeResponse()
-    tools = cast(list[ToolDef], [object()])
-
-    with patch.object(app, "call_from_thread", side_effect=_call_from_thread):
-        llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
-            conversation=cast(Conversation, cast(object, _FailingConversation())),
-            prompt="hello",
-            system="system",
-            tools=tools,
-            attachments=[Attachment(path="/tmp/pasted.png")],
-            response=cast(Response, cast(object, response)),
-        )
-
-    assert llm_response is None
-    assert app.agent_mode is True
-    assert response.updated_texts == ["**Error:** boom"]
-    assert response.reset_texts == ["**Error:** boom"]
-
-
-def test_request_llm_response_passes_attachments_without_tools():
-    app = MotherApp(config=MotherConfig(model="test-model"))
-    response = _FakeResponse()
-    attachment = Attachment(path="/tmp/pasted.png")
-    conversation = _PromptOnlyConversation()
-
-    llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
-        conversation=cast(Conversation, cast(object, conversation)),
-        prompt="hello",
-        system="system",
-        tools=None,
-        attachments=[attachment],
-        response=cast(Response, cast(object, response)),
-    )
-
-    assert llm_response is not None
-    assert list(llm_response) == ["ok"]
-    assert conversation.calls == [("hello", "system", [attachment])]
-
-
-def test_request_llm_response_passes_reasoning_effort_without_tools() -> None:
-    app = MotherApp(config=MotherConfig(model="test-model", reasoning_effort="high"))
-    app.model = cast(Model, cast(object, _ModelWithReasoningOptions()))
-    response = _FakeResponse()
-    conversation = _ReasoningPromptConversation()
-
-    llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
-        conversation=cast(Conversation, cast(object, conversation)),
-        prompt="hello",
-        system="system",
-        tools=None,
-        attachments=None,
-        response=cast(Response, cast(object, response)),
-    )
-
-    assert llm_response is not None
-    assert list(llm_response) == ["ok"]
-    assert conversation.calls == [
+    assert full_text == "final answer"
+    assert thinking_output.started == 1
+    assert thinking_output.finished == 1
+    assert thinking_output.updated_texts[-1] == "step 1\nstep 2"
+    assert response.updated_texts == ["final ", "final answer"]
+    assert response.reset_texts == ["final answer"]
+    assert app._last_context_tokens == 123  # pyright: ignore[reportPrivateUsage]
+    assert app._session_input_tokens == 123  # pyright: ignore[reportPrivateUsage]
+    assert app._session_output_tokens == 45  # pyright: ignore[reportPrivateUsage]
+    assert app._session_cached_tokens == 6  # pyright: ignore[reportPrivateUsage]
+    assert app._last_response_time_seconds == 1.5  # pyright: ignore[reportPrivateUsage]
+    assert len(app.conversation_state.message_history) == 1
+    assert fake_runtime.calls == [
         {
-            "prompt": "hello",
-            "system": "system",
-            "attachments": None,
-            "reasoning_effort": "high",
+            "prompt_text": "hello",
+            "system_prompt": "system",
+            "message_history": fake_runtime.calls[0]["message_history"],
+            "attachments": [Path("/tmp/pasted.png")],
+            "tools": [],
+            "model_settings": {"openai_reasoning_effort": "high"},
+            "allow_tool_fallback": True,
+            "has_tool_callback": True,
         }
     ]
+    message_history = fake_runtime.calls[0]["message_history"]
+    assert isinstance(message_history, list)
+    history_list = cast(list[object], message_history)
+    assert len(history_list) == 1
 
 
-def test_request_llm_response_passes_reasoning_effort_with_tools() -> None:
-    app = MotherApp(config=MotherConfig(model="test-model", reasoning_effort="medium"))
-    app.model = cast(Model, cast(object, _ModelWithReasoningOptions()))
+def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:
+    app = _make_app(agent_mode=True)
     response = _FakeResponse()
-    conversation = _ReasoningChainConversation()
-    tools = cast(list[ToolDef], [object()])
-
-    llm_response = app._request_llm_response(  # pyright: ignore[reportPrivateUsage]
-        conversation=cast(Conversation, cast(object, conversation)),
-        prompt="hello",
-        system="system",
-        tools=tools,
-        attachments=None,
-        response=cast(Response, cast(object, response)),
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="fallback response",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=False,
+        ),
+        ["fallback response"],
     )
 
-    assert llm_response is not None
-    assert list(llm_response) == ["ok"]
-    assert len(conversation.calls) == 1
-    call = conversation.calls[0]
-    assert call["prompt"] == "hello"
-    assert call["system"] == "system"
-    assert call["attachments"] is None
-    assert call["tools"] == tools
-    assert call["chain_limit"] == 3
-    assert call["before_call"] is not None
-    assert call["after_call"] is not None
-    assert call["options"] == {"reasoning_effort": "medium"}
+    with (
+        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "notify") as notify,
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text == "fallback response"
+    assert app.agent_mode is False
+    notify.assert_called_with(
+        "test-model does not support tools — agent mode disabled",
+        title="Agent mode",
+        severity="warning",
+    )
 
 
-def test_stream_llm_response_refreshes_context_size_on_success():
-    app = MotherApp()
+def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
+    app = _make_app()
     response = _FakeResponse()
 
     with (
+        patch("mother.mother.ChatRuntime", return_value=_FailingRuntime()),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
-        patch.object(app, "_refresh_context_size") as refresh_context_size,
     ):
-        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
-            ["hello", " world"],
-            cast(Response, cast(object, response)),
-        )
-
-    assert full_text == "hello world"
-    assert response.updated_texts == ["hello", "hello world"]
-    assert response.reset_texts == ["hello world"]
-    refresh_context_size.assert_called_once_with()
-
-
-def test_stream_llm_response_records_last_response_time_on_success() -> None:
-    app = MotherApp()
-    response = _FakeResponse()
-
-    with (
-        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
-        patch.object(app, "_refresh_context_size"),
-        patch.object(app, "_update_statusline") as update_statusline,
-        patch("mother.mother.perf_counter", return_value=11.25),
-    ):
-        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
-            ["hello", " world"],
-            cast(Response, cast(object, response)),
-            started_at=10.0,
-        )
-
-    assert full_text == "hello world"
-    assert app._last_response_time_seconds == 1.25  # pyright: ignore[reportPrivateUsage]
-    update_statusline.assert_called_once_with()
-
-
-def test_stream_llm_response_shows_error_when_streaming_fails():
-    app = MotherApp()
-    response = _FakeResponse()
-
-    with patch.object(app, "call_from_thread", side_effect=_call_from_thread):
-        full_text = app._stream_llm_response(  # pyright: ignore[reportPrivateUsage]
-            _broken_stream(),
-            cast(Response, cast(object, response)),
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[],
+                attachments=[],
+                thinking_output=None,
+            )
         )
 
     assert full_text is None
-    assert response.updated_texts == ["partial", "**Error:** stream failed"]
-    assert response.reset_texts == ["**Error:** stream failed"]
-
-
-def test_update_response_output_scrolls_when_near_end():
-    app = MotherApp()
-    response = _FakeResponse()
-    chat_view = _FakeChatView(scroll_y=9, max_scroll_y=10)
-
-    with patch.object(app, "query_one", return_value=chat_view):
-        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
-            cast(Response, cast(object, response)),
-            "hello",
-        )
-
-    assert response.updated_texts == ["hello"]
-    assert chat_view.scroll_end_calls == 1
-
-
-def test_update_response_output_does_not_scroll_when_user_is_reading_history():
-    app = MotherApp()
-    response = _FakeResponse()
-    chat_view = _FakeChatView(scroll_y=4, max_scroll_y=10)
-
-    with patch.object(app, "query_one", return_value=chat_view):
-        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
-            cast(Response, cast(object, response)),
-            "hello",
-        )
-
-    assert response.updated_texts == ["hello"]
-    assert chat_view.scroll_end_calls == 0
-
-
-def test_update_response_output_respects_manual_scroll_mode():
-    app = MotherApp()
-    app.auto_scroll_enabled = False
-    response = _FakeResponse()
-    chat_view = _FakeChatView(scroll_y=10, max_scroll_y=10)
-
-    with patch.object(app, "query_one", return_value=chat_view):
-        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
-            cast(Response, cast(object, response)),
-            "hello",
-        )
-
-    assert response.updated_texts == ["hello"]
-    assert chat_view.scroll_end_calls == 0
+    assert response.updated_texts == ["**Error:** boom"]
+    assert response.reset_texts == ["**Error:** boom"]

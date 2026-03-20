@@ -3,10 +3,8 @@
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
 from unittest.mock import PropertyMock, patch
 
-from llm.models import Attachment
 from PIL import Image
 
 from mother import MotherApp
@@ -136,17 +134,17 @@ def test_capture_clipboard_image_registers_attachment(tmp_path: Path) -> None:
         result = app.capture_clipboard_image()
 
     assert result == str(image_path)
-    assert app._pending_image_attachments[str(image_path)].path == str(image_path)  # pyright: ignore[reportPrivateUsage]
+    assert app._pending_image_attachments[str(image_path)] == image_path  # pyright: ignore[reportPrivateUsage]
     notify.assert_called_once_with("Attached image: pasted.png", title="Clipboard")
 
 
 def test_consume_attachments_for_text_only_returns_referenced_paths() -> None:
     app = MotherApp()
-    first = Attachment(path="/tmp/first.png")
-    second = Attachment(path="/tmp/second.png")
+    first = Path("/tmp/first.png")
+    second = Path("/tmp/second.png")
     app._pending_image_attachments = {  # pyright: ignore[reportPrivateUsage]
-        cast(str, first.path): first,
-        cast(str, second.path): second,
+        str(first): first,
+        str(second): second,
     }
 
     attachments = app._consume_attachments_for_text(  # pyright: ignore[reportPrivateUsage]
@@ -154,4 +152,4 @@ def test_consume_attachments_for_text_only_returns_referenced_paths() -> None:
     )
 
     assert attachments == [second]
-    assert app._pending_image_attachments == {cast(str, first.path): first}  # pyright: ignore[reportPrivateUsage]
+    assert app._pending_image_attachments == {str(first): first}  # pyright: ignore[reportPrivateUsage]
