@@ -21,7 +21,7 @@ class ReadableResponse(Protocol):
     status: int
     headers: Mapping[str, str]
 
-    def read(self) -> bytes: ...
+    def read(self, amount: int = -1) -> bytes: ...
 
 
 class ResponseContext(Protocol):

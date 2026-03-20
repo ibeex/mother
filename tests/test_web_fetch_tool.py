@@ -12,7 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request
 
 from mother.tools import get_default_tools
-from mother.tools.web_fetch_tool import make_web_fetch_tool
+from mother.tools.web_fetch_tool import MAX_TIMEOUT, make_web_fetch_tool
 
 
 @final
@@ -33,8 +33,18 @@ class _FakeResponse:
         _ = tb
         return False
 
-    def read(self) -> bytes:
-        return self._content
+    def read(self, amount: int = -1) -> bytes:
+        if amount < 0:
+            return self._content
+        return self._content[:amount]
+
+
+def _get_header(request: Request, name: str) -> str | None:
+    normalized_name = name.lower()
+    for header_name, header_value in request.header_items():
+        if header_name.lower() == normalized_name:
+            return header_value
+    return None
 
 
 def test_web_fetch_tool_raw_mode_uses_urllib_request():
@@ -68,7 +78,7 @@ def test_web_fetch_tool_raw_mode_uses_urllib_request():
     request = captured_requests[0]
     assert request.full_url == "http://localhost:8000/api"
     assert request.method == "POST"
-    assert request.headers["Accept"] == "application/json"
+    assert _get_header(request, "Accept") == "application/json"
     assert request.data == b'{"hello": "world"}'
 
 
@@ -111,7 +121,7 @@ def test_web_fetch_tool_auto_mode_uses_jina_for_remote_pages():
     assert "Readable content" in output
     assert len(captured_requests) == 1
     assert captured_requests[0].full_url == "https://r.jina.ai/https://example.com/docs"
-    assert "Authorization" not in captured_requests[0].headers
+    assert _get_header(captured_requests[0], "Authorization") is None
 
 
 def test_web_fetch_tool_retries_jina_with_api_key_after_rate_limit():
@@ -147,8 +157,108 @@ def test_web_fetch_tool_retries_jina_with_api_key_after_rate_limit():
 
     assert "Retried readable content" in output
     assert len(captured_requests) == 2
-    assert "Authorization" not in captured_requests[0].headers
-    assert captured_requests[1].headers["Authorization"] == "Bearer secret-key"
+    assert _get_header(captured_requests[0], "Authorization") is None
+    assert _get_header(captured_requests[1], "Authorization") == "Bearer secret-key"
+
+
+def test_web_fetch_tool_raw_mode_retries_cloudflare_challenge_with_honest_user_agent():
+    captured_requests: list[Request] = []
+    challenge_headers = Message()
+    challenge_headers["cf-mitigated"] = "challenge"
+    challenge_error = HTTPError(
+        url="https://example.com/protected",
+        code=403,
+        msg="Forbidden",
+        hdrs=challenge_headers,
+        fp=io.BytesIO(b"challenge"),
+    )
+
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        _ = timeout
+        assert context is not None
+        captured_requests.append(request)
+        if len(captured_requests) == 1:
+            raise challenge_error
+        return _FakeResponse(b"Retried raw content")
+
+    with patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_fake_urlopen):
+        tool = make_web_fetch_tool()
+        output = tool("https://example.com/protected", mode="raw")
+
+    assert "Retried raw content" in output
+    assert len(captured_requests) == 2
+    first_user_agent = _get_header(captured_requests[0], "User-Agent")
+    second_user_agent = _get_header(captured_requests[1], "User-Agent")
+    assert first_user_agent is not None
+    assert second_user_agent == "mother/1.0"
+    assert second_user_agent != first_user_agent
+
+
+def test_web_fetch_tool_caps_timeout_to_maximum():
+    captured_timeouts: list[float] = []
+
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        _ = request
+        assert context is not None
+        captured_timeouts.append(timeout)
+        return _FakeResponse(b"Readable content")
+
+    with patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_fake_urlopen):
+        tool = make_web_fetch_tool()
+        output = tool("https://example.com/docs", timeout=999.0)
+
+    assert "Readable content" in output
+    assert captured_timeouts == [MAX_TIMEOUT]
+
+
+def test_web_fetch_tool_rejects_non_positive_timeout():
+    tool = make_web_fetch_tool()
+    output = tool("https://example.com/docs", timeout=0)
+    assert output == "Error: timeout must be a positive number."
+
+
+def test_web_fetch_tool_truncates_raw_response_when_size_limit_is_exceeded():
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        _ = request
+        _ = timeout
+        assert context is not None
+        return _FakeResponse(b"abcdefghijk")
+
+    with (
+        patch("mother.tools.web_fetch_tool.MAX_CONTENT_BYTES", 5),
+        patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_fake_urlopen),
+    ):
+        tool = make_web_fetch_tool()
+        output = tool("https://example.com/api", mode="raw")
+
+    assert "abcde" in output
+    assert "[Content truncated due to size limit]" in output
+
+
+def test_web_fetch_tool_truncates_jina_response_when_size_limit_is_exceeded():
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        _ = request
+        _ = timeout
+        assert context is not None
+        return _FakeResponse(b"abcdefghijk")
+
+    with (
+        patch("mother.tools.web_fetch_tool.MAX_CONTENT_BYTES", 5),
+        patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_fake_urlopen),
+    ):
+        tool = make_web_fetch_tool()
+        output = tool("https://example.com/docs", mode="jina")
+
+    assert "abcde" in output
+    assert "[Content truncated due to size limit]" in output
 
 
 def test_web_fetch_tool_rejects_invalid_headers_json():
