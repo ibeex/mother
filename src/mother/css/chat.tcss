@@ -104,6 +104,19 @@ Response {
     margin: 0;
 }
 
+Response.response-awaiting {
+    color: #9ece6a;
+    text-style: bold;
+}
+
+Response.response-awaiting MarkdownBlock {
+    & > .code_inline {
+        color: #e0af68;
+        background: transparent;
+        text-style: bold;
+    }
+}
+
 Prompt.grouped,
 ThinkingOutput.grouped,
 Response.grouped {

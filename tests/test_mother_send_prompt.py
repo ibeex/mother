@@ -21,12 +21,25 @@ class _FakeResponse:
     def __init__(self) -> None:
         self.updated_texts: list[str] = []
         self.reset_texts: list[str] = []
+        self.active_classes: set[str] = set()
 
     def update(self, text: str) -> None:
         self.updated_texts.append(text)
 
     def reset_state(self, text: str) -> None:
         self.reset_texts.append(text)
+
+    def add_class(self, class_name: str) -> None:
+        self.active_classes.add(class_name)
+
+    def remove_class(self, class_name: str) -> None:
+        self.active_classes.discard(class_name)
+
+    def set_class(self, add: bool, class_name: str) -> None:
+        if add:
+            self.active_classes.add(class_name)
+            return
+        self.active_classes.discard(class_name)
 
 
 @final
@@ -200,6 +213,45 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
     assert isinstance(message_history, list)
     history_list = cast(list[object], message_history)
     assert len(history_list) == 1
+
+
+def test_response_waiting_animation_picks_random_message_and_moves_highlight() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+    message = "WEYLAND-YUTANI SYSTEMS ONLINE"
+
+    with (
+        patch("mother.mother.choice", return_value=message),
+        patch.object(app, "_should_follow_chat_updates", return_value=False),
+    ):
+        app._start_response_waiting_animation(  # pyright: ignore[reportPrivateUsage]
+            cast(Response, cast(object, response))
+        )
+        first_frame = response.updated_texts[-1]
+        app._tick_response_waiting_animations()  # pyright: ignore[reportPrivateUsage]
+        second_frame = response.updated_texts[-1]
+        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+            cast(Response, cast(object, response)),
+            "final answer",
+        )
+
+    assert first_frame == "`W`EYLAND-YUTANI SYSTEMS ONLINE"
+    assert second_frame == "W`E`YLAND-YUTANI SYSTEMS ONLINE"
+    assert "response-awaiting" not in response.active_classes
+    assert response.updated_texts[-1] == "final answer"
+
+def test_response_waiting_animation_bounces_back_from_message_end() -> None:
+    app = _make_app()
+    message = "WEYLAND-YUTANI SYSTEMS ONLINE"
+    positions = app._waiting_response_positions(message)  # pyright: ignore[reportPrivateUsage]
+
+    assert positions
+    last_step = len(positions) - 1
+    last_frame = app._waiting_response_text(last_step, message)  # pyright: ignore[reportPrivateUsage]
+    bounce_frame = app._waiting_response_text(last_step + 1, message)  # pyright: ignore[reportPrivateUsage]
+
+    assert last_frame == "WEYLAND-YUTANI SYSTEMS ONLIN`E`"
+    assert bounce_frame == "WEYLAND-YUTANI SYSTEMS ONLI`N`E"
 
 
 def test_reasoning_options_include_openai_reasoning_summary() -> None:

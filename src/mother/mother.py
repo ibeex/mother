@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path, PurePath
+from random import choice
 from typing import ClassVar, override
 
 import click
@@ -85,10 +86,31 @@ APP_CSS_PATHS: list[str | PurePath] = [
 ]
 
 
+@dataclass
+class _ResponseWaitingAnimation:
+    """Track the lightweight response placeholder animation for a single turn."""
+
+    response: Response
+    message: str
+    frame_index: int = 0
+
+
 class MotherApp(App[None]):
     """Simple app for chatting with an LLM via a conversation."""
 
     AUTO_FOCUS: ClassVar[str | None] = "#prompt-input"
+    RESPONSE_WAITING_MESSAGES: ClassVar[tuple[str, ...]] = (
+        "WEYLAND-YUTANI SYSTEMS ONLINE",
+        "DIRECTIVE REVIEW IN PROGRESS",
+        "PRIORITY PROTOCOL ENGAGED",
+        "CREW QUERY ACKNOWLEDGED",
+        "INTERNAL SYSTEMS RESPONDING",
+        "TRANSMISSION RECEIVED. PROCESSING",
+        "COMMAND INTERFACE ACTIVE",
+        "DATA RELAY IN PROGRESS",
+        "OPERATIONAL ANALYSIS UNDERWAY",
+        "SPECIAL ORDER PARAMETERS DETECTED",
+    )
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
@@ -133,6 +155,7 @@ class MotherApp(App[None]):
         self._last_response_time_seconds: float | None = None
         self._suppress_prompt_completion_once: str | None = None
         self.auto_scroll_enabled: bool = True
+        self._response_waiting_animations: dict[int, _ResponseWaitingAnimation] = {}
 
     @override
     def compose(self) -> ComposeResult:
@@ -167,6 +190,7 @@ class MotherApp(App[None]):
         self.current_model_entry = resolve_model_entry(self.config.model, self.config.models)
         self.conversation_state = ConversationState()
         _ = self.query_one("#chat-view").anchor()
+        _ = self.set_interval(0.12, self._tick_response_waiting_animations)
         self._update_subtitle()
         self._update_statusline()
 
@@ -912,8 +936,74 @@ class MotherApp(App[None]):
             return
         _ = chat_view.scroll_end(animate=False)
 
+    def _waiting_response_positions(self, message: str | None = None) -> tuple[int, ...]:
+        """Return the character positions used by the animated waiting wave."""
+        active_message = message or self.RESPONSE_WAITING_MESSAGES[0]
+        return tuple(
+            index for index, character in enumerate(active_message) if character.isalnum()
+        )
+
+    def _waiting_response_highlight_position(
+        self,
+        frame_index: int,
+        message: str | None = None,
+    ) -> int:
+        """Return the current highlighted character index for the waiting wave."""
+        positions = self._waiting_response_positions(message)
+        if len(positions) <= 1:
+            return positions[0] if positions else 0
+        cycle_length = (len(positions) * 2) - 2
+        step = frame_index % cycle_length
+        if step < len(positions):
+            return positions[step]
+        return positions[cycle_length - step]
+
+    def _waiting_response_text(self, frame_index: int, message: str | None = None) -> str:
+        """Render the waiting message with a single highlighted character that sweeps back and forth."""
+        active_message = message or self.RESPONSE_WAITING_MESSAGES[0]
+        highlight_index = self._waiting_response_highlight_position(frame_index, active_message)
+        return (
+            f"{active_message[:highlight_index]}`{active_message[highlight_index]}`"
+            f"{active_message[highlight_index + 1:]}"
+        )
+
+    def _render_response_waiting_frame(self, animation: _ResponseWaitingAnimation) -> None:
+        """Show the current animated waiting frame on a response widget."""
+        _ = animation.response.add_class("response-awaiting")
+        _ = animation.response.update(
+            self._waiting_response_text(animation.frame_index, animation.message)
+        )
+
+    def _start_response_waiting_animation(self, response: Response) -> None:
+        """Begin animating the temporary MU-TH-UR-style waiting line."""
+        animation = _ResponseWaitingAnimation(
+            response=response,
+            message=choice(self.RESPONSE_WAITING_MESSAGES),
+        )
+        self._response_waiting_animations[id(response)] = animation
+        self._render_response_waiting_frame(animation)
+        if self._should_follow_chat_updates():
+            self._scroll_chat_to_end(force=True)
+
+    def _clear_response_waiting_animation(self, response: Response) -> None:
+        """Remove waiting animation classes and stop updating the response widget."""
+        _ = self._response_waiting_animations.pop(id(response), None)
+        _ = response.remove_class("response-awaiting")
+
+    def _tick_response_waiting_animations(self) -> None:
+        """Advance the lightweight waiting animation for any pending responses."""
+        if not self._response_waiting_animations:
+            return
+        should_follow = self._should_follow_chat_updates()
+        for animation in self._response_waiting_animations.values():
+            animation.frame_index += 1
+            self._render_response_waiting_frame(animation)
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
+
     def _update_response_output(self, response: Response, text: str) -> None:
         """Render response text and keep following only when the user is at the bottom."""
+        self._clear_response_waiting_animation(response)
         should_follow = self._should_follow_chat_updates()
         _ = response.update(text)
         if should_follow:
@@ -1068,6 +1158,10 @@ class MotherApp(App[None]):
             assert thinking_output is not None
             _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
 
+        if runtime_response.text != visible_text:
+            visible_text = runtime_response.text
+            _ = self.call_from_thread(self._update_response_output, response, visible_text)
+
         self.conversation_state.message_history = list(runtime_response.all_messages)
         response.reset_state(visible_text)
         self._record_session_event("turn_usage", runtime_response.usage.to_event_details())
@@ -1091,7 +1185,7 @@ class MotherApp(App[None]):
         attachments: list[Path] | None = None,
     ) -> None:
         """Get the response in a thread, maintaining conversation history."""
-        _ = self.call_from_thread(self._update_response_output, response, "*Thinking...*")
+        _ = self.call_from_thread(self._start_response_waiting_animation, response)
 
         tools = self._get_enabled_tools()
         tool_names = self._tool_names(tools)
