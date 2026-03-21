@@ -29,6 +29,13 @@ OPENAI_REASONING_SUMMARY_CHOICES: Final[tuple[str, ...]] = (
 )
 OPENAI_REASONING_SUMMARY_HELP: Final[str] = "auto|concise|detailed"
 
+_ANTHROPIC_THINKING_BUDGETS: Final[dict[str, int]] = {
+    "low": 1024,
+    "medium": 2048,
+    "high": 3072,
+    "xhigh": 3584,
+}
+
 
 def normalize_reasoning_effort(value: str) -> str | None:
     """Normalize a user/config reasoning value to a supported canonical value."""
@@ -104,18 +111,18 @@ def build_reasoning_options(
     options: dict[str, object] = {}
 
     if model is not None and model.api_type == "anthropic":
-        anthropic_mapping: dict[str, str | None] = {
-            "none": None,
-            "low": "low",
-            "medium": "medium",
-            "high": "high",
-            "xhigh": "max",
-        }
-        if normalized_effort is None:
+        if normalized_effort in (None, "auto", "none"):
             return options
-        mapped = anthropic_mapping.get(normalized_effort)
-        if mapped is not None:
-            options["anthropic_effort"] = mapped
+        budget_tokens = _ANTHROPIC_THINKING_BUDGETS.get(normalized_effort)
+        if budget_tokens is not None:
+            # Anthropic visible reasoning comes from extended-thinking blocks, not from
+            # ``output_config.effort``. We keep Mother's shared low→xhigh abstraction and
+            # translate it to conservative thinking budgets that fit under pydantic-ai's
+            # default Anthropic ``max_tokens=4096``.
+            options["anthropic_thinking"] = {
+                "type": "enabled",
+                "budget_tokens": budget_tokens,
+            }
         return options
 
     if normalized_effort is not None and normalized_effort != "auto":

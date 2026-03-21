@@ -108,15 +108,22 @@ def test_build_reasoning_options_for_openai_models() -> None:
 
 
 def test_build_reasoning_options_for_anthropic_models() -> None:
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "low") == {
+        "anthropic_thinking": {"type": "enabled", "budget_tokens": 1024}
+    }
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "medium") == {
+        "anthropic_thinking": {"type": "enabled", "budget_tokens": 2048}
+    }
     assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "high") == {
-        "anthropic_effort": "high"
+        "anthropic_thinking": {"type": "enabled", "budget_tokens": 3072}
     }
     assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "xhigh") == {
-        "anthropic_effort": "max"
+        "anthropic_thinking": {"type": "enabled", "budget_tokens": 3584}
     }
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "auto") == {}
     assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "off") == {}
     assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "high", "detailed") == {
-        "anthropic_effort": "high"
+        "anthropic_thinking": {"type": "enabled", "budget_tokens": 3072}
     }
 
 
