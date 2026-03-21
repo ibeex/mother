@@ -13,7 +13,6 @@ def test_config_allowlist_from_toml(tmp_path: Path):
     assert config.allowlist == frozenset({"ls", "cat", "grep"})
 
 
-
 def test_config_ca_bundle_path_from_toml(tmp_path: Path):
     config_file = tmp_path / "config.toml"
     _ = config_file.write_text('ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"\n')

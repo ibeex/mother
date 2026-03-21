@@ -21,7 +21,7 @@ def test_bash_tool_function_success_when_guard_is_ok():
         patch("mother.tools.bash_tool.classify_command", return_value=decision),
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock(return_value=ok_result)),
     ):
-        tool = make_bash_tool(frozenset({"ls"}), Path("/tmp"))
+        tool = make_bash_tool(cwd=Path("/tmp"))
         output = tool("ls /tmp")
     assert "file.txt" in output
 
@@ -101,7 +101,7 @@ def test_bash_tool_function_nonzero_exit():
         patch("mother.tools.bash_tool.classify_command", return_value=decision),
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock(return_value=fail_result)),
     ):
-        tool = make_bash_tool(frozenset({"ls"}), Path("/tmp"))
+        tool = make_bash_tool(cwd=Path("/tmp"))
         output = tool("ls /nonexistent")
     assert "exit code 1" in output
     assert "no such file" in output

@@ -27,7 +27,6 @@ class ToolRegistry:
 
 def get_default_tools(
     tools_enabled: bool = False,
-    allowlist: frozenset[str] | None = None,
     cwd: Path | None = None,
     ca_bundle_path: str = "",
 ) -> ToolRegistry:
@@ -38,7 +37,7 @@ def get_default_tools(
         from mother.tools.web_search_tool import make_web_search_tool
 
         effective_cwd = cwd if cwd is not None else Path.cwd()
-        registry.register(make_bash_tool(allowlist=allowlist, cwd=effective_cwd))
+        registry.register(make_bash_tool(cwd=effective_cwd))
         registry.register(make_web_search_tool(ca_bundle_path=ca_bundle_path))
         registry.register(make_web_fetch_tool(ca_bundle_path=ca_bundle_path))
     return registry

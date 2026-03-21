@@ -40,12 +40,8 @@ def _format_blocked_command(decision: BashGuardDecision, clipboard_status: str) 
     return "\n".join(lines)
 
 
-def make_bash_tool(
-    allowlist: frozenset[str] | None = None,
-    cwd: Path | None = None,
-) -> Callable[..., str]:
+def make_bash_tool(cwd: Path | None = None) -> Callable[..., str]:
     """Factory returning a closure suitable for registration as an llm Tool."""
-    _ = allowlist
     effective_cwd = cwd if cwd is not None else Path.cwd()
 
     def bash(command: str, timeout: float = 30.0) -> str:
