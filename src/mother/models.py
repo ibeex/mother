@@ -125,12 +125,13 @@ def load_key_aliases(path: Path | None = None) -> dict[str, str]:
     if not resolved.exists():
         return {}
     with resolved.open(encoding="utf-8") as handle:
-        raw_data = json.load(handle)
+        raw_data = cast(object, json.load(handle))
     if not isinstance(raw_data, dict):
         raise ValueError("keys.json must contain a JSON object of key names to secret strings.")
 
+    raw_mapping = cast(dict[object, object], raw_data)
     aliases: dict[str, str] = {}
-    for raw_key, raw_value in raw_data.items():
+    for raw_key, raw_value in raw_mapping.items():
         if not isinstance(raw_key, str) or not isinstance(raw_value, str):
             raise ValueError("keys.json keys and values must both be strings.")
         aliases[raw_key] = raw_value

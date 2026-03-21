@@ -1,4 +1,4 @@
-"""Helpers for reasoning-effort capable models."""
+"""Helpers for reasoning-capable models."""
 
 from __future__ import annotations
 
@@ -21,6 +21,14 @@ _REASONING_EFFORT_ALIASES: Final[dict[str, str]] = {
 }
 REASONING_EFFORT_HELP: Final[str] = "auto|off|low|medium|high|xhigh"
 
+DEFAULT_OPENAI_REASONING_SUMMARY: Final[str] = "auto"
+OPENAI_REASONING_SUMMARY_CHOICES: Final[tuple[str, ...]] = (
+    "auto",
+    "concise",
+    "detailed",
+)
+OPENAI_REASONING_SUMMARY_HELP: Final[str] = "auto|concise|detailed"
+
 
 def normalize_reasoning_effort(value: str) -> str | None:
     """Normalize a user/config reasoning value to a supported canonical value."""
@@ -42,9 +50,37 @@ def parse_reasoning_effort(value: str) -> str:
     return normalized
 
 
+def normalize_openai_reasoning_summary(value: str) -> str | None:
+    """Normalize a user/config OpenAI reasoning-summary value."""
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+    if normalized not in OPENAI_REASONING_SUMMARY_CHOICES:
+        return None
+    return normalized
+
+
+def parse_openai_reasoning_summary(value: str) -> str:
+    """Validate and normalize an OpenAI reasoning-summary setting."""
+    normalized = normalize_openai_reasoning_summary(value)
+    if normalized is None:
+        choices = ", ".join(OPENAI_REASONING_SUMMARY_CHOICES)
+        raise ValueError(f"Invalid openai_reasoning_summary {value!r}. Expected one of: {choices}")
+    return normalized
+
+
 def supports_reasoning_effort(model: ModelEntry | None) -> bool:
     """Return whether the configured model supports reasoning control."""
     return model is not None and model.supports_reasoning
+
+
+def supports_openai_reasoning_summary(model: ModelEntry | None) -> bool:
+    """Return whether the configured model supports OpenAI reasoning summaries."""
+    return (
+        supports_reasoning_effort(model)
+        and model is not None
+        and model.api_type == "openai-responses"
+    )
 
 
 def supported_reasoning_efforts(model: ModelEntry | None) -> tuple[str, ...]:
@@ -54,14 +90,18 @@ def supported_reasoning_efforts(model: ModelEntry | None) -> tuple[str, ...]:
     return _SUPPORTED_REASONING_EFFORTS
 
 
-def build_reasoning_options(model: ModelEntry | None, reasoning_effort: str) -> dict[str, object]:
+def build_reasoning_options(
+    model: ModelEntry | None,
+    reasoning_effort: str,
+    openai_reasoning_summary: str = DEFAULT_OPENAI_REASONING_SUMMARY,
+) -> dict[str, object]:
     """Return provider-specific request settings for reasoning-capable models."""
     if not supports_reasoning_effort(model):
         return {}
 
-    normalized = normalize_reasoning_effort(reasoning_effort)
-    if normalized is None or normalized == "auto":
-        return {}
+    normalized_effort = normalize_reasoning_effort(reasoning_effort)
+    normalized_summary = normalize_openai_reasoning_summary(openai_reasoning_summary)
+    options: dict[str, object] = {}
 
     if model is not None and model.api_type == "anthropic":
         anthropic_mapping: dict[str, str | None] = {
@@ -71,12 +111,20 @@ def build_reasoning_options(model: ModelEntry | None, reasoning_effort: str) -> 
             "high": "high",
             "xhigh": "max",
         }
-        mapped = anthropic_mapping.get(normalized)
-        if mapped is None:
-            return {}
-        return {"anthropic_effort": mapped}
+        if normalized_effort is None:
+            return options
+        mapped = anthropic_mapping.get(normalized_effort)
+        if mapped is not None:
+            options["anthropic_effort"] = mapped
+        return options
 
-    return {"openai_reasoning_effort": normalized}
+    if normalized_effort is not None and normalized_effort != "auto":
+        options["openai_reasoning_effort"] = normalized_effort
+
+    if supports_openai_reasoning_summary(model) and normalized_summary not in (None, "auto"):
+        options["openai_reasoning_summary"] = normalized_summary
+
+    return options
 
 
 def format_reasoning_effort(reasoning_effort: str) -> str:

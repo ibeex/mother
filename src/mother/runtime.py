@@ -11,8 +11,18 @@ from pathlib import Path
 from time import perf_counter
 from typing import Literal, cast
 
-from pydantic_ai import Agent, Tool
-from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent
+from pydantic_ai import Agent, AgentRunResultEvent, Tool
+from pydantic_ai.messages import (
+    BinaryContent,
+    ModelMessage,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    UserContent,
+)
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
@@ -184,44 +194,67 @@ class ChatRuntime:
         started_at = perf_counter()
 
         try:
-            async with agent.run_stream(
+            full_text = ""
+            full_thinking = ""
+            final_result: AgentRunResultEvent[str] | None = None
+
+            async for event in agent.run_stream_events(
                 user_prompt,
                 message_history=message_history,
                 model_settings=cast(ModelSettings, cast(object, model_settings)),
                 usage_limits=usage_limits,
-            ) as result:
-                full_text = ""
-                full_thinking = ""
-                # pydantic-ai already separates visible text from reasoning via response parts,
-                # so we stream the structured response and mirror each aggregate field.
-                async for current_response, _ in result.stream_responses(debounce_by=None):
-                    next_thinking = current_response.thinking or ""
-                    if next_thinking != full_thinking:
-                        full_thinking = next_thinking
+            ):
+                if isinstance(event, AgentRunResultEvent):
+                    final_result = event
+                    break
+
+                if isinstance(event, PartStartEvent):
+                    if isinstance(event.part, ThinkingPart) and event.part.content:
+                        full_thinking += event.part.content
                         if on_thinking_update is not None:
                             on_thinking_update(full_thinking)
+                    elif isinstance(event.part, TextPart) and event.part.content:
+                        full_text += event.part.content
+                        if on_text_update is not None:
+                            on_text_update(full_text)
+                    continue
 
-                    next_text = current_response.text or ""
-                    if next_text != full_text:
-                        full_text = next_text
+                if isinstance(event, PartDeltaEvent):
+                    if isinstance(event.delta, ThinkingPartDelta) and event.delta.content_delta:
+                        full_thinking += event.delta.content_delta
+                        if on_thinking_update is not None:
+                            on_thinking_update(full_thinking)
+                    elif isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
+                        full_text += event.delta.content_delta
                         if on_text_update is not None:
                             on_text_update(full_text)
 
-                return RuntimeResponse(
-                    text=full_text,
-                    all_messages=list(result.all_messages()),
-                    usage=TurnUsage.from_run_usage(
-                        result.usage(),
-                        provider=self.model_entry.api_type,
-                        model_id=self.model_entry.id,
-                        image_count=len(attachments),
-                        duration_seconds=perf_counter() - started_at,
-                        tool_calls_started=tool_state["started"],
-                        tool_calls_finished=tool_state["finished"],
-                        tool_call_errors=tool_state["errors"],
-                    ),
-                    agent_mode_used=bool(wrapped_tools),
-                )
+            if final_result is None:
+                raise RuntimeError("Agent stream ended without a final result")
+
+            final_text = final_result.result.output
+            final_response = final_result.result.response
+            final_thinking = final_response.thinking or full_thinking
+            if final_thinking != full_thinking and on_thinking_update is not None:
+                on_thinking_update(final_thinking)
+            if final_text != full_text and on_text_update is not None:
+                on_text_update(final_text)
+
+            return RuntimeResponse(
+                text=final_text,
+                all_messages=list(final_result.result.all_messages()),
+                usage=TurnUsage.from_run_usage(
+                    final_result.result.usage(),
+                    provider=self.model_entry.api_type,
+                    model_id=self.model_entry.id,
+                    image_count=len(attachments),
+                    duration_seconds=perf_counter() - started_at,
+                    tool_calls_started=tool_state["started"],
+                    tool_calls_finished=tool_state["finished"],
+                    tool_call_errors=tool_state["errors"],
+                ),
+                agent_mode_used=bool(wrapped_tools),
+            )
         except Exception as exc:
             if (
                 not wrapped_tools

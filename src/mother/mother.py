@@ -35,6 +35,7 @@ from mother.reasoning import (
     format_reasoning_effort,
     normalize_reasoning_effort,
     supported_reasoning_efforts,
+    supports_openai_reasoning_summary,
     supports_reasoning_effort,
 )
 from mother.runtime import ChatRuntime, RuntimeToolEvent
@@ -302,11 +303,18 @@ class MotherApp(App[None]):
 
     def _reasoning_options(self) -> dict[str, object]:
         """Return supported model options for reasoning-capable models."""
-        return build_reasoning_options(self.current_model_entry, self.config.reasoning_effort)
+        return build_reasoning_options(
+            self.current_model_entry,
+            self.config.reasoning_effort,
+            self.config.openai_reasoning_summary,
+        )
 
     def _show_reasoning_status(self) -> None:
         """Notify the user of the current reasoning setting and model support."""
         configured = format_reasoning_effort(self.config.reasoning_effort)
+        summary_suffix = ""
+        if supports_openai_reasoning_summary(self.current_model_entry):
+            summary_suffix = f" · summary {self.config.openai_reasoning_summary}"
         supported = supported_reasoning_efforts(self.current_model_entry)
         if supported:
             if (
@@ -316,15 +324,15 @@ class MotherApp(App[None]):
                 supported_text = "|".join(format_reasoning_effort(value) for value in supported)
                 self.notify(
                     (
-                        f"{self.config.model} reasoning: {configured} (not supported here). "
-                        f"Supported: {supported_text}"
+                        f"{self.config.model} reasoning: {configured}{summary_suffix} "
+                        f"(not supported here). Supported: {supported_text}"
                     ),
                     title="Reasoning",
                     severity="warning",
                 )
                 return
             self.notify(
-                f"{self.config.model} reasoning: {configured}",
+                f"{self.config.model} reasoning: {configured}{summary_suffix}",
                 title="Reasoning",
             )
             return
@@ -471,7 +479,12 @@ class MotherApp(App[None]):
         """Return the visible reasoning setting for reasoning-capable models."""
         if not supports_reasoning_effort(self.current_model_entry):
             return None
-        return format_reasoning_effort(self.config.reasoning_effort)
+        label = format_reasoning_effort(self.config.reasoning_effort)
+        if supports_openai_reasoning_summary(self.current_model_entry):
+            summary = self.config.openai_reasoning_summary
+            if summary != "auto":
+                return f"{label}/{summary}"
+        return label
 
     def _update_statusline(self) -> None:
         """Update the single-line status bar above the footer."""

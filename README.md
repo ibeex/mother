@@ -19,6 +19,9 @@ It supports two modes:
 - web search via Jina Search
 - web fetching for public pages, APIs, and localhost services
 
+For OpenAI Responses reasoning models, you can request visible reasoning summaries with
+`openai_reasoning_summary = "detailed"` in `~/.config/mother/config.toml`.
+
 ## Clipboard images
 
 When the prompt input is focused, `Ctrl+V` still behaves like paste, but Mother now

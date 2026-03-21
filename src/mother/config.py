@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import cast
 
 from mother.models import ModelEntry, default_model_entries, load_model_entries
-from mother.reasoning import DEFAULT_REASONING_EFFORT, parse_reasoning_effort
+from mother.reasoning import (
+    DEFAULT_OPENAI_REASONING_SUMMARY,
+    DEFAULT_REASONING_EFFORT,
+    parse_openai_reasoning_summary,
+    parse_reasoning_effort,
+)
 from mother.session import default_markdown_export_dir
 from mother.system_prompt import DEFAULT_BASE_SYSTEM
 
@@ -35,6 +40,11 @@ model = ""
 # Reasoning effort for models that support it.
 # Supported values: "auto", "none", "low", "medium", "high", "xhigh"
 # reasoning_effort = "medium"
+
+# OpenAI Responses reasoning summary visibility.
+# Supported values: "auto", "concise", "detailed"
+# Set this to "detailed" if you want visible streamed reasoning summaries when available.
+# openai_reasoning_summary = "auto"
 
 # Enable agent mode (allows LLM to run shell commands via the bash tool)
 # tools_enabled = false
@@ -80,6 +90,7 @@ class MotherConfig:
     theme: str = "catppuccin-mocha"
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     reasoning_effort: str = DEFAULT_REASONING_EFFORT
+    openai_reasoning_summary: str = DEFAULT_OPENAI_REASONING_SUMMARY
     tools_enabled: bool = False
     ca_bundle_path: str = ""
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
@@ -115,11 +126,18 @@ def load_config(path: Path | None = None) -> MotherConfig:
         if raw_reasoning_effort is None
         else parse_reasoning_effort(raw_reasoning_effort)
     )
+    raw_openai_reasoning_summary = cast(str | None, data.get("openai_reasoning_summary"))
+    openai_reasoning_summary = (
+        DEFAULT_OPENAI_REASONING_SUMMARY
+        if raw_openai_reasoning_summary is None
+        else parse_openai_reasoning_summary(raw_openai_reasoning_summary)
+    )
     return MotherConfig(
         model=cast(str, data.get("model", MotherConfig.model)),
         theme=cast(str, data.get("theme", MotherConfig.theme)),
         system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
         reasoning_effort=reasoning_effort,
+        openai_reasoning_summary=openai_reasoning_summary,
         tools_enabled=cast(bool, data.get("tools_enabled", MotherConfig.tools_enabled)),
         ca_bundle_path=cast(str, data.get("ca_bundle_path", MotherConfig.ca_bundle_path)),
         session_markdown_dir=cast(
@@ -141,6 +159,7 @@ def apply_cli_overrides(
         theme=config.theme,
         system_prompt=system if system is not None else config.system_prompt,
         reasoning_effort=config.reasoning_effort,
+        openai_reasoning_summary=config.openai_reasoning_summary,
         tools_enabled=config.tools_enabled,
         ca_bundle_path=config.ca_bundle_path,
         session_markdown_dir=config.session_markdown_dir,

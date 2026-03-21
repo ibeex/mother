@@ -103,8 +103,19 @@ def _call_from_thread(callback: object, *args: object) -> object:
     return cast(Callable[..., object], callback)(*args)
 
 
-def _make_app(*, reasoning: bool = False, agent_mode: bool = False) -> MotherApp:
-    app = MotherApp(config=MotherConfig(model="test-model", reasoning_effort="high"))
+def _make_app(
+    *,
+    reasoning: bool = False,
+    agent_mode: bool = False,
+    openai_reasoning_summary: str = "auto",
+) -> MotherApp:
+    app = MotherApp(
+        config=MotherConfig(
+            model="test-model",
+            reasoning_effort="high",
+            openai_reasoning_summary=openai_reasoning_summary,
+        )
+    )
     app.current_model_entry = ModelEntry(
         id="test-model",
         name="test-model",
@@ -189,6 +200,15 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
     assert isinstance(message_history, list)
     history_list = cast(list[object], message_history)
     assert len(history_list) == 1
+
+
+def test_reasoning_options_include_openai_reasoning_summary() -> None:
+    app = _make_app(reasoning=True, openai_reasoning_summary="detailed")
+
+    assert app._reasoning_options() == {  # pyright: ignore[reportPrivateUsage]
+        "openai_reasoning_effort": "high",
+        "openai_reasoning_summary": "detailed",
+    }
 
 
 def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:

@@ -4,9 +4,12 @@ from mother.models import ModelEntry
 from mother.reasoning import (
     build_reasoning_options,
     format_reasoning_effort,
+    normalize_openai_reasoning_summary,
     normalize_reasoning_effort,
+    parse_openai_reasoning_summary,
     parse_reasoning_effort,
     supported_reasoning_efforts,
+    supports_openai_reasoning_summary,
     supports_reasoning_effort,
 )
 
@@ -48,6 +51,20 @@ def test_parse_reasoning_effort_rejects_unknown_values() -> None:
             raise AssertionError("Expected invalid reasoning effort to raise ValueError")
 
 
+def test_normalize_openai_reasoning_summary_accepts_supported_values() -> None:
+    assert normalize_openai_reasoning_summary("AUTO") == "auto"
+    assert normalize_openai_reasoning_summary("detailed") == "detailed"
+
+
+def test_parse_openai_reasoning_summary_rejects_unknown_values() -> None:
+    try:
+        _ = parse_openai_reasoning_summary("verbose")
+    except ValueError as exc:
+        assert "openai_reasoning_summary" in str(exc)
+    else:
+        raise AssertionError("Expected invalid OpenAI reasoning summary to raise ValueError")
+
+
 def test_supports_reasoning_effort_checks_model_capability() -> None:
     assert supports_reasoning_effort(_REASONING_MODEL) is True
     assert supports_reasoning_effort(_PLAIN_MODEL) is False
@@ -64,6 +81,13 @@ def test_supported_reasoning_efforts_returns_mother_supported_values() -> None:
     )
 
 
+def test_supports_openai_reasoning_summary_checks_model_capability() -> None:
+    assert supports_openai_reasoning_summary(_REASONING_MODEL) is True
+    assert supports_openai_reasoning_summary(_ANTHROPIC_REASONING_MODEL) is False
+    assert supports_openai_reasoning_summary(_PLAIN_MODEL) is False
+    assert supports_openai_reasoning_summary(None) is False
+
+
 def test_build_reasoning_options_for_openai_models() -> None:
     assert build_reasoning_options(_REASONING_MODEL, "medium") == {
         "openai_reasoning_effort": "medium"
@@ -73,7 +97,14 @@ def test_build_reasoning_options_for_openai_models() -> None:
     }
     assert build_reasoning_options(_REASONING_MODEL, "auto") == {}
     assert build_reasoning_options(_REASONING_MODEL, "off") == {"openai_reasoning_effort": "none"}
-    assert build_reasoning_options(_PLAIN_MODEL, "medium") == {}
+    assert build_reasoning_options(_REASONING_MODEL, "auto", "detailed") == {
+        "openai_reasoning_summary": "detailed"
+    }
+    assert build_reasoning_options(_REASONING_MODEL, "medium", "concise") == {
+        "openai_reasoning_effort": "medium",
+        "openai_reasoning_summary": "concise",
+    }
+    assert build_reasoning_options(_PLAIN_MODEL, "medium", "detailed") == {}
 
 
 def test_build_reasoning_options_for_anthropic_models() -> None:
@@ -84,6 +115,9 @@ def test_build_reasoning_options_for_anthropic_models() -> None:
         "anthropic_effort": "max"
     }
     assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "off") == {}
+    assert build_reasoning_options(_ANTHROPIC_REASONING_MODEL, "high", "detailed") == {
+        "anthropic_effort": "high"
+    }
 
 
 def test_format_reasoning_effort_uses_user_facing_labels() -> None:
