@@ -19,8 +19,14 @@ It supports two modes:
 - web search via Jina Search
 - web fetching for public pages, APIs, and localhost services
 
-For OpenAI Responses reasoning models, you can request visible reasoning summaries with
-`openai_reasoning_summary = "detailed"` in `~/.config/mother/config.toml`.
+Mother keeps one shared `reasoning_effort` abstraction across providers.
+
+- OpenAI Responses models can also request visible reasoning summaries with
+  `openai_reasoning_summary = "detailed"` in `~/.config/mother/config.toml`, and the
+  status line shows values like `R medium/detailed`.
+- Anthropic reasoning models use the same `reasoning_effort` setting to enable visible
+  thinking blocks via provider thinking budgets, and the status line shows values like
+  `R medium/thinking`.
 
 ## Clipboard images
 

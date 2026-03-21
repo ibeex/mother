@@ -24,6 +24,17 @@ def _reasoning_entry() -> ModelEntry:
     )
 
 
+def _anthropic_reasoning_entry() -> ModelEntry:
+    return ModelEntry(
+        id="claude",
+        name="haiku",
+        api_type="anthropic",
+        supports_reasoning=True,
+        supports_tools=True,
+        supports_images=True,
+    )
+
+
 def test_app_starts_in_conversational_mode() -> None:
     app = MotherApp()
     assert app.agent_mode is False
@@ -490,6 +501,20 @@ def test_status_reasoning_effort_visible_for_reasoning_models() -> None:
     app = MotherApp(config=MotherConfig(reasoning_effort="none"))
     app.current_model_entry = _reasoning_entry()
     assert app._status_reasoning_effort() == "off"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_status_reasoning_effort_shows_openai_summary_mode() -> None:
+    app = MotherApp(
+        config=MotherConfig(reasoning_effort="medium", openai_reasoning_summary="detailed")
+    )
+    app.current_model_entry = _reasoning_entry()
+    assert app._status_reasoning_effort() == "medium/detailed"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_status_reasoning_effort_shows_anthropic_thinking_mode() -> None:
+    app = MotherApp(config=MotherConfig(reasoning_effort="medium"))
+    app.current_model_entry = _anthropic_reasoning_entry()
+    assert app._status_reasoning_effort() == "medium/thinking"  # pyright: ignore[reportPrivateUsage]
 
 
 def test_send_prompt_no_tools_when_conversational() -> None:

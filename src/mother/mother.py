@@ -485,6 +485,10 @@ class MotherApp(App[None]):
             summary = self.config.openai_reasoning_summary
             if summary != "auto":
                 return f"{label}/{summary}"
+            return label
+        if self.current_model_entry.api_type == "anthropic":
+            if label not in {"auto", "off"}:
+                return f"{label}/thinking"
         return label
 
     def _update_statusline(self) -> None:
