@@ -4,7 +4,6 @@ from pathlib import Path
 
 from mother import MotherApp
 from mother.config import load_config
-from mother.tools.bash_tool import DEFAULT_ALLOWLIST
 
 
 def test_config_allowlist_from_toml(tmp_path: Path):
@@ -13,11 +12,6 @@ def test_config_allowlist_from_toml(tmp_path: Path):
     config = load_config(config_file)
     assert config.allowlist == frozenset({"ls", "cat", "grep"})
 
-
-def test_config_default_allowlist(tmp_path: Path):
-    config_file = tmp_path / "config.toml"
-    config = load_config(config_file)
-    assert config.allowlist == DEFAULT_ALLOWLIST
 
 
 def test_config_ca_bundle_path_from_toml(tmp_path: Path):

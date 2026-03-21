@@ -33,13 +33,12 @@ def get_default_tools(
 ) -> ToolRegistry:
     registry = ToolRegistry()
     if tools_enabled:
-        from mother.tools.bash_tool import DEFAULT_ALLOWLIST, make_bash_tool
+        from mother.tools.bash_tool import make_bash_tool
         from mother.tools.web_fetch_tool import make_web_fetch_tool
         from mother.tools.web_search_tool import make_web_search_tool
 
-        effective_allowlist = allowlist if allowlist is not None else DEFAULT_ALLOWLIST
         effective_cwd = cwd if cwd is not None else Path.cwd()
-        registry.register(make_bash_tool(effective_allowlist, effective_cwd))
+        registry.register(make_bash_tool(allowlist=allowlist, cwd=effective_cwd))
         registry.register(make_web_search_tool(ca_bundle_path=ca_bundle_path))
         registry.register(make_web_fetch_tool(ca_bundle_path=ca_bundle_path))
     return registry

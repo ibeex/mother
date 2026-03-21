@@ -11,10 +11,6 @@ import pyperclip
 from mother.tools.bash_executor import execute_bash
 from mother.tools.bash_guard import BashGuardDecision, classify_command
 
-# Legacy compatibility only. The old regex/allowlist guard used this value.
-# The current LLM-based guard ignores it, but config/tests still import it.
-DEFAULT_ALLOWLIST: frozenset[str] = frozenset({"ls", "cat"})
-
 
 def _copy_command_to_clipboard(command: str) -> str:
     try:
@@ -45,7 +41,7 @@ def _format_blocked_command(decision: BashGuardDecision, clipboard_status: str) 
 
 
 def make_bash_tool(
-    allowlist: frozenset[str] = DEFAULT_ALLOWLIST,
+    allowlist: frozenset[str] | None = None,
     cwd: Path | None = None,
 ) -> Callable[..., str]:
     """Factory returning a closure suitable for registration as an llm Tool."""
