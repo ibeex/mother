@@ -5,7 +5,14 @@ import asyncio
 from textual.containers import Horizontal, Vertical, VerticalScroll
 
 from mother import MotherApp, MotherConfig
-from mother.widgets import ConversationTurn, PromptTextArea, TurnLabel, WelcomeBanner
+from mother.widgets import (
+    ConversationTurn,
+    OutputSection,
+    PromptTextArea,
+    ToolOutput,
+    TurnLabel,
+    WelcomeBanner,
+)
 
 
 def test_last_markdown_block_has_no_trailing_margin_in_conversation_turn() -> None:
@@ -68,5 +75,30 @@ def test_chat_layout_uses_minimal_chrome_and_prompt_gutter() -> None:
             assert prompt.styles.border_right[0] == ""
             assert len(prompt_row.children) == 2
             assert str(input_gutter.render()) == ">"
+
+    asyncio.run(run())
+
+
+def test_tool_output_is_nested_above_response_within_turn() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            chat = app.query_one("#chat-view", VerticalScroll)
+            turn = ConversationTurn(prompt_text="prompt", response_text="reply")
+            await chat.mount(turn)
+            await pilot.pause()
+
+            turn.tool_trace_stack.display = True
+            await turn.tool_trace_stack.mount(
+                OutputSection("Tool", "tool-title", ToolOutput("pwd"))
+            )
+            await pilot.pause()
+
+            assert len(chat.children) == 2
+            assert chat.children[-1] is turn
+            assert turn.tool_trace_stack.display is True
+            assert len(turn.tool_trace_stack.children) == 1
+            assert "response-section" in turn.children[-1].classes
 
     asyncio.run(run())

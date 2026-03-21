@@ -50,6 +50,13 @@ ConversationTurn {
     background: transparent;
 }
 
+.tool-trace-stack {
+    height: auto;
+    width: 100%;
+    margin: 0;
+    background: transparent;
+}
+
 TurnLabel {
     background: transparent;
     text-style: bold;

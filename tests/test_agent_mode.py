@@ -68,6 +68,17 @@ def test_prompt_enter_selects_slash_completion() -> None:
     assert isinstance(post_message.call_args.args[0], PromptTextArea.SlashAccept)
 
 
+def test_prompt_enter_selects_slash_argument_completion() -> None:
+    text_area = PromptTextArea()
+    text_area.slash_argument_complete_active = True
+
+    with patch.object(text_area, "post_message") as post_message:
+        asyncio.run(text_area.handle_enter_key())
+
+    post_message.assert_called_once()
+    assert isinstance(post_message.call_args.args[0], PromptTextArea.SlashArgumentAccept)
+
+
 def test_prompt_enter_submits_builtin_slash_command() -> None:
     text_area = PromptTextArea("/quit")
     action_submit = AsyncMock()
@@ -164,6 +175,12 @@ def test_reasoning_command_updates_runtime_setting() -> None:
                 await pilot.press("enter")
                 await pilot.pause()
 
+                assert text_area.text == "/reasoning high"
+                assert app.config.reasoning_effort == "medium"
+
+                await pilot.press("enter")
+                await pilot.pause()
+
                 assert app.config.reasoning_effort == "high"
                 assert text_area.text == ""
                 notify.assert_called_with(
@@ -204,6 +221,12 @@ def test_reasoning_command_partial_query_enter_uses_highlighted_value() -> None:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("/reasoning h")
                 await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                assert text_area.text == "/reasoning high"
+                assert app.config.reasoning_effort == "medium"
 
                 await pilot.press("enter")
                 await pilot.pause()
@@ -264,7 +287,83 @@ def test_models_command_query_enter_switches_model() -> None:
                 await pilot.press("enter")
                 await pilot.pause()
 
+                assert text_area.text == "/models claude-opus-4-1"
+                switch_model.assert_not_called()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
                 switch_model.assert_called_once_with("claude-opus-4-1")
+
+    asyncio.run(run())
+
+
+def test_models_command_fuzzy_query_enter_switches_model() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        available_models = [
+            ("local_1", "local_1 — local 1"),
+            ("local_2", "local_2 — local 2"),
+            ("local_3", "local_3 — local 3"),
+        ]
+
+        with (
+            patch("mother.slash_commands.get_available_models", return_value=available_models),
+            patch.object(app, "action_switch_model") as switch_model,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/models lo3")
+                await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                assert text_area.text == "/models local_3"
+                switch_model.assert_not_called()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                switch_model.assert_called_once_with("local_3")
+
+    asyncio.run(run())
+
+
+def test_models_command_enter_accepts_highlighted_inline_selection_before_submit() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        available_models = [
+            ("local_1", "local_1 — local 1"),
+            ("local_2", "local_2 — local 2"),
+            ("local_3", "local_3 — local 3"),
+        ]
+
+        with (
+            patch("mother.slash_commands.get_available_models", return_value=available_models),
+            patch.object(app, "action_switch_model") as switch_model,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                model_complete = app.query_one(ModelComplete)
+                text_area.load_text("/models l")
+                await pilot.pause()
+
+                assert model_complete.display is True
+                await pilot.press("down", "down")
+                await pilot.pause()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                assert text_area.text == "/models local_3"
+                assert model_complete.display is False
+                switch_model.assert_not_called()
+
+                await pilot.press("enter")
+                await pilot.pause()
+
+                switch_model.assert_called_once_with("local_3")
 
     asyncio.run(run())
 

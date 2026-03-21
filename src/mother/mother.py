@@ -122,6 +122,7 @@ class MotherApp(App[None]):
         self.session_manager: SessionManager | None = session_manager
         self._pending_executions: list[BashExecution] = []
         self._pending_image_attachments: dict[str, Path] = {}
+        self._active_turn: ConversationTurn | None = None
         self._tool_outputs: dict[str, ToolOutput] = {}
         self._session_usage: SessionUsage = SessionUsage()
         self._last_turn_usage: TurnUsage | None = None
@@ -773,6 +774,7 @@ class MotherApp(App[None]):
         text_area.read_only = True
         prompt = self._flush_pending_context(value)
         turn = ConversationTurn(prompt_text=value, include_thinking=True)
+        self._active_turn = turn
         _ = await chat_view.mount(turn)
         if should_follow:
             self._scroll_chat_to_end(force=True)
@@ -841,8 +843,13 @@ class MotherApp(App[None]):
         widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
         self._tool_outputs[key] = widget
         section = OutputSection("Tool", "tool-title", widget)
-        chat_view = self.query_one("#chat-view", VerticalScroll)
-        _ = chat_view.mount(section)
+        active_turn = self._active_turn
+        if active_turn is not None:
+            active_turn.tool_trace_stack.display = True
+            _ = active_turn.tool_trace_stack.mount(section)
+        else:
+            chat_view = self.query_one("#chat-view", VerticalScroll)
+            _ = chat_view.mount(section)
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
@@ -857,11 +864,16 @@ class MotherApp(App[None]):
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = self._tool_outputs.pop(key, None)
         should_follow = self._should_follow_chat_updates()
-        chat_view = self.query_one("#chat-view", VerticalScroll)
         if widget is None:
             widget = ToolOutput()
             section = OutputSection("Tool", "tool-title", widget)
-            _ = chat_view.mount(section)
+            active_turn = self._active_turn
+            if active_turn is not None:
+                active_turn.tool_trace_stack.display = True
+                _ = active_turn.tool_trace_stack.mount(section)
+            else:
+                chat_view = self.query_one("#chat-view", VerticalScroll)
+                _ = chat_view.mount(section)
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
         if should_follow:
             self._scroll_chat_to_end(force=True)
@@ -869,6 +881,7 @@ class MotherApp(App[None]):
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         """Re-enable input when the worker finishes."""
         if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            self._active_turn = None
             text_area = self.prompt_input
             text_area.read_only = False
             _ = text_area.focus()

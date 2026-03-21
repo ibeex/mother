@@ -1,9 +1,13 @@
 """Tests for slash-command autocomplete helpers."""
 
+from unittest.mock import patch
+
 from mother.slash_commands import (
     SLASH_COMMANDS,
     current_slash_argument_query,
     current_slash_query,
+    filter_model_argument_choices,
+    filter_reasoning_argument_choices,
     filter_slash_commands,
     get_slash_argument_spec,
     should_expand_slash_argument,
@@ -58,6 +62,25 @@ def test_filter_slash_commands_matches_save_prefix() -> None:
     matches = filter_slash_commands(SLASH_COMMANDS, "/sa")
 
     assert [command.command for command in matches] == ["/save"]
+
+
+def test_filter_model_argument_choices_supports_fuzzy_subsequence_matches() -> None:
+    available_models = [
+        ("local_1", "local_1 — local 1"),
+        ("local_2", "local_2 — local 2"),
+        ("local_3", "local_3 — local 3"),
+    ]
+
+    with patch("mother.slash_commands.get_available_models", return_value=available_models):
+        matches = filter_model_argument_choices("lo3")
+
+    assert [choice.value for choice in matches] == ["local_3"]
+
+
+def test_filter_reasoning_argument_choices_supports_fuzzy_subsequence_matches() -> None:
+    matches = filter_reasoning_argument_choices("mdm")
+
+    assert [choice.value for choice in matches] == ["medium"]
 
 
 def test_default_slash_commands_expose_save() -> None:

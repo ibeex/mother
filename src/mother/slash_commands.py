@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 from mother.model_picker import filter_available_models, get_available_models
+from mother.picker_search import PickerSearchField, filter_picker_items
 from mother.reasoning import format_reasoning_effort, normalize_reasoning_effort
 
 
@@ -63,32 +64,21 @@ _REASONING_ARGUMENT_CHOICES: tuple[SlashArgumentChoice, ...] = (
 )
 
 
+def _argument_choice_search_fields(choice: SlashArgumentChoice) -> list[PickerSearchField]:
+    """Return searchable fields for a slash-argument choice."""
+    return [
+        PickerSearchField(choice.value, primary=True),
+        PickerSearchField(choice.label),
+        *(PickerSearchField(term) for term in choice.search_terms),
+    ]
+
+
 def _filter_argument_choices(
     choices: Iterable[SlashArgumentChoice],
     query: str,
 ) -> list[SlashArgumentChoice]:
-    """Filter inline argument choices, preferring prefix matches."""
-    items = list(choices)
-    normalized = query.strip().lower()
-    if not normalized:
-        return items
-
-    prefix_matches = [
-        choice
-        for choice in items
-        if choice.value.lower().startswith(normalized)
-        or any(term.lower().startswith(normalized) for term in choice.search_terms)
-    ]
-    if prefix_matches:
-        return prefix_matches
-
-    return [
-        choice
-        for choice in items
-        if normalized in choice.value.lower()
-        or normalized in choice.label.lower()
-        or any(normalized in term.lower() for term in choice.search_terms)
-    ]
+    """Filter inline argument choices using shared picker search behavior."""
+    return filter_picker_items(choices, query, _argument_choice_search_fields)
 
 
 def filter_model_argument_choices(query: str) -> list[SlashArgumentChoice]:

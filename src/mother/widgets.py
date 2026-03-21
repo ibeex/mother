@@ -158,6 +158,9 @@ class PromptTextArea(TextArea):
         if self.slash_complete_active:
             _ = self.post_message(self.SlashAccept(self))
             return
+        if self.slash_argument_complete_active:
+            _ = self.post_message(self.SlashArgumentAccept(self))
+            return
         if should_submit_on_enter(self.text):
             app = cast(_PromptSubmitApp, cast(object, self.app))
             await app.action_submit()
@@ -609,6 +612,10 @@ class ConversationTurn(Vertical):
             )
             self.thinking_section.display = False
             children.append(self.thinking_section)
+
+        self.tool_trace_stack: Vertical = Vertical(classes="tool-trace-stack")
+        self.tool_trace_stack.display = False
+        children.append(self.tool_trace_stack)
 
         self.response_widget: Response = Response(response_text)
         _ = self.response_widget.add_class("grouped")

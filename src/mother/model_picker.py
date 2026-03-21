@@ -16,6 +16,7 @@ from textual.widgets.option_list import Option
 
 from mother.config import MotherConfig
 from mother.models import get_all_entries
+from mother.picker_search import PickerSearchField, filter_picker_items
 
 _CSS_DIR = Path(__file__).resolve().parent / "css"
 
@@ -39,27 +40,18 @@ def filter_available_models(
 ) -> list[tuple[str, str]]:
     """Return available models matching a search query.
 
-    Prefix matches on the model id are preferred. If there are none, the
-    broader label/model-id substring search used by the picker is applied.
+    Model id matches are preferred, followed by label matches. Exact, prefix,
+    substring, and fuzzy subsequence matches are supported.
     """
     models = available_models or get_available_models()
-    normalized_query = query.strip().lower()
-    if not normalized_query:
-        return list(models)
-
-    prefix_matches = [
-        (model_id, label)
-        for model_id, label in models
-        if model_id.lower().startswith(normalized_query)
-    ]
-    if prefix_matches:
-        return prefix_matches
-
-    return [
-        (model_id, label)
-        for model_id, label in models
-        if normalized_query in model_id.lower() or normalized_query in label.lower()
-    ]
+    return filter_picker_items(
+        models,
+        query,
+        lambda model: (
+            PickerSearchField(model[0], primary=True),
+            PickerSearchField(model[1]),
+        ),
+    )
 
 
 class AgentModeProvider(Provider):
