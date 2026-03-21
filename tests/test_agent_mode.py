@@ -422,11 +422,11 @@ def test_config_tools_enabled_sets_initial_mode() -> None:
 
 
 def test_statusline_formats_model_and_unknown_context() -> None:
-    assert StatusLine.format_status("test-model", False, None) == "test-model · off · ? · auto"
+    assert StatusLine.format_status("test-model", False, None) == "test-model · A:off · C:?"
 
 
 def test_statusline_formats_model_and_context_size() -> None:
-    assert StatusLine.format_status("test-model", True, 12345) == "test-model · on · 12.3k · auto"
+    assert StatusLine.format_status("test-model", True, 12345) == "test-model · A:on · C:12.3k"
 
 
 def test_statusline_formats_token_usage_when_known() -> None:
@@ -442,20 +442,21 @@ def test_statusline_formats_token_usage_when_known() -> None:
             678,
             9000,
         )
-        == "test-model · on · 12.3k · in 12.3k · out 678 · cache 9.0k · manual · high · last 1.2s"
+        == "test-model · A:on · C:12.3k · Tok:12.3k/678/9.0k · Man · R:high · 1.2s"
     )
 
 
 def test_statusline_formats_manual_scroll_mode() -> None:
     assert (
-        StatusLine.format_status("test-model", True, 256, False) == "test-model · on · 256 · manual"
+        StatusLine.format_status("test-model", True, 256, False)
+        == "test-model · A:on · C:256 · Man"
     )
 
 
 def test_statusline_formats_reasoning_when_supported() -> None:
     assert (
         StatusLine.format_status("test-model", True, 256, False, "high")
-        == "test-model · on · 256 · manual · high"
+        == "test-model · A:on · C:256 · Man · R:high"
     )
 
 
@@ -469,7 +470,7 @@ def test_statusline_formats_last_response_time() -> None:
             "high",
             1.25,
         )
-        == "test-model · on · 256 · manual · high · last 1.2s"
+        == "test-model · A:on · C:256 · Man · R:high · 1.2s"
     )
 
 

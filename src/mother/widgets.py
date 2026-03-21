@@ -696,6 +696,35 @@ class StatusLine(Label):
         return str(tokens)
 
     @staticmethod
+    def format_segment(label: str, value: str) -> str:
+        """Format a labeled status-line segment."""
+        return f"{label}:{value}"
+
+    @staticmethod
+    def format_optional_segment(label: str, value: str | None) -> str:
+        """Format an optional labeled status-line segment."""
+        if value is None:
+            return ""
+        return f" · {StatusLine.format_segment(label, value)}"
+
+    @staticmethod
+    def format_token_summary(
+        input_tokens: int | None,
+        output_tokens: int | None,
+        cached_tokens: int | None,
+    ) -> str | None:
+        """Format token usage as input/output/cache."""
+        if input_tokens is None and output_tokens is None and cached_tokens is None:
+            return None
+        return "/".join(
+            [
+                StatusLine.format_token_count(input_tokens) or "?",
+                StatusLine.format_token_count(output_tokens) or "?",
+                StatusLine.format_token_count(cached_tokens) or "?",
+            ]
+        )
+
+    @staticmethod
     def format_status(
         model_name: str,
         agent_mode: bool,
@@ -708,27 +737,25 @@ class StatusLine(Label):
         cached_tokens: int | None = None,
     ) -> str:
         """Format the text displayed in the status line."""
-        model = model_name or "?"
-        agent = "on" if agent_mode else "off"
-        context = StatusLine.format_token_count(context_tokens) or "?"
-        auto_scroll = "auto" if auto_scroll_enabled else "manual"
-        parts = [model, agent, context]
-        formatted_input = StatusLine.format_token_count(input_tokens)
-        if formatted_input is not None:
-            parts.append(f"in {formatted_input}")
-        formatted_output = StatusLine.format_token_count(output_tokens)
-        if formatted_output is not None:
-            parts.append(f"out {formatted_output}")
-        formatted_cached = StatusLine.format_token_count(cached_tokens)
-        if formatted_cached is not None:
-            parts.append(f"cache {formatted_cached}")
-        parts.append(auto_scroll)
-        if reasoning_effort is not None:
-            parts.append(reasoning_effort)
+        model_segment = model_name or "?"
+        agent_segment = StatusLine.format_segment("A", "on" if agent_mode else "off")
+        context_segment = StatusLine.format_segment(
+            "C", StatusLine.format_token_count(context_tokens) or "?"
+        )
+        token_segment = StatusLine.format_optional_segment(
+            "Tok", StatusLine.format_token_summary(input_tokens, output_tokens, cached_tokens)
+        )
+        manual_segment = " · Man" if not auto_scroll_enabled else ""
+        reasoning_segment = StatusLine.format_optional_segment("R", reasoning_effort)
         response_time = StatusLine.format_response_time(last_response_time_seconds)
-        if response_time is not None:
-            parts.append(f"last {response_time}")
-        return " · ".join(parts)
+        response_time_segment = f" · {response_time}" if response_time is not None else ""
+        return (
+            f"{model_segment} · {agent_segment} · {context_segment}"
+            f"{token_segment}"
+            f"{manual_segment}"
+            f"{reasoning_segment}"
+            f"{response_time_segment}"
+        )
 
     def set_status(
         self,
