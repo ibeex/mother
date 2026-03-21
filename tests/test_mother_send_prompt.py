@@ -50,9 +50,9 @@ class _FakeThinkingOutput:
 
 @final
 class _FakeRuntime:
-    def __init__(self, response: RuntimeResponse, deltas: list[str]) -> None:
+    def __init__(self, response: RuntimeResponse, updates: list[tuple[str, str]]) -> None:
         self.response = response
-        self.deltas = deltas
+        self.updates = updates
         self.calls: list[dict[str, object]] = []
 
     async def run_stream(
@@ -65,7 +65,8 @@ class _FakeRuntime:
         tools: list[object],
         model_settings: dict[str, object],
         allow_tool_fallback: bool = True,
-        on_text_delta: Callable[[str], None] | None = None,
+        on_text_update: Callable[[str], None] | None = None,
+        on_thinking_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
     ) -> RuntimeResponse:
         self.calls.append(
@@ -80,9 +81,15 @@ class _FakeRuntime:
                 "has_tool_callback": on_tool_event is not None,
             }
         )
-        for delta in self.deltas:
-            if on_text_delta is not None:
-                on_text_delta(delta)
+        latest_text = ""
+        latest_thinking = ""
+        for text, thinking in self.updates:
+            if on_thinking_update is not None and thinking != latest_thinking:
+                latest_thinking = thinking
+                on_thinking_update(thinking)
+            if on_text_update is not None and text != latest_text:
+                latest_text = text
+                on_text_update(text)
         return self.response
 
 
@@ -117,7 +124,7 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
     thinking_output = _FakeThinkingOutput()
     fake_runtime = _FakeRuntime(
         RuntimeResponse(
-            text="<think>step 1\nstep 2</think>final answer",
+            text="final answer",
             all_messages=[cast(ModelMessage, object())],
             usage=TurnUsage(
                 request_tokens=123,
@@ -129,7 +136,12 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
             ),
             agent_mode_used=False,
         ),
-        ["<th", "ink>step 1\n", "step 2</think>", "final", " answer"],
+        [
+            ("", "step 1\n"),
+            ("", "step 1\nstep 2"),
+            ("final ", "step 1\nstep 2"),
+            ("final answer", "step 1\nstep 2"),
+        ],
     )
 
     with (
@@ -189,7 +201,7 @@ def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:
             usage=TurnUsage(model_id="test-model", provider="openai-responses"),
             agent_mode_used=False,
         ),
-        ["fallback response"],
+        [("fallback response", "")],
     )
 
     with (

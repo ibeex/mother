@@ -11,7 +11,7 @@ It supports two modes:
 
 - terminal-first chat UI
 - model switching
-- optional thinking display
+- optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
 - clipboard image paste in the prompt via `Ctrl+V` (with `Cmd+V` still working for normal paste on macOS)
 - agent mode with tool traces

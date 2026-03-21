@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterable
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path, PurePath
-from time import perf_counter
 from typing import ClassVar, override
 
 import click
@@ -50,7 +48,6 @@ from mother.slash_commands import (
 )
 from mother.stats import SessionUsage, TurnUsage
 from mother.system_prompt import build_system_prompt
-from mother.thinking import ThinkTagStreamParser
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
 from mother.tools.bash_executor import execute_bash
@@ -893,75 +890,25 @@ class MotherApp(App[None]):
             self._scroll_chat_to_end(force=True)
 
     def _start_thinking_output(self, thinking_output: ThinkingOutput) -> None:
-        """Switch the thinking widget into live streaming mode."""
+        """Switch the structured thinking widget into live streaming mode."""
         should_follow = self._should_follow_chat_updates()
         thinking_output.start_streaming()
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
     def _update_thinking_output(self, thinking_output: ThinkingOutput, text: str) -> None:
-        """Render streamed reasoning text in the dedicated thinking widget."""
+        """Render streamed pydantic-ai thinking text in the dedicated thinking widget."""
         should_follow = self._should_follow_chat_updates()
         thinking_output.set_text(text)
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
     def _finish_thinking_output(self, thinking_output: ThinkingOutput) -> None:
-        """Collapse the thinking widget back to its preview after streaming ends."""
+        """Collapse the structured thinking widget back to its preview after streaming ends."""
         should_follow = self._should_follow_chat_updates()
         thinking_output.finish_streaming()
         if should_follow:
             self._scroll_chat_to_end(force=True)
-
-    def _stream_response(
-        self,
-        llm_response: Iterable[str],
-        response: Response,
-        thinking_output: ThinkingOutput | None = None,
-    ) -> str:
-        """Stream chunks from an LLM response into the visible widgets; return final reply text."""
-        full_text = ""
-        if thinking_output is None:
-            for chunk in llm_response:
-                full_text += chunk
-                _ = self.call_from_thread(self._update_response_output, response, full_text)
-            return full_text
-
-        thinking_parser = ThinkTagStreamParser()
-        thinking_text = ""
-        thinking_streaming = False
-
-        for chunk in llm_response:
-            thinking_delta, response_delta = thinking_parser.feed(chunk)
-            if thinking_delta:
-                thinking_text += thinking_delta
-                if not thinking_streaming:
-                    _ = self.call_from_thread(self._start_thinking_output, thinking_output)
-                    thinking_streaming = True
-                _ = self.call_from_thread(
-                    self._update_thinking_output, thinking_output, thinking_text
-                )
-            if thinking_streaming and not thinking_parser.in_think:
-                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
-                thinking_streaming = False
-            if response_delta:
-                full_text += response_delta
-                _ = self.call_from_thread(self._update_response_output, response, full_text)
-
-        thinking_delta, response_delta = thinking_parser.flush()
-        if thinking_delta:
-            thinking_text += thinking_delta
-            if not thinking_streaming:
-                _ = self.call_from_thread(self._start_thinking_output, thinking_output)
-                thinking_streaming = True
-            _ = self.call_from_thread(self._update_thinking_output, thinking_output, thinking_text)
-        if thinking_streaming:
-            _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
-        if response_delta:
-            full_text += response_delta
-            _ = self.call_from_thread(self._update_response_output, response, full_text)
-
-        return full_text
 
     def _handle_runtime_tool_event(self, event: RuntimeToolEvent) -> None:
         """Mirror runtime tool events into the TUI and session log."""
@@ -1051,37 +998,26 @@ class MotherApp(App[None]):
     ) -> str | None:
         runtime = ChatRuntime(self.current_model_entry)
         visible_text = ""
-        parser: ThinkTagStreamParser | None = None
         thinking_text = ""
         thinking_streaming = False
-        if thinking_output is None:
 
-            def on_text_delta(delta: str) -> None:
-                nonlocal visible_text
-                visible_text += delta
-                _ = self.call_from_thread(self._update_response_output, response, visible_text)
-        else:
-            parser = ThinkTagStreamParser()
+        def on_text_update(text: str) -> None:
+            nonlocal visible_text, thinking_streaming
+            if thinking_output is not None and thinking_streaming and text != visible_text:
+                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+                thinking_streaming = False
+            visible_text = text
+            _ = self.call_from_thread(self._update_response_output, response, visible_text)
 
-            def on_text_delta(delta: str) -> None:
-                nonlocal visible_text, thinking_text, thinking_streaming
-                thinking_delta, response_delta = parser.feed(delta)
-                if thinking_delta:
-                    thinking_text += thinking_delta
-                    if not thinking_streaming:
-                        _ = self.call_from_thread(self._start_thinking_output, thinking_output)
-                        thinking_streaming = True
-                    _ = self.call_from_thread(
-                        self._update_thinking_output,
-                        thinking_output,
-                        thinking_text,
-                    )
-                if thinking_streaming and not parser.in_think:
-                    _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
-                    thinking_streaming = False
-                if response_delta:
-                    visible_text += response_delta
-                    _ = self.call_from_thread(self._update_response_output, response, visible_text)
+        def on_thinking_update(text: str) -> None:
+            nonlocal thinking_text, thinking_streaming
+            if thinking_output is None:
+                return
+            thinking_text = text
+            if not thinking_streaming:
+                _ = self.call_from_thread(self._start_thinking_output, thinking_output)
+                thinking_streaming = True
+            _ = self.call_from_thread(self._update_thinking_output, thinking_output, thinking_text)
 
         try:
             runtime_response = await runtime.run_stream(
@@ -1091,29 +1027,17 @@ class MotherApp(App[None]):
                 attachments=attachments,
                 tools=tools,
                 model_settings=self._reasoning_options(),
-                on_text_delta=on_text_delta,
+                on_text_update=on_text_update,
+                on_thinking_update=on_thinking_update if thinking_output is not None else None,
                 on_tool_event=self._handle_runtime_tool_event,
             )
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return None
 
-        if thinking_output is not None:
-            assert parser is not None
-            thinking_delta, response_delta = parser.flush()
-            if thinking_delta:
-                thinking_text += thinking_delta
-                if not thinking_streaming:
-                    _ = self.call_from_thread(self._start_thinking_output, thinking_output)
-                    thinking_streaming = True
-                _ = self.call_from_thread(
-                    self._update_thinking_output, thinking_output, thinking_text
-                )
-            if thinking_streaming:
-                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
-            if response_delta:
-                visible_text += response_delta
-                _ = self.call_from_thread(self._update_response_output, response, visible_text)
+        if thinking_streaming:
+            assert thinking_output is not None
+            _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
 
         self.conversation_state.message_history = list(runtime_response.all_messages)
         response.reset_state(visible_text)
@@ -1122,29 +1046,6 @@ class MotherApp(App[None]):
         if tools and not runtime_response.agent_mode_used:
             _ = self.call_from_thread(self._disable_agent_mode_unsupported)
         return visible_text
-
-    def _stream_llm_response(
-        self,
-        llm_response: Iterable[str],
-        response: Response,
-        thinking_output: ThinkingOutput | None = None,
-        started_at: float | None = None,
-    ) -> str | None:
-        """Stream an LLM response into the widget and return the final reply text."""
-        try:
-            full_text = self._stream_response(llm_response, response, thinking_output)
-        except Exception as exc:
-            self._show_error(response, f"**Error:** {exc}")
-            return None
-
-        response.reset_state(full_text)
-        self._refresh_context_size()
-        if started_at is not None:
-            _ = self.call_from_thread(
-                self._remember_last_response_time,
-                perf_counter() - started_at,
-            )
-        return full_text
 
     def _show_error(self, response: Response, error_text: str) -> None:
         """Display an error in the response widget and reset its state."""

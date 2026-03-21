@@ -390,7 +390,7 @@ class CopyableOutput(TextArea):
 
 @final
 class ThinkingOutput(CopyableOutput):
-    """Plain-text widget for model reasoning emitted inside ``<think>`` tags."""
+    """Plain-text widget for structured model reasoning from pydantic-ai thinking parts."""
 
     PREVIEW_LINES: ClassVar[int] = 10
     BORDER_TITLE: ClassVar[str] = "Mother · thinking"
@@ -407,16 +407,16 @@ class ThinkingOutput(CopyableOutput):
         self.set_text(text)
 
     def has_content(self) -> bool:
-        """Return whether the widget currently contains any thinking text."""
+        """Return whether the widget currently contains any structured thinking text."""
         return bool(self._raw.strip())
 
     def start_streaming(self) -> None:
-        """Show the full thinking text while it is still streaming in."""
+        """Show the full structured thinking text while it is still streaming in."""
         self._streaming = True
         self._refresh_rendered_text()
 
     def finish_streaming(self) -> None:
-        """Collapse streamed thinking back to the preview once it is complete."""
+        """Collapse streamed structured thinking back to the preview once it is complete."""
         self._streaming = False
         self._expanded = False
         self._refresh_rendered_text()
@@ -448,7 +448,7 @@ class ThinkingOutput(CopyableOutput):
 
     @override
     def set_text(self, text: str) -> None:
-        """Update raw thinking text and render preview/full content."""
+        """Update raw structured thinking text and render preview/full content."""
         self._raw = text
         visible = self.has_content()
         self.display = visible
@@ -458,7 +458,7 @@ class ThinkingOutput(CopyableOutput):
         self._refresh_rendered_text()
 
     def action_toggle_expanded(self) -> None:
-        """Toggle between the preview and the full reasoning text."""
+        """Toggle between the preview and the full structured reasoning text."""
         if (
             self._streaming
             or not self.has_content()

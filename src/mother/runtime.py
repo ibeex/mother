@@ -165,7 +165,8 @@ class ChatRuntime:
         tools: list[Tool[None]],
         model_settings: dict[str, object],
         allow_tool_fallback: bool = True,
-        on_text_delta: Callable[[str], None] | None = None,
+        on_text_update: Callable[[str], None] | None = None,
+        on_thinking_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
     ) -> RuntimeResponse:
         tool_state = {"started": 0, "finished": 0, "errors": 0}
@@ -190,10 +191,21 @@ class ChatRuntime:
                 usage_limits=usage_limits,
             ) as result:
                 full_text = ""
-                async for delta in result.stream_text(delta=True):
-                    full_text += delta
-                    if on_text_delta is not None:
-                        on_text_delta(delta)
+                full_thinking = ""
+                # pydantic-ai already separates visible text from reasoning via response parts,
+                # so we stream the structured response and mirror each aggregate field.
+                async for current_response, _ in result.stream_responses(debounce_by=None):
+                    next_thinking = current_response.thinking or ""
+                    if next_thinking != full_thinking:
+                        full_thinking = next_thinking
+                        if on_thinking_update is not None:
+                            on_thinking_update(full_thinking)
+
+                    next_text = current_response.text or ""
+                    if next_text != full_text:
+                        full_text = next_text
+                        if on_text_update is not None:
+                            on_text_update(full_text)
 
                 return RuntimeResponse(
                     text=full_text,
@@ -225,6 +237,7 @@ class ChatRuntime:
                 tools=[],
                 model_settings=model_settings,
                 allow_tool_fallback=False,
-                on_text_delta=on_text_delta,
+                on_text_update=on_text_update,
+                on_thinking_update=on_thinking_update,
                 on_tool_event=on_tool_event,
             )
