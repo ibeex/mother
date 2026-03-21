@@ -19,6 +19,15 @@ from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, OptionList, TextArea
 from textual.worker import Worker, WorkerState
 
+from mother.agent_modes import (
+    DEFAULT_AGENT_PROFILE,
+    AgentProfile,
+    RuntimeMode,
+    format_agent_profile,
+    format_agent_status,
+    normalize_agent_profile,
+    resolve_runtime_mode,
+)
 from mother.bash_execution import BashExecution, format_for_context
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
@@ -136,6 +145,7 @@ class MotherApp(App[None]):
         self.config: MotherConfig = apply_cli_overrides(base, model_name, system)
         self.theme = self.config.theme  # pyright: ignore[reportUnannotatedClassAttribute]
         self.agent_mode: bool = self.config.tools_enabled
+        self.agent_profile: AgentProfile = DEFAULT_AGENT_PROFILE
         self.current_model_entry: ModelEntry = resolve_model_entry(
             self.config.model,
             self.config.models,
@@ -183,6 +193,7 @@ class MotherApp(App[None]):
             self._session_input_tokens,
             self._session_output_tokens,
             self._session_cached_tokens,
+            agent_label=self._status_agent_label(),
         )
         yield Footer()
 
@@ -453,17 +464,62 @@ class MotherApp(App[None]):
 
         _ = self.push_screen(ModelSwitchConfirmScreen(model_id), on_confirm)
 
-    def action_toggle_agent_mode(self) -> None:
-        """Toggle agent mode (enables/disables tool use)."""
-        self.agent_mode = not self.agent_mode
+    def _runtime_mode(self) -> RuntimeMode:
+        """Return the effective runtime mode for prompts, sessions, and tool limits."""
+        return resolve_runtime_mode(
+            agent_enabled=self.agent_mode,
+            agent_profile=self.agent_profile,
+        )
+
+    def _status_agent_label(self) -> str:
+        """Return the compact status-line label for the current agent state."""
+        return format_agent_status(self.agent_mode, self.agent_profile)
+
+    def _set_agent_mode(
+        self,
+        *,
+        enabled: bool,
+        profile: AgentProfile | None = None,
+    ) -> tuple[bool, AgentProfile]:
+        """Update agent state, refresh UI, and record the transition."""
+        previous_enabled = self.agent_mode
+        previous_profile = self.agent_profile
+        if profile is not None:
+            self.agent_profile = profile
+        self.agent_mode = enabled
         self._record_session_event(
             "agent_mode_change",
-            {"enabled": self.agent_mode},
+            {
+                "enabled": self.agent_mode,
+                "profile": self.agent_profile,
+                "previous_enabled": previous_enabled,
+                "previous_profile": previous_profile,
+            },
         )
         self._update_subtitle()
-        state = "enabled" if self.agent_mode else "disabled"
         self._update_statusline()
-        self.notify(f"Agent mode {state}", title="Agent mode")
+        return previous_enabled, previous_profile
+
+    def action_set_agent_profile(self, profile: AgentProfile) -> None:
+        """Enable agent mode with a specific profile."""
+        previous_enabled, previous_profile = self._set_agent_mode(enabled=True, profile=profile)
+        if profile == "deep_research":
+            message = "Deep research mode enabled"
+            if previous_enabled and previous_profile != profile:
+                message = "Switched to deep research mode"
+        else:
+            message = "Agent mode enabled"
+            if previous_enabled and previous_profile != profile:
+                message = f"Switched to {format_agent_profile(profile)} agent mode"
+        self.notify(message, title="Agent mode")
+
+    def action_toggle_agent_mode(self) -> None:
+        """Toggle standard agent mode on or disable the current agent mode."""
+        if self.agent_mode:
+            _ = self._set_agent_mode(enabled=False)
+            self.notify("Agent mode disabled", title="Agent mode")
+            return
+        self.action_set_agent_profile("standard")
 
     def action_toggle_thinking_widget(self) -> None:
         """Expand or collapse the latest visible thinking widget."""
@@ -496,8 +552,13 @@ class MotherApp(App[None]):
         self.action_scroll_to_bottom()
 
     def _update_subtitle(self) -> None:
-        """Update subtitle to show model and agent mode indicator."""
-        sub_title: str = f"{self.config.model} [AGENT]" if self.agent_mode else self.config.model
+        """Update subtitle to show model and the active runtime mode."""
+        if not self.agent_mode:
+            sub_title = self.config.model
+        elif self.agent_profile == "deep_research":
+            sub_title = f"{self.config.model} [RESEARCH]"
+        else:
+            sub_title = f"{self.config.model} [AGENT]"
         self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
 
     def _status_reasoning_effort(self) -> str | None:
@@ -531,6 +592,7 @@ class MotherApp(App[None]):
             input_tokens=self._session_input_tokens,
             output_tokens=self._session_output_tokens,
             cached_tokens=self._session_cached_tokens,
+            agent_label=self._status_agent_label(),
         )
 
     def _remember_last_response_time(self, duration_seconds: float) -> None:
@@ -613,6 +675,7 @@ class MotherApp(App[None]):
             prompt_text=prompt_text,
             system_prompt=system_prompt,
             agent_mode=self.agent_mode,
+            mode=self._runtime_mode(),
             tool_names=tool_names,
             attachment_paths=attachment_paths,
         )
@@ -759,7 +822,18 @@ class MotherApp(App[None]):
             self.action_quit_app()
             return
         if isinstance(parsed, AgentModeCommand):
-            self.action_toggle_agent_mode()
+            if parsed.mode is None:
+                self.action_toggle_agent_mode()
+                return
+            resolved_profile = normalize_agent_profile(parsed.mode)
+            if resolved_profile is None:
+                self.notify(
+                    "Use /agent or /agent deep research",
+                    title="Agent mode",
+                    severity="warning",
+                )
+                return
+            self.action_set_agent_profile(resolved_profile)
             return
         if isinstance(parsed, ModelsCommand):
             if parsed.query is None:
@@ -939,9 +1013,7 @@ class MotherApp(App[None]):
     def _waiting_response_positions(self, message: str | None = None) -> tuple[int, ...]:
         """Return the character positions used by the animated waiting wave."""
         active_message = message or self.RESPONSE_WAITING_MESSAGES[0]
-        return tuple(
-            index for index, character in enumerate(active_message) if character.isalnum()
-        )
+        return tuple(index for index, character in enumerate(active_message) if character.isalnum())
 
     def _waiting_response_highlight_position(
         self,
@@ -964,7 +1036,7 @@ class MotherApp(App[None]):
         highlight_index = self._waiting_response_highlight_position(frame_index, active_message)
         return (
             f"{active_message[:highlight_index]}`{active_message[highlight_index]}`"
-            f"{active_message[highlight_index + 1:]}"
+            f"{active_message[highlight_index + 1 :]}"
         )
 
     def _render_response_waiting_frame(self, animation: _ResponseWaitingAnimation) -> None:
@@ -1068,6 +1140,7 @@ class MotherApp(App[None]):
         tool_registry = get_default_tools(
             tools_enabled=self.agent_mode,
             ca_bundle_path=self.config.ca_bundle_path,
+            agent_profile=self.agent_profile,
         )
         if tool_registry.is_empty():
             return []
@@ -1099,12 +1172,23 @@ class MotherApp(App[None]):
     ) -> str:
         """Build the runtime system prompt for the current model turn."""
         effective_agent_mode = self.agent_mode if agent_mode is None else agent_mode
+        effective_mode = self._runtime_mode() if effective_agent_mode else "chat"
         return build_system_prompt(
             self.config.system_prompt,
+            mode=effective_mode,
             agent_mode=effective_agent_mode,
+            agent_profile=self.agent_profile,
             cwd=Path.cwd(),
             tool_names=self._tool_names(tools),
         )
+
+    def _tool_call_limit(self) -> int | None:
+        """Return the per-turn tool-call limit for the active runtime mode."""
+        if not self.agent_mode:
+            return None
+        if self._runtime_mode() == "deep_research":
+            return None
+        return 1
 
     async def _run_runtime_request(
         self,
@@ -1146,6 +1230,7 @@ class MotherApp(App[None]):
                 attachments=attachments,
                 tools=tools,
                 model_settings=self._reasoning_options(),
+                tool_call_limit=self._tool_call_limit(),
                 on_text_update=on_text_update,
                 on_thinking_update=on_thinking_update if thinking_output is not None else None,
                 on_tool_event=self._handle_runtime_tool_event,
@@ -1221,13 +1306,11 @@ class MotherApp(App[None]):
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""
-        self.agent_mode = False
+        _ = self._set_agent_mode(enabled=False)
         self._record_session_event(
             "agent_mode_disabled_unsupported",
-            {"model": self.config.model},
+            {"model": self.config.model, "profile": self.agent_profile},
         )
-        self._update_subtitle()
-        self._update_statusline()
         self.notify(
             f"{self.config.model} does not support tools — agent mode disabled",
             title="Agent mode",

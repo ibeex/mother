@@ -101,13 +101,15 @@ class ChatRuntime:
         @wraps(original)
         def wrapped(*args: object, **kwargs: object) -> object:
             arguments = ChatRuntime._tool_arguments(tool, args, kwargs)
+            tool_state["sequence"] += 1
+            call_id = f"{tool.name}-{tool_state['sequence']}"
             tool_state["started"] += 1
             if on_tool_event is not None:
                 _ = on_tool_event(
                     RuntimeToolEvent(
                         phase="started",
                         tool_name=tool.name,
-                        tool_call_id=None,
+                        tool_call_id=call_id,
                         arguments=arguments,
                     )
                 )
@@ -121,7 +123,7 @@ class ChatRuntime:
                         RuntimeToolEvent(
                             phase="finished",
                             tool_name=tool.name,
-                            tool_call_id=None,
+                            tool_call_id=call_id,
                             arguments=arguments,
                             output=str(exc),
                             is_error=True,
@@ -136,7 +138,7 @@ class ChatRuntime:
                     RuntimeToolEvent(
                         phase="finished",
                         tool_name=tool.name,
-                        tool_call_id=None,
+                        tool_call_id=call_id,
                         arguments=arguments,
                         output=output,
                     )
@@ -174,12 +176,13 @@ class ChatRuntime:
         attachments: list[Path],
         tools: list[Tool[None]],
         model_settings: dict[str, object],
+        tool_call_limit: int | None = None,
         allow_tool_fallback: bool = True,
         on_text_update: Callable[[str], None] | None = None,
         on_thinking_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
     ) -> RuntimeResponse:
-        tool_state = {"started": 0, "finished": 0, "errors": 0}
+        tool_state = {"sequence": 0, "started": 0, "finished": 0, "errors": 0}
         wrapped_tools = [
             self._wrapped_tool(tool, on_tool_event=on_tool_event, tool_state=tool_state)
             for tool in tools
@@ -190,7 +193,7 @@ class ChatRuntime:
             tools=wrapped_tools,
             instructions=system_prompt,
         )
-        usage_limits = UsageLimits(tool_calls_limit=1) if wrapped_tools else None
+        usage_limits = UsageLimits(tool_calls_limit=tool_call_limit) if wrapped_tools else None
         started_at = perf_counter()
 
         try:
@@ -269,6 +272,7 @@ class ChatRuntime:
                 attachments=attachments,
                 tools=[],
                 model_settings=model_settings,
+                tool_call_limit=None,
                 allow_tool_fallback=False,
                 on_text_update=on_text_update,
                 on_thinking_update=on_thinking_update,

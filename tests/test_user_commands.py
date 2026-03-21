@@ -68,6 +68,14 @@ def test_detect_agent_mode_command():
     result = parse_user_input("/agent")
     assert isinstance(result, AgentModeCommand)
     assert result.command == "/agent"
+    assert result.mode is None
+
+
+def test_detect_deep_research_agent_mode_command():
+    result = parse_user_input(" /agent deep research ")
+    assert isinstance(result, AgentModeCommand)
+    assert result.command == "/agent"
+    assert result.mode == "deep research"
 
 
 def test_detect_models_command():
@@ -134,6 +142,7 @@ def test_should_submit_quit_on_enter():
 
 def test_should_submit_agent_on_enter():
     assert should_submit_on_enter("/agent") is True
+    assert should_submit_on_enter("/agent deep research") is True
 
 
 def test_should_submit_models_on_enter():

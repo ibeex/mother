@@ -77,6 +77,7 @@ class _FakeRuntime:
         attachments: list[Path],
         tools: list[object],
         model_settings: dict[str, object],
+        tool_call_limit: int | None = None,
         allow_tool_fallback: bool = True,
         on_text_update: Callable[[str], None] | None = None,
         on_thinking_update: Callable[[str], None] | None = None,
@@ -90,6 +91,7 @@ class _FakeRuntime:
                 "attachments": attachments,
                 "tools": tools,
                 "model_settings": model_settings,
+                "tool_call_limit": tool_call_limit,
                 "allow_tool_fallback": allow_tool_fallback,
                 "has_tool_callback": on_tool_event is not None,
             }
@@ -205,6 +207,7 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
             "attachments": [Path("/tmp/pasted.png")],
             "tools": [],
             "model_settings": {"openai_reasoning_effort": "high"},
+            "tool_call_limit": None,
             "allow_tool_fallback": True,
             "has_tool_callback": True,
         }
@@ -240,6 +243,7 @@ def test_response_waiting_animation_picks_random_message_and_moves_highlight() -
     assert "response-awaiting" not in response.active_classes
     assert response.updated_texts[-1] == "final answer"
 
+
 def test_response_waiting_animation_bounces_back_from_message_end() -> None:
     app = _make_app()
     message = "WEYLAND-YUTANI SYSTEMS ONLINE"
@@ -261,6 +265,69 @@ def test_reasoning_options_include_openai_reasoning_summary() -> None:
         "openai_reasoning_effort": "high",
         "openai_reasoning_summary": "detailed",
     }
+
+
+def test_standard_agent_runtime_request_limits_tool_calls_to_one() -> None:
+    app = _make_app(agent_mode=True)
+    response = _FakeResponse()
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="done",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+        ),
+        [("done", "")],
+    )
+
+    with (
+        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+    ):
+        _ = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert fake_runtime.calls[0]["tool_call_limit"] == 1
+
+
+def test_deep_research_runtime_request_allows_multi_step_tool_calls() -> None:
+    app = _make_app(agent_mode=True)
+    app.agent_profile = "deep_research"
+    response = _FakeResponse()
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="done",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+        ),
+        [("done", "")],
+    )
+
+    with (
+        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+    ):
+        _ = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert fake_runtime.calls[0]["tool_call_limit"] is None
 
 
 def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:

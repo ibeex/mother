@@ -2,10 +2,11 @@
 
 Mother is a local terminal chat interface for LLMs.
 
-It supports two modes:
+It supports three modes:
 
 - **Chat mode**: conversational answers only
 - **Agent mode**: still conversational, but the model may use tools and then report findings before waiting for your next input
+- **Deep research mode**: activated with `/agent deep research`; the model first proposes a research plan, asks for approval or scope changes, then uses only web search/fetch tools in a multi-step loop until the answer is ready
 
 ## Features
 
@@ -15,6 +16,7 @@ It supports two modes:
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
 - clipboard image paste in the prompt via `Ctrl+V` (with `Cmd+V` still working for normal paste on macOS)
 - agent mode with tool traces
+- deep research mode with plan-first web research loops
 - guarded local `bash` execution
 - web search via Jina Search
 - web fetching for public pages, APIs, and localhost services
@@ -60,11 +62,16 @@ in `~/.config/mother/config.toml`.
 
 ## Tools in agent mode
 
-Current agent tools:
+Standard agent tools:
 
 - `bash`: run local shell commands, guarded by the bash safety classifier
 - `web_search`: search the public web using Jina Search
 - `web_fetch`: fetch a known URL using either raw HTTP or Jina reader mode
+
+Deep research mode keeps only the two web tools:
+
+- `web_search`
+- `web_fetch`
 
 ### `web_search`
 

@@ -655,6 +655,7 @@ class StatusLine(Label):
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_tokens: int | None = None,
+        agent_label: str | None = None,
     ) -> None:
         super().__init__(
             self.format_status(
@@ -667,6 +668,7 @@ class StatusLine(Label):
                 input_tokens,
                 output_tokens,
                 cached_tokens,
+                agent_label,
             ),
             id="status-line",
             markup=False,
@@ -735,10 +737,12 @@ class StatusLine(Label):
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         cached_tokens: int | None = None,
+        agent_label: str | None = None,
     ) -> str:
         """Format the text displayed in the status line."""
         model_segment = model_name or "?"
-        agent_segment = StatusLine.format_segment("A", "on" if agent_mode else "off")
+        resolved_agent_label = agent_label or ("on" if agent_mode else "off")
+        agent_segment = StatusLine.format_segment("A", resolved_agent_label)
         context_segment = StatusLine.format_segment(
             "C", StatusLine.format_token_count(context_tokens) or "?"
         )
@@ -769,6 +773,7 @@ class StatusLine(Label):
         input_tokens: int | None,
         output_tokens: int | None,
         cached_tokens: int | None,
+        agent_label: str | None = None,
     ) -> None:
         """Update the displayed model, context, token usage, follow mode, reasoning, and last response time."""
         self.update(
@@ -782,6 +787,7 @@ class StatusLine(Label):
                 input_tokens,
                 output_tokens,
                 cached_tokens,
+                agent_label,
             )
         )
 

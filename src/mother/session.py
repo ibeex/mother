@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import Literal, TypedDict, cast
+from typing import Literal, NotRequired, TypedDict, cast
 from uuid import uuid4
 
 SESSION_VERSION = 3
@@ -44,6 +44,7 @@ class PromptEntry(TypedDict):
     prompt_text: str
     system_prompt: str
     agent_mode: bool
+    mode: NotRequired[str]
     tool_names: list[str]
     attachment_paths: list[str]
 
@@ -269,6 +270,7 @@ class SessionManager:
         prompt_text: str,
         system_prompt: str,
         agent_mode: bool,
+        mode: str | None = None,
         tool_names: list[str],
         attachment_paths: list[str],
     ) -> None:
@@ -284,6 +286,8 @@ class SessionManager:
             "tool_names": tool_names,
             "attachment_paths": attachment_paths,
         }
+        if mode is not None:
+            entry["mode"] = mode
         with self._lock:
             self._write(entry)
 
@@ -572,11 +576,17 @@ class SessionManager:
         attachments = (
             ", ".join(f"`{path}`" for path in attachment_paths) if attachment_paths else "(none)"
         )
+        raw_mode = entry.get("mode")
+        mode_label = (
+            " ".join(raw_mode.split("_")) if isinstance(raw_mode, str) and raw_mode else None
+        )
+        if mode_label is None:
+            mode_label = "agent" if entry["agent_mode"] else "chat"
         lines = [
             "### Prompt Context",
             "",
             f"- Time: `{entry['ts']}`",
-            f"- Mode: `{'agent' if entry['agent_mode'] else 'chat'}`",
+            f"- Mode: `{mode_label}`",
             f"- Tools available: {tools_available}",
             f"- Attachments: {attachments}",
             "",

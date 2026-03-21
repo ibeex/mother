@@ -49,7 +49,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/save", "Save the current session to markdown"),
     SlashCommand("/quit", "Quit Mother"),
     SlashCommand("/exit", "Quit Mother"),
-    SlashCommand("/agent", "Toggle agent mode"),
+    SlashCommand("/agent", "Toggle agent mode or enable deep research"),
     SlashCommand("/models", "Browse and switch models"),
     SlashCommand("/reasoning", "Set reasoning effort", "auto|off|low|medium|high|xhigh"),
 )

@@ -35,6 +35,7 @@ class QuitAppCommand:
 @dataclass
 class AgentModeCommand:
     command: str = _AGENT_COMMAND
+    mode: str | None = None
 
 
 @dataclass
@@ -102,6 +103,7 @@ def parse_user_input(
     - ``/save`` or ``/export``   → SaveSessionCommand()
     - ``/quit`` or ``/exit``     → QuitAppCommand()
     - ``/agent``                 → AgentModeCommand()
+    - ``/agent deep research``   → AgentModeCommand(mode="deep research")
     - ``/models``                → ModelsCommand()
     - ``/models query``          → ModelsCommand(query=...)
     - ``/reasoning``             → ReasoningCommand()
@@ -120,6 +122,8 @@ def parse_user_input(
         return QuitAppCommand(command=normalized)
     if normalized == _AGENT_COMMAND:
         return AgentModeCommand()
+    if normalized.startswith(f"{_AGENT_COMMAND} "):
+        return AgentModeCommand(mode=candidate[len(_AGENT_COMMAND) :].strip())
     if normalized == _MODELS_COMMAND:
         return ModelsCommand()
     if normalized.startswith(f"{_MODELS_COMMAND} "):

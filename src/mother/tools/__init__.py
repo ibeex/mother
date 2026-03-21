@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic_ai import Tool
 
+from mother.agent_modes import DEFAULT_AGENT_PROFILE, AgentProfile
+
 
 class ToolRegistry:
     def __init__(self) -> None:
@@ -29,15 +31,21 @@ def get_default_tools(
     tools_enabled: bool = False,
     cwd: Path | None = None,
     ca_bundle_path: str = "",
+    agent_profile: AgentProfile = DEFAULT_AGENT_PROFILE,
 ) -> ToolRegistry:
     registry = ToolRegistry()
-    if tools_enabled:
+    if not tools_enabled:
+        return registry
+
+    from mother.tools.web_fetch_tool import make_web_fetch_tool
+    from mother.tools.web_search_tool import make_web_search_tool
+
+    if agent_profile == "standard":
         from mother.tools.bash_tool import make_bash_tool
-        from mother.tools.web_fetch_tool import make_web_fetch_tool
-        from mother.tools.web_search_tool import make_web_search_tool
 
         effective_cwd = cwd if cwd is not None else Path.cwd()
         registry.register(make_bash_tool(cwd=effective_cwd))
-        registry.register(make_web_search_tool(ca_bundle_path=ca_bundle_path))
-        registry.register(make_web_fetch_tool(ca_bundle_path=ca_bundle_path))
+
+    registry.register(make_web_search_tool(ca_bundle_path=ca_bundle_path))
+    registry.register(make_web_fetch_tool(ca_bundle_path=ca_bundle_path))
     return registry

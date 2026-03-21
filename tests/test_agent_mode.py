@@ -59,6 +59,14 @@ def test_toggle_agent_mode_off() -> None:
     assert app.agent_mode is False
 
 
+def test_set_deep_research_mode_on() -> None:
+    app = MotherApp()
+    with patch.object(app, "notify"):
+        app.action_set_agent_profile("deep_research")
+    assert app.agent_mode is True
+    assert app.agent_profile == "deep_research"
+
+
 def test_quit_app_exits() -> None:
     app = MotherApp()
 
@@ -168,6 +176,25 @@ def test_agent_command_enter_toggles_agent_mode() -> None:
             await pilot.pause()
 
             assert app.agent_mode is True
+            assert text_area.text == ""
+
+    asyncio.run(run())
+
+
+def test_agent_deep_research_command_enter_enables_research_mode() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            text_area.load_text("/agent deep research")
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.agent_mode is True
+            assert app.agent_profile == "deep_research"
             assert text_area.text == ""
 
     asyncio.run(run())
@@ -426,6 +453,15 @@ def test_subtitle_shows_agent_indicator() -> None:
     assert "[AGENT]" in app.sub_title
 
 
+def test_subtitle_shows_research_indicator() -> None:
+    app = MotherApp()
+    app.agent_mode = True
+    app.agent_profile = "deep_research"
+    app.config = MotherConfig(model="test-model")
+    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
+    assert "[RESEARCH]" in app.sub_title
+
+
 def test_config_tools_enabled_sets_initial_mode() -> None:
     config = MotherConfig(tools_enabled=True)
     app = MotherApp(config=config)
@@ -438,6 +474,13 @@ def test_statusline_formats_model_and_unknown_context() -> None:
 
 def test_statusline_formats_model_and_context_size() -> None:
     assert StatusLine.format_status("test-model", True, 12345) == "test-model · A:on · C:12.3k"
+
+
+def test_statusline_formats_deep_research_label() -> None:
+    assert (
+        StatusLine.format_status("test-model", True, 12345, agent_label="research")
+        == "test-model · A:research · C:12.3k"
+    )
 
 
 def test_statusline_formats_token_usage_when_known() -> None:
@@ -524,8 +567,14 @@ def test_send_prompt_no_tools_when_conversational() -> None:
         registry = MagicMock()
         registry.is_empty.return_value = True  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
-        mock_tools(tools_enabled=False)
-        mock_tools.assert_called_with(tools_enabled=False)
+
+        _ = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
+
+        mock_tools.assert_called_with(
+            tools_enabled=False,
+            ca_bundle_path=app.config.ca_bundle_path,
+            agent_profile="standard",
+        )
 
 
 def test_send_prompt_passes_tools_when_agent() -> None:
@@ -536,8 +585,48 @@ def test_send_prompt_passes_tools_when_agent() -> None:
         registry.is_empty.return_value = False  # pyright: ignore[reportAny]
         registry.tools.return_value = [MagicMock()]  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
-        mock_tools(tools_enabled=True)
-        mock_tools.assert_called_with(tools_enabled=True)
+
+        _ = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
+
+        mock_tools.assert_called_with(
+            tools_enabled=True,
+            ca_bundle_path=app.config.ca_bundle_path,
+            agent_profile="standard",
+        )
+
+
+def test_get_enabled_tools_standard_agent_includes_bash_and_web_tools() -> None:
+    app = MotherApp()
+    app.agent_mode = True
+
+    tools = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
+
+    assert [tool.name for tool in tools] == ["bash", "web_search", "web_fetch"]
+
+
+def test_get_enabled_tools_deep_research_uses_only_web_tools() -> None:
+    app = MotherApp()
+    app.agent_mode = True
+    app.agent_profile = "deep_research"
+
+    tools = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
+
+    assert [tool.name for tool in tools] == ["web_search", "web_fetch"]
+
+
+def test_standard_agent_limits_model_to_one_tool_call_per_turn() -> None:
+    app = MotherApp()
+    app.agent_mode = True
+
+    assert app._tool_call_limit() == 1  # pyright: ignore[reportPrivateUsage]
+
+
+def test_deep_research_allows_multi_step_tool_loops() -> None:
+    app = MotherApp()
+    app.agent_mode = True
+    app.agent_profile = "deep_research"
+
+    assert app._tool_call_limit() is None  # pyright: ignore[reportPrivateUsage]
 
 
 def test_show_models_selection_calls_switch_model() -> None:

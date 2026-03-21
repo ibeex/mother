@@ -113,3 +113,9 @@ def test_tool_registered_in_registry():
     tools = registry.tools()
     assert len(tools) == 3
     assert [tool.name for tool in tools] == ["bash", "web_search", "web_fetch"]
+
+
+def test_deep_research_registry_uses_only_web_tools():
+    registry = get_default_tools(tools_enabled=True, agent_profile="deep_research")
+    assert not registry.is_empty()
+    assert [tool.name for tool in registry.tools()] == ["web_search", "web_fetch"]
