@@ -1173,11 +1173,18 @@ class MotherApp(App[None]):
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
-    def _update_response_output(self, response: Response, text: str) -> None:
-        """Render response text and keep following only when the user is at the bottom."""
+    async def _update_response_output(self, response: Response, text: str) -> None:
+        """Render response text incrementally and keep following only when the user is at the bottom."""
+        had_waiting_animation = id(response) in self._response_waiting_animations
         self._clear_response_waiting_animation(response)
         should_follow = self._should_follow_chat_updates()
-        _ = response.update(text)
+        current_text = response.raw_markdown
+        if had_waiting_animation:
+            await response.replace_markdown(text)
+        elif text.startswith(current_text):
+            await response.append_fragment(text[len(current_text) :])
+        else:
+            await response.replace_markdown(text)
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
@@ -1351,10 +1358,11 @@ class MotherApp(App[None]):
             assert thinking_output is not None
             _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
 
-        if runtime_response.text != visible_text:
+        if runtime_response.text != visible_text or id(response) in self._response_waiting_animations:
             visible_text = runtime_response.text
             _ = self.call_from_thread(self._update_response_output, response, visible_text)
 
+        _ = self.call_from_thread(response.stop_stream)
         self.conversation_state.message_history = list(runtime_response.all_messages)
         response.reset_state(visible_text)
         self._record_session_event("turn_usage", runtime_response.usage.to_event_details())
@@ -1374,6 +1382,7 @@ class MotherApp(App[None]):
     def _show_error(self, response: Response, error_text: str) -> None:
         """Display an error in the response widget and reset its state."""
         _ = self.call_from_thread(self._update_response_output, response, error_text)
+        _ = self.call_from_thread(response.stop_stream)
         response.reset_state(error_text)
 
     @work(thread=True)

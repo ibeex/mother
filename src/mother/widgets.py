@@ -9,7 +9,7 @@ from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Label, Markdown, OptionList, Static, TextArea
-from textual.widgets.markdown import MarkdownBlock, MarkdownFence
+from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
 from textual.widgets.option_list import Option
 
 from mother.clipboard import read_clipboard_text
@@ -498,6 +498,40 @@ class CopyableMarkdown(Markdown):
         super().__init__(markdown)
         self._cursor: int = 0
         self._raw: str = markdown
+        self._stream: MarkdownStream | None = None
+
+    @property
+    def raw_markdown(self) -> str:
+        """Return the full logical markdown value, excluding transient placeholder frames."""
+        return self._raw
+
+    @property
+    def stream(self) -> MarkdownStream:
+        """Return the streaming helper used for incremental markdown appends."""
+        if self._stream is None:
+            self._stream = self.get_stream(self)
+        return self._stream
+
+    async def append_fragment(self, fragment: str) -> None:
+        """Append a streamed markdown fragment without reparsing the full response."""
+        if not fragment:
+            return
+        self._raw += fragment
+        await self.stream.write(fragment)
+
+    async def replace_markdown(self, markdown: str) -> None:
+        """Replace the rendered markdown, stopping any active incremental stream first."""
+        await self.stop_stream()
+        self._raw = markdown
+        await self.update(markdown)
+
+    async def stop_stream(self) -> None:
+        """Stop the active incremental markdown stream, flushing any pending fragments."""
+        if self._stream is None:
+            return
+        stream = self._stream
+        self._stream = None
+        await stream.stop()
 
     def set_markdown(self, markdown: str):
         """Update the rendered Markdown while keeping a copyable raw value."""

@@ -1,8 +1,11 @@
 """Tests for the pydantic-ai request flow in MotherApp."""
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from inspect import isawaitable
 from pathlib import Path
+from queue import Queue
+from threading import Thread
 from typing import cast, final
 from unittest.mock import patch
 
@@ -25,12 +28,30 @@ class _FakeResponse:
         self.updated_texts: list[str] = []
         self.reset_texts: list[str] = []
         self.active_classes: set[str] = set()
+        self.raw_markdown = ""
+        self.appended_fragments: list[str] = []
+        self.replaced_texts: list[str] = []
+        self.stop_stream_calls = 0
 
     def update(self, text: str) -> None:
         self.updated_texts.append(text)
 
+    async def append_fragment(self, fragment: str) -> None:
+        self.appended_fragments.append(fragment)
+        self.raw_markdown += fragment
+        self.updated_texts.append(self.raw_markdown)
+
+    async def replace_markdown(self, markdown: str) -> None:
+        self.replaced_texts.append(markdown)
+        self.raw_markdown = markdown
+        self.updated_texts.append(markdown)
+
+    async def stop_stream(self) -> None:
+        self.stop_stream_calls += 1
+
     def reset_state(self, text: str) -> None:
         self.reset_texts.append(text)
+        self.raw_markdown = text
 
     def add_class(self, class_name: str) -> None:
         self.active_classes.add(class_name)
@@ -130,7 +151,30 @@ class _InterruptedRuntime:
 
 
 def _call_from_thread(callback: object, *args: object) -> object:
-    return cast(Callable[..., object], callback)(*args)
+    result = cast(Callable[..., object], callback)(*args)
+    if not isawaitable(result):
+        return result
+
+    async def _await_result(awaitable: Awaitable[object]) -> object:
+        return await awaitable
+
+    outcomes: Queue[tuple[bool, object]] = Queue(maxsize=1)
+
+    def _runner() -> None:
+        try:
+            resolved_value: object = asyncio.run(_await_result(cast(Awaitable[object], result)))
+        except BaseException as exc:  # pragma: no cover - failure path is asserted via re-raise
+            outcomes.put((False, exc))
+            return
+        outcomes.put((True, resolved_value))
+
+    thread = Thread(target=_runner)
+    thread.start()
+    thread.join()
+    succeeded, value = outcomes.get()
+    if succeeded:
+        return value
+    raise cast(BaseException, value)
 
 
 def _make_app(
@@ -207,6 +251,8 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
     assert thinking_output.finished == 1
     assert thinking_output.updated_texts[-1] == "step 1\nstep 2"
     assert response.updated_texts == ["final ", "final answer"]
+    assert response.appended_fragments == ["final ", "answer"]
+    assert response.stop_stream_calls == 1
     assert response.reset_texts == ["final answer"]
     assert app._last_context_tokens == 123  # pyright: ignore[reportPrivateUsage]
     assert app._session_input_tokens == 123  # pyright: ignore[reportPrivateUsage]
@@ -248,14 +294,17 @@ def test_response_waiting_animation_picks_random_message_and_moves_highlight() -
         first_frame = response.updated_texts[-1]
         app._tick_response_waiting_animations()  # pyright: ignore[reportPrivateUsage]
         second_frame = response.updated_texts[-1]
-        app._update_response_output(  # pyright: ignore[reportPrivateUsage]
-            cast(Response, cast(object, response)),
-            "final answer",
+        asyncio.run(
+            app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+                cast(Response, cast(object, response)),
+                "final answer",
+            )
         )
 
     assert first_frame == "`W`EYLAND-YUTANI SYSTEMS ONLINE"
     assert second_frame == "W`E`YLAND-YUTANI SYSTEMS ONLINE"
     assert "response-awaiting" not in response.active_classes
+    assert response.replaced_texts == ["final answer"]
     assert response.updated_texts[-1] == "final answer"
 
 
@@ -271,6 +320,29 @@ def test_response_waiting_animation_bounces_back_from_message_end() -> None:
 
     assert last_frame == "WEYLAND-YUTANI SYSTEMS ONLIN`E`"
     assert bounce_frame == "WEYLAND-YUTANI SYSTEMS ONLI`N`E"
+
+
+def test_response_output_replaces_markdown_when_streamed_text_is_rewritten() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+
+    with patch.object(app, "_should_follow_chat_updates", return_value=False):
+        asyncio.run(
+            app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+                cast(Response, cast(object, response)),
+                "hello",
+            )
+        )
+        asyncio.run(
+            app._update_response_output(  # pyright: ignore[reportPrivateUsage]
+                cast(Response, cast(object, response)),
+                "hullo",
+            )
+        )
+
+    assert response.appended_fragments == ["hello"]
+    assert response.replaced_texts == ["hullo"]
+    assert response.updated_texts == ["hello", "hullo"]
 
 
 def test_reasoning_options_include_openai_reasoning_summary() -> None:
@@ -404,6 +476,7 @@ def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
 
     assert full_text is None
     assert response.updated_texts == ["**Error:** boom"]
+    assert response.stop_stream_calls == 1
     assert response.reset_texts == ["**Error:** boom"]
 
 
@@ -428,6 +501,8 @@ def test_run_runtime_request_preserves_partial_output_when_interrupted() -> None
 
     assert full_text is None
     assert response.updated_texts == ["partial answer", "partial answer\n\n_Interrupted by user._"]
+    assert response.appended_fragments == ["partial answer", "\n\n_Interrupted by user._"]
+    assert response.stop_stream_calls == 1
     assert response.reset_texts == ["partial answer\n\n_Interrupted by user._"]
 
 
