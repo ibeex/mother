@@ -1450,7 +1450,11 @@ def cli(model: str | None, system: str | None, save_last: bool) -> None:
     config = apply_cli_overrides(config, model, system)
 
     if save_last:
-        output_path = SessionManager.save_last(markdown_dir=Path(config.session_markdown_dir))
+        try:
+            output_path = SessionManager.save_last(markdown_dir=Path(config.session_markdown_dir))
+        except RuntimeError as exc:
+            click.echo(str(exc))
+            return
         if output_path is None:
             click.echo("No unsaved session found.")
             return

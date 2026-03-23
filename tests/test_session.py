@@ -1,5 +1,6 @@
 """Tests for session persistence and markdown export."""
 
+import json
 from pathlib import Path
 from typing import cast, final
 from unittest.mock import call, patch
@@ -146,6 +147,24 @@ def test_new_session_deletes_previous_unsaved_jsonl(tmp_path: Path):
     assert second.last_file.read_text(encoding="utf-8").strip() == str(second.path)
 
 
+def test_new_session_keeps_previous_live_session_jsonl(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    markdown_dir = tmp_path / "markdown"
+
+    first = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+    first.append("user", "still running")
+    lines = first.path.read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    header["pid"] = 12345
+    _ = first.path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8")
+
+    with patch("mother.session._process_is_alive", return_value=True):
+        second = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+
+    assert first.path.exists() is True
+    assert second.last_file.read_text(encoding="utf-8").strip() == str(second.path)
+
+
 def test_save_last_exports_existing_unsaved_session(tmp_path: Path):
     sessions_dir = tmp_path / "sessions"
     markdown_dir = tmp_path / "markdown"
@@ -163,6 +182,64 @@ def test_save_last_exports_existing_unsaved_session(tmp_path: Path):
     assert "saved" in markdown
     assert manager.path.exists() is False
     assert (sessions_dir / "last").exists() is False
+
+
+def test_save_last_rejects_active_session(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    markdown_dir = tmp_path / "markdown"
+
+    manager = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+    manager.append("user", "still open")
+    lines = manager.path.read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    header["pid"] = 12345
+    _ = manager.path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8")
+
+    with patch("mother.session._process_is_alive", return_value=True):
+        try:
+            _ = SessionManager.save_last(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+        except RuntimeError as exc:
+            assert (
+                str(exc)
+                == "Last session is still active in another Mother instance. Use /save there instead."
+            )
+        else:
+            raise AssertionError("Expected save_last to reject active sessions")
+
+
+def test_save_as_markdown_reports_missing_active_session_log(tmp_path: Path):
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions",
+        markdown_dir=tmp_path / "markdown",
+    )
+    manager.append("user", "hello")
+    manager.path.unlink()
+
+    try:
+        _ = manager.save_as_markdown()
+    except RuntimeError as exc:
+        assert (
+            str(exc)
+            == "Current session log is missing on disk. It may have been removed by another Mother instance or `mother --save`."
+        )
+    else:
+        raise AssertionError("Expected a missing active session log error")
+
+
+def test_append_recreates_session_header_when_log_was_deleted(tmp_path: Path):
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions",
+        markdown_dir=tmp_path / "markdown",
+    )
+    manager.append("user", "hello")
+    manager.path.unlink()
+
+    manager.append("assistant", "back again")
+
+    lines = manager.path.read_text(encoding="utf-8").splitlines()
+    header = json.loads(lines[0])
+    assert header["type"] == "session"
+    assert any("back again" in line for line in lines[1:])
 
 
 def test_format_markdown_export_uses_rumdl_when_uv_is_available(tmp_path: Path):

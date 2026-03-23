@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ class SessionHeader(TypedDict, total=False):
     created: str
     cwd: str
     model: str
+    pid: int
 
 
 class MessageEntry(TypedDict):
@@ -116,6 +118,35 @@ def _render_fenced_block(content: str, language: str = "text") -> str:
     return f"```{language}\n{trimmed}\n```"
 
 
+def _process_is_alive(pid: int) -> bool:
+    """Return whether the given process id appears to still be running."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _read_session_header(path: Path) -> SessionHeader | None:
+    """Read the JSONL session header from disk when available."""
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as handle:
+        first_line = handle.readline().strip()
+    if not first_line:
+        return None
+    header = cast(dict[str, object], json.loads(first_line))
+    if header.get("type") != "session":
+        return None
+    return cast(SessionHeader, header)
+
+
 def _render_details(summary: str, body: str) -> list[str]:
     """Render a collapsible details block for markdown export."""
     return [
@@ -200,6 +231,7 @@ class SessionManager:
             "id": session_id,
             "created": created.isoformat(),
             "cwd": str((cwd or Path.cwd()).resolve()),
+            "pid": os.getpid(),
         }
         if model_name:
             header["model"] = model_name
@@ -231,8 +263,16 @@ class SessionManager:
             last_file.unlink(missing_ok=True)
             return None
 
-        with last_path.open(encoding="utf-8") as handle:
-            header = cast(SessionHeader, json.loads(handle.readline()))
+        header = _read_session_header(last_path)
+        if header is None:
+            last_file.unlink(missing_ok=True)
+            return None
+
+        session_pid = header.get("pid")
+        if isinstance(session_pid, int) and session_pid != os.getpid() and _process_is_alive(session_pid):
+            raise RuntimeError(
+                "Last session is still active in another Mother instance. Use /save there instead."
+            )
 
         manager = cls(
             path=last_path,
@@ -349,6 +389,11 @@ class SessionManager:
         """Export the current session to markdown, overwriting the same file each time."""
         with self._lock:
             if not self.path.exists():
+                if self._flushed or self.counter > 0:
+                    raise RuntimeError(
+                        "Current session log is missing on disk. "
+                        "It may have been removed by another Mother instance or `mother --save`."
+                    )
                 raise RuntimeError("Nothing to save — no messages were sent yet.")
 
             resolved_output_dir = (output_dir or self.markdown_dir).expanduser()
@@ -365,7 +410,7 @@ class SessionManager:
             return f"{self.counter:08d}"
 
     def _write(self, obj: SessionHeader | SessionEntry) -> None:
-        if not self._flushed:
+        if not self._flushed or not self.path.exists():
             with self.path.open("w", encoding="utf-8") as handle:
                 _ = handle.write(json.dumps(self.header, ensure_ascii=False) + "\n")
             self._flushed = True
@@ -682,5 +727,10 @@ class SessionManager:
             return
 
         last_path = Path(last_file.read_text(encoding="utf-8").strip()).expanduser()
+        header = _read_session_header(last_path)
+        session_pid = None if header is None else header.get("pid")
+        if isinstance(session_pid, int) and session_pid != os.getpid() and _process_is_alive(session_pid):
+            return
+
         last_path.unlink(missing_ok=True)
         last_file.unlink(missing_ok=True)
