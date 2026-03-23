@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 
 import pyperclip
 
 from mother.tools.bash_executor import execute_bash
-from mother.tools.bash_guard import BashGuardDecision, classify_command
+from mother.tools.bash_guard import BashGuardDecision, classify_command_async
 
 
 def _copy_command_to_clipboard(command: str) -> str:
@@ -40,11 +39,11 @@ def _format_blocked_command(decision: BashGuardDecision, clipboard_status: str) 
     return "\n".join(lines)
 
 
-def make_bash_tool(cwd: Path | None = None) -> Callable[..., str]:
+def make_bash_tool(cwd: Path | None = None) -> Callable[..., Coroutine[object, object, str]]:
     """Factory returning a closure suitable for registration as an llm Tool."""
     effective_cwd = cwd if cwd is not None else Path.cwd()
 
-    def bash(command: str, timeout: float = 30.0) -> str:
+    async def bash(command: str, timeout: float = 30.0) -> str:
         """Run a shell command on the local machine when the safety guard allows it.
 
         Use this for local inspection and local actions, such as listing files,
@@ -58,23 +57,17 @@ def make_bash_tool(cwd: Path | None = None) -> Callable[..., str]:
         Returns:
             Combined stdout and stderr, or a readable guard/error message.
         """
-        decision = classify_command(command)
+        decision = await classify_command_async(command)
         if not decision.should_run:
             clipboard_status = _copy_command_to_clipboard(command)
             return _format_blocked_command(decision, clipboard_status)
 
         try:
-            loop = asyncio.new_event_loop()
-            try:
-                result = loop.run_until_complete(
-                    execute_bash(command, cwd=effective_cwd, timeout=timeout)
-                )
-            finally:
-                loop.close()
+            result = await execute_bash(command, cwd=effective_cwd, timeout=timeout)
         except TimeoutError as exc:
             return f"Error: {exc}"
-        except Exception as exc:
-            return f"Error: {exc}"
+        except Exception:
+            raise
 
         if result.exit_code != 0:
             return f"Command failed (exit code {result.exit_code}):\n{result.output}"

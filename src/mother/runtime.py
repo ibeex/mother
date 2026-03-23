@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
-from inspect import signature
+from inspect import isawaitable, signature
 from pathlib import Path
 from time import perf_counter
 from typing import Literal, cast
@@ -26,6 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
+from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry, create_pydantic_model
 from mother.stats import TurnUsage
 
@@ -99,7 +101,7 @@ class ChatRuntime:
         original = cast(Callable[..., object], tool.function)
 
         @wraps(original)
-        def wrapped(*args: object, **kwargs: object) -> object:
+        async def wrapped(*args: object, **kwargs: object) -> object:
             arguments = ChatRuntime._tool_arguments(tool, args, kwargs)
             tool_state["sequence"] += 1
             call_id = f"{tool.name}-{tool_state['sequence']}"
@@ -115,6 +117,8 @@ class ChatRuntime:
                 )
             try:
                 result = original(*args, **kwargs)
+                if isawaitable(result):
+                    result = await cast(Awaitable[object], result)
             except Exception as exc:
                 tool_state["errors"] += 1
                 tool_state["finished"] += 1
@@ -258,7 +262,11 @@ class ChatRuntime:
                 ),
                 agent_mode_used=bool(wrapped_tools),
             )
+        except asyncio.CancelledError as exc:
+            raise UserInterruptedError() from exc
         except Exception as exc:
+            if isinstance(exc, UserInterruptedError):
+                raise
             if (
                 not wrapped_tools
                 or not allow_tool_fallback

@@ -77,6 +77,14 @@ class GuardResult(Protocol):
 
 
 class GuardAgent(Protocol):
+    async def run(
+        self,
+        user_prompt: str | None = None,
+        *,
+        instructions: object = None,
+        model_settings: object = None,
+    ) -> GuardResult: ...
+
     def run_sync(
         self,
         user_prompt: str | None = None,
@@ -179,13 +187,72 @@ def _fatal_decision(
     )
 
 
+def _parse_decision(command: str, raw_output: str, *, model_name: str) -> BashGuardDecision:
+    label, canonical_label = parse_label(raw_output)
+    if label is None:
+        return _fatal_decision(
+            command,
+            raw_output=raw_output,
+            canonical_label=canonical_label,
+            error="Could not parse bash guard label from model output.",
+            model_name=model_name,
+        )
+
+    return BashGuardDecision(
+        command=command,
+        label=label,
+        raw_output=raw_output,
+        canonical_label=canonical_label,
+        error=None,
+        model_name=model_name,
+    )
+
+
+async def classify_command_async(
+    command: str,
+    *,
+    model_name: str = DEFAULT_GUARD_MODEL,
+    temperature: float = DEFAULT_GUARD_TEMPERATURE,
+) -> BashGuardDecision:
+    """Classify a shell command asynchronously and fail closed on errors."""
+    try:
+        agent = _get_guard_agent(model_name)
+    except Exception as exc:
+        return _fatal_decision(
+            command,
+            raw_output="",
+            canonical_label=False,
+            error=f"Failed to load bash guard model {model_name!r}: {exc}",
+            model_name=model_name,
+        )
+
+    try:
+        result = await agent.run(
+            build_eval_prompt(command),
+            instructions=SYSTEM_PROMPT,
+            model_settings={"temperature": temperature},
+        )
+        output_value = result.output
+        raw_output = output_value if isinstance(output_value, str) else str(output_value)
+    except Exception as exc:
+        return _fatal_decision(
+            command,
+            raw_output="",
+            canonical_label=False,
+            error=f"Bash guard request failed: {exc}",
+            model_name=model_name,
+        )
+
+    return _parse_decision(command, raw_output, model_name=model_name)
+
+
 def classify_command(
     command: str,
     *,
     model_name: str = DEFAULT_GUARD_MODEL,
     temperature: float = DEFAULT_GUARD_TEMPERATURE,
 ) -> BashGuardDecision:
-    """Classify a shell command and fail closed on model/parse errors."""
+    """Classify a shell command synchronously and fail closed on errors."""
     try:
         agent = _get_guard_agent(model_name)
     except Exception as exc:
@@ -214,21 +281,4 @@ def classify_command(
             model_name=model_name,
         )
 
-    label, canonical_label = parse_label(raw_output)
-    if label is None:
-        return _fatal_decision(
-            command,
-            raw_output=raw_output,
-            canonical_label=canonical_label,
-            error="Could not parse bash guard label from model output.",
-            model_name=model_name,
-        )
-
-    return BashGuardDecision(
-        command=command,
-        label=label,
-        raw_output=raw_output,
-        canonical_label=canonical_label,
-        error=None,
-        model_name=model_name,
-    )
+    return _parse_decision(command, raw_output, model_name=model_name)

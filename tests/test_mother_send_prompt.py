@@ -8,12 +8,15 @@ from unittest.mock import patch
 
 from pydantic_ai import Tool
 from pydantic_ai.messages import ModelMessage
+from textual.worker import Worker
 
 from mother import MotherApp, MotherConfig
+from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
 from mother.runtime import RuntimeResponse, RuntimeToolEvent
 from mother.stats import TurnUsage
-from mother.widgets import Response, ThinkingOutput
+from mother.tools.bash_capture import BashResult
+from mother.widgets import PromptTextArea, Response, ShellOutput, ThinkingOutput
 
 
 @final
@@ -112,6 +115,18 @@ class _FakeRuntime:
 class _FailingRuntime:
     async def run_stream(self, **_: object) -> RuntimeResponse:
         raise RuntimeError("boom")
+
+
+@final
+class _InterruptedRuntime:
+    async def run_stream(
+        self,
+        **kwargs: object,
+    ) -> RuntimeResponse:
+        on_text_update = cast(Callable[[str], None] | None, kwargs.get("on_text_update"))
+        if on_text_update is not None:
+            on_text_update("partial answer")
+        raise UserInterruptedError()
 
 
 def _call_from_thread(callback: object, *args: object) -> object:
@@ -390,3 +405,85 @@ def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
     assert full_text is None
     assert response.updated_texts == ["**Error:** boom"]
     assert response.reset_texts == ["**Error:** boom"]
+
+
+def test_run_runtime_request_preserves_partial_output_when_interrupted() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+
+    with (
+        patch("mother.mother.ChatRuntime", return_value=_InterruptedRuntime()),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text is None
+    assert response.updated_texts == ["partial answer", "partial answer\n\n_Interrupted by user._"]
+    assert response.reset_texts == ["partial answer\n\n_Interrupted by user._"]
+
+
+def test_handle_interrupt_escape_requires_double_press() -> None:
+    app = _make_app()
+
+    assert app.handle_interrupt_escape() is False
+
+    app._active_prompt_worker = cast(Worker[None], object())  # pyright: ignore[reportPrivateUsage]
+
+    with (
+        patch.object(app, "notify"),
+        patch.object(app, "_interrupt_active_request") as interrupt_active_request,
+    ):
+        assert app.handle_interrupt_escape() is True
+        interrupt_active_request.assert_not_called()
+        assert app.handle_interrupt_escape() is True
+
+    interrupt_active_request.assert_called_once_with()
+
+
+def test_double_escape_interrupts_direct_shell_command() -> None:
+    async def slow_execute_bash(_: str) -> BashResult:
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError as exc:
+            raise UserInterruptedError() from exc
+        return BashResult(output="done", exit_code=0)
+
+    async def run() -> None:
+        app = _make_app()
+
+        with patch("mother.mother.execute_bash", side_effect=slow_execute_bash):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("!sleep 30")
+                await pilot.pause()
+
+                submission_task = asyncio.create_task(app.action_submit())
+                await pilot.pause()
+
+                shell_output = app.query_one(ShellOutput)
+                assert text_area.read_only is True
+
+                await pilot.press("escape")
+                await pilot.pause()
+                assert text_area.read_only is True
+
+                await pilot.press("escape")
+                for _ in range(10):
+                    await pilot.pause()
+                    if not text_area.read_only:
+                        break
+
+                await submission_task
+                assert text_area.read_only is False
+                assert "_Interrupted by user._" in shell_output.text
+
+    asyncio.run(run())

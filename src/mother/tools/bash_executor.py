@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 from collections.abc import Callable
 from pathlib import Path
 
+from mother.interrupts import UserInterruptedError
 from mother.tools.bash_capture import BashResult, OutputCapture, format_truncation_notice
+
+_INTERRUPT_GRACE_SECONDS = 0.5
 
 
 async def execute_bash(
@@ -32,6 +36,7 @@ async def execute_bash(
     Raises:
         FileNotFoundError: If cwd does not exist before spawn.
         TimeoutError: If the command exceeds the timeout.
+        UserInterruptedError: If the user interrupts the running process.
     """
     if cwd is not None and not cwd.exists():
         raise FileNotFoundError(f"Working directory does not exist: {cwd}")
@@ -70,11 +75,13 @@ async def execute_bash(
         else:
             await _read_output()
             _ = await proc.wait()
+    except asyncio.CancelledError as exc:
+        await _interrupt_process_group(proc)
+        raise UserInterruptedError(partial_output=_finalize_output(capture)) from exc
     except TimeoutError as exc:
         _kill_process_group(proc)
         _ = await proc.wait()
-        trunc, full_output_path = capture.finalize()
-        output = trunc.content
+        output = _finalize_output(capture)
         if output:
             output += "\n\n"
         output += f"Command timed out after {timeout} seconds"
@@ -95,13 +102,42 @@ async def execute_bash(
     )
 
 
-def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
-    """Kill the entire process group to terminate child processes too."""
+async def _interrupt_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Send SIGINT first, then force-kill if the process ignores it."""
+    if proc.returncode is not None:
+        return
+    _signal_process_group(proc, signal.SIGINT)
+    try:
+        async with asyncio.timeout(_INTERRUPT_GRACE_SECONDS):
+            _ = await proc.wait()
+            return
+    except TimeoutError:
+        pass
+    _kill_process_group(proc)
+    _ = await proc.wait()
+
+
+def _signal_process_group(proc: asyncio.subprocess.Process, signum: int) -> None:
+    """Send a signal to the entire process group when possible."""
     try:
         pgid = os.getpgid(proc.pid)
-        os.killpg(pgid, 9)  # SIGKILL
+        os.killpg(pgid, signum)
     except (ProcessLookupError, PermissionError):
         try:
-            proc.kill()
+            proc.send_signal(signum)
         except (ProcessLookupError, PermissionError):
             pass
+
+
+def _kill_process_group(proc: asyncio.subprocess.Process) -> None:
+    """Kill the entire process group to terminate child processes too."""
+    _signal_process_group(proc, signal.SIGKILL)
+
+
+def _finalize_output(capture: OutputCapture) -> str:
+    """Return the final sanitized output, including truncation notice when needed."""
+    trunc, full_output_path = capture.finalize()
+    output = trunc.content
+    if trunc.truncated:
+        output += format_truncation_notice(trunc, full_output_path)
+    return output

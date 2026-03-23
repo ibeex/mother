@@ -36,6 +36,12 @@ class _PromptClipboardApp(Protocol):
     def capture_clipboard_image(self) -> str | None: ...
 
 
+class _PromptInterruptApp(Protocol):
+    """Subset of app API used for double-Escape interruption."""
+
+    def handle_interrupt_escape(self) -> bool: ...
+
+
 class Prompt(Markdown):
     """Markdown for the user prompt."""
 
@@ -222,6 +228,12 @@ class PromptTextArea(TextArea):
             _ = event.prevent_default()
             _ = self.post_message(self.SlashDismiss(self))
             return
+        if event.key == "escape":
+            app = cast(_PromptInterruptApp, cast(object, self.app))
+            if app.handle_interrupt_escape():
+                _ = event.stop()
+                _ = event.prevent_default()
+                return
         if (
             event.character is not None
             and event.character.isprintable()

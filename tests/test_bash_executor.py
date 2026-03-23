@@ -1,12 +1,14 @@
 """Tests for the async bash subprocess execution engine."""
 
 import asyncio
+import time
 from collections.abc import Coroutine
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from mother.interrupts import UserInterruptedError
 from mother.tools.bash_executor import execute_bash
 
 
@@ -84,3 +86,23 @@ def test_execute_uses_start_new_session_instead_of_preexec_fn():
     _, kwargs = mock_spawn.call_args  # pyright: ignore[reportAny]
     assert kwargs["start_new_session"] is True
     assert "preexec_fn" not in kwargs
+
+
+def test_execute_bash_interrupts_running_process() -> None:
+    async def run_interrupt() -> UserInterruptedError:
+        task = asyncio.create_task(execute_bash("sleep 10"))
+        await asyncio.sleep(0.1)
+        started_at = time.monotonic()
+        _ = task.cancel()
+        try:
+            _ = await task
+        except UserInterruptedError as exc:
+            elapsed = time.monotonic() - started_at
+            if elapsed >= 2.0:
+                raise AssertionError(f"Interrupt took too long: {elapsed:.2f}s") from None
+            return exc
+        else:
+            raise AssertionError("Expected UserInterruptedError")
+
+    exc = asyncio.run(run_interrupt())
+    assert exc.partial_output == ""

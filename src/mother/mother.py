@@ -7,11 +7,12 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path, PurePath
 from random import choice
-from typing import ClassVar, override
+from time import monotonic
+from typing import ClassVar, cast, override
 
 import click
 from pydantic_ai import Tool
-from textual import on, work
+from textual import events, on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -32,6 +33,7 @@ from mother.bash_execution import BashExecution, format_for_context
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
+from mother.interrupts import UserInterruptedError
 from mother.model_picker import (
     AgentModeProvider,
     ModelPickerScreen,
@@ -61,6 +63,7 @@ from mother.stats import SessionUsage, TurnUsage
 from mother.system_prompt import build_system_prompt
 from mother.tool_trace import format_tool_event
 from mother.tools import get_default_tools
+from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.user_commands import (
     AgentModeCommand,
@@ -120,6 +123,7 @@ class MotherApp(App[None]):
         "OPERATIONAL ANALYSIS UNDERWAY",
         "SPECIAL ORDER PARAMETERS DETECTED",
     )
+    DOUBLE_ESCAPE_WINDOW_SECONDS: ClassVar[float] = 0.4
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
@@ -166,6 +170,12 @@ class MotherApp(App[None]):
         self._suppress_prompt_completion_once: str | None = None
         self.auto_scroll_enabled: bool = True
         self._response_waiting_animations: dict[int, _ResponseWaitingAnimation] = {}
+        self._last_interrupt_escape_at: float | None = None
+        self._active_prompt_worker: Worker[None] | None = None
+        self._active_shell_worker: Worker[None] | None = None
+        self._active_runtime_loop: asyncio.AbstractEventLoop | None = None
+        self._active_runtime_task: asyncio.Task[str | None] | None = None
+        self._active_shell_task: asyncio.Task[BashResult] | None = None
 
     @override
     def compose(self) -> ComposeResult:
@@ -204,6 +214,14 @@ class MotherApp(App[None]):
         _ = self.set_interval(0.12, self._tick_response_waiting_animations)
         self._update_subtitle()
         self._update_statusline()
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle global Escape interruption even when focus isn't in the prompt."""
+        if event.key != "escape":
+            return
+        if self.handle_interrupt_escape():
+            _ = event.stop()
+            _ = event.prevent_default()
 
     @property
     def prompt_input(self) -> PromptTextArea:
@@ -859,7 +877,13 @@ class MotherApp(App[None]):
             self._set_reasoning_effort(resolved_effort)
             return
         if isinstance(parsed, ShellCommand):
-            await self.run_user_command(parsed)
+            text_area.read_only = True
+            self._active_shell_worker = self.run_worker(
+                self.run_user_command(parsed),
+                name="shell-command",
+                group="shell-command",
+                exit_on_error=False,
+            )
             return
 
         attachments = self._consume_attachments_for_text(value)
@@ -884,7 +908,58 @@ class MotherApp(App[None]):
         if thinking_output is None:
             text_area.read_only = False
             return
-        _ = self.send_prompt(prompt, value, turn.response_widget, thinking_output, attachments)
+        self._active_prompt_worker = self.send_prompt(
+            prompt,
+            value,
+            turn.response_widget,
+            thinking_output,
+            attachments,
+        )
+
+    def _reset_interrupt_escape(self) -> None:
+        """Forget any pending first Escape press."""
+        self._last_interrupt_escape_at = None
+
+    def _has_interruptible_work(self) -> bool:
+        """Return whether an active shell command or prompt request can be interrupted."""
+        shell_running = self._active_shell_task is not None and not self._active_shell_task.done()
+        shell_worker_running = self._active_shell_worker is not None
+        runtime_running = (
+            self._active_runtime_task is not None and not self._active_runtime_task.done()
+        )
+        return (
+            shell_running
+            or shell_worker_running
+            or runtime_running
+            or self._active_prompt_worker is not None
+        )
+
+    def handle_interrupt_escape(self) -> bool:
+        """Handle Escape presses used to interrupt the active request."""
+        if not self._has_interruptible_work():
+            self._reset_interrupt_escape()
+            return False
+        now = monotonic()
+        previous = self._last_interrupt_escape_at
+        self._last_interrupt_escape_at = now
+        if previous is None or (now - previous) > self.DOUBLE_ESCAPE_WINDOW_SECONDS:
+            self.notify("Press Esc again quickly to interrupt", title="Interrupt")
+            return True
+        self._reset_interrupt_escape()
+        self._interrupt_active_request()
+        return True
+
+    def _interrupt_active_request(self) -> None:
+        """Interrupt the active runtime request and any running shell process."""
+        self._record_session_event("interrupt_requested", {})
+        if self._active_shell_task is not None and not self._active_shell_task.done():
+            _ = self._active_shell_task.cancel()
+        elif self._active_shell_worker is not None:
+            self._active_shell_worker.cancel()
+        loop = self._active_runtime_loop
+        task = self._active_runtime_task
+        if loop is not None and task is not None and not task.done():
+            _ = loop.call_soon_threadsafe(task.cancel)
 
     async def run_user_command(self, cmd: ShellCommand) -> None:
         """Execute a direct user shell command and display the output."""
@@ -896,19 +971,37 @@ class MotherApp(App[None]):
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
+        text_area = self.prompt_input
+        text_area.read_only = True
+        self._active_shell_task = asyncio.create_task(execute_bash(cmd.command))
+
+        interrupted = False
         try:
-            result = await execute_bash(cmd.command)
+            result = await self._active_shell_task
+        except UserInterruptedError as exc:
+            interrupted = True
+            output = self._format_interrupted_output(exc.partial_output)
+            exit_code = None
         except Exception as exc:
             output = f"Error: {exc}"
             exit_code = None
         else:
             output = result.output
             exit_code = result.exit_code
+        finally:
+            self._active_shell_task = None
+            self._reset_interrupt_escape()
+            text_area.read_only = False
+            _ = text_area.focus()
 
         shell_widget.set_text(output)
         prefix = "!" if cmd.include_in_context else "!!"
         self._record_session_message("user", f"{prefix}{cmd.command}")
         self._record_session_message("assistant", f"$ {cmd.command}\n\n{output}")
+
+        if interrupted:
+            self._record_session_event("shell_command_interrupted", {"command": cmd.command})
+            return
 
         execution = BashExecution(
             command=cmd.command,
@@ -981,12 +1074,19 @@ class MotherApp(App[None]):
             self._scroll_chat_to_end(force=True)
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        """Re-enable input when the worker finishes."""
-        if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+        """Re-enable input when the active worker finishes."""
+        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            return
+        worker = cast(Worker[None], event.worker)
+        if worker is self._active_prompt_worker:
+            self._active_prompt_worker = None
             self._active_turn = None
-            text_area = self.prompt_input
-            text_area.read_only = False
-            _ = text_area.focus()
+        if worker is self._active_shell_worker:
+            self._active_shell_worker = None
+        self._reset_interrupt_escape()
+        text_area = self.prompt_input
+        text_area.read_only = False
+        _ = text_area.focus()
 
     def _chat_is_near_end(self, margin: int = 1) -> bool:
         """Return whether the chat view is already at (or very near) the bottom."""
@@ -1235,6 +1335,14 @@ class MotherApp(App[None]):
                 on_thinking_update=on_thinking_update if thinking_output is not None else None,
                 on_tool_event=self._handle_runtime_tool_event,
             )
+        except UserInterruptedError as exc:
+            if thinking_streaming:
+                assert thinking_output is not None
+                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+            interrupted_text = self._format_interrupted_output(visible_text or exc.partial_output)
+            self._show_error(response, interrupted_text)
+            self._record_session_event("turn_interrupted", {"agent_mode": self.agent_mode})
+            return None
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
             return None
@@ -1254,6 +1362,14 @@ class MotherApp(App[None]):
         if tools and not runtime_response.agent_mode_used:
             _ = self.call_from_thread(self._disable_agent_mode_unsupported)
         return visible_text
+
+    @staticmethod
+    def _format_interrupted_output(partial_output: str = "") -> str:
+        """Format the user-facing interruption notice, preserving partial output."""
+        body = partial_output.rstrip()
+        if body:
+            return f"{body}\n\n_Interrupted by user._"
+        return "_Interrupted by user._"
 
     def _show_error(self, response: Response, error_text: str) -> None:
         """Display an error in the response widget and reset its state."""
@@ -1285,9 +1401,11 @@ class MotherApp(App[None]):
         )
 
         loop = asyncio.new_event_loop()
+        task: asyncio.Task[str | None] | None = None
+        self._active_runtime_loop = loop
         try:
             asyncio.set_event_loop(loop)
-            full_text = loop.run_until_complete(
+            task = loop.create_task(
                 self._run_runtime_request(
                     prompt,
                     response,
@@ -1297,7 +1415,11 @@ class MotherApp(App[None]):
                     thinking_output,
                 )
             )
+            self._active_runtime_task = task
+            full_text = loop.run_until_complete(task)
         finally:
+            self._active_runtime_task = None
+            self._active_runtime_loop = None
             loop.close()
             asyncio.set_event_loop(None)
 
