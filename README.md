@@ -5,8 +5,8 @@ Mother is a local terminal chat interface for LLMs.
 It supports three modes:
 
 - **Chat mode**: conversational answers only
-- **Agent mode**: still conversational, but the model may use tools and then report findings before waiting for your next input
-- **Deep research mode**: activated with `/agent deep research`; the model first proposes a research plan, asks for approval or scope changes, then uses only web search/fetch tools in a multi-step loop until the answer is ready
+- **Agent mode**: still conversational, but the model may use tools and then report findings before waiting for your next input. Use `/agent` to toggle it on quickly, or `/agent standard` / `/agent conversational` to select it explicitly.
+- **Deep research mode**: activated with `/agent deep research` (or via the `/agent` inline profile picker); the model first proposes a research plan, asks for approval or scope changes, then uses only web search/fetch tools in a multi-step loop until the answer is ready
 
 ## Features
 

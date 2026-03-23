@@ -74,7 +74,7 @@ def _standard_agent_section() -> str:
             "After using a tool, report what you found, suggest sensible next steps, and wait for the user's input.",
             "Prefer safe, read-only inspection first.",
             "Ask before risky, destructive, privilege-requiring, or state-changing commands.",
-            "Use bash for file operations like ls, rg, fd, jq, ..., exclude .gitignore, .venv, ..., unles user explicitly asks for them.",
+            "Use bash for file operations like ls, rg, fd, jq, ..., exclude .gitignore, .venv, ..., unless user explicitly asks for them.",
         ]
     )
 

@@ -170,10 +170,6 @@ def test_agent_command_enter_toggles_agent_mode() -> None:
             assert app.agent_mode is False
             await pilot.press("enter")
             await pilot.pause()
-            assert text_area.text == "/agent "
-
-            await pilot.press("enter")
-            await pilot.pause()
 
             assert app.agent_mode is True
             assert text_area.text == ""
@@ -189,6 +185,62 @@ def test_agent_deep_research_command_enter_enables_research_mode() -> None:
             text_area = app.query_one(PromptTextArea)
             text_area.load_text("/agent deep research")
             await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert text_area.text == "/agent deep research"
+            assert app.agent_mode is False
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert app.agent_mode is True
+            assert app.agent_profile == "deep_research"
+            assert text_area.text == ""
+
+    asyncio.run(run())
+
+
+def test_agent_command_tab_opens_inline_profile_picker() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            text_area.load_text("/agent")
+            text_area.move_cursor((0, len("/agent")), record_width=False)
+            await pilot.pause()
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            model_complete = app.query_one(ModelComplete)
+            assert text_area.text == "/agent "
+            assert model_complete.display is True
+            assert text_area.model_complete_active is True
+
+    asyncio.run(run())
+
+
+def test_agent_command_partial_query_enter_accepts_inline_selection_before_submit() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            model_complete = app.query_one(ModelComplete)
+            text_area.load_text("/agent d")
+            await pilot.pause()
+
+            assert model_complete.display is True
+
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert text_area.text == "/agent deep research"
+            assert model_complete.display is False
+            assert app.agent_mode is False
 
             await pilot.press("enter")
             await pilot.pause()

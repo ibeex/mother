@@ -54,7 +54,9 @@ def test_bash_tool_function_success_when_guard_is_ok():
         canonical_label=True,
     )
     with (
-        patch("mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)),
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock(return_value=ok_result)),
     ):
         tool = make_bash_tool(cwd=Path("/tmp"))
@@ -70,7 +72,9 @@ def test_bash_tool_warning_blocks_and_copies_to_clipboard():
         canonical_label=True,
     )
     with (
-        patch("mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)),
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
@@ -93,7 +97,9 @@ def test_bash_tool_fatal_blocks_and_copies_to_clipboard():
         canonical_label=True,
     )
     with (
-        patch("mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)),
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
@@ -114,7 +120,9 @@ def test_bash_tool_guard_error_fails_closed():
         error="Could not parse bash guard label from model output.",
     )
     with (
-        patch("mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)),
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
@@ -134,7 +142,9 @@ def test_bash_tool_function_nonzero_exit():
         canonical_label=True,
     )
     with (
-        patch("mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)),
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock(return_value=fail_result)),
     ):
         tool = make_bash_tool(cwd=Path("/tmp"))
@@ -152,7 +162,9 @@ def test_bash_tool_user_interrupt_propagates():
     )
     interrupted = UserInterruptedError(partial_output="partial output")
     with (
-        patch("mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)),
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock(side_effect=interrupted)),
     ):
         tool = make_bash_tool(cwd=Path("/tmp"))

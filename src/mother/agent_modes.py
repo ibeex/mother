@@ -10,7 +10,7 @@ RuntimeMode = Literal["chat", "agent", "deep_research"]
 DEFAULT_AGENT_PROFILE: AgentProfile = "standard"
 
 _STANDARD_AGENT_PROFILE_ALIASES: frozenset[str] = frozenset(
-    {"agent", "default", "normal", "standard"}
+    {"agent", "conversational", "default", "normal", "standard"}
 )
 _DEEP_RESEARCH_PROFILE_ALIASES: frozenset[str] = frozenset({"deep", "deep research", "research"})
 

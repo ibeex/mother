@@ -49,9 +49,22 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/save", "Save the current session to markdown"),
     SlashCommand("/quit", "Quit Mother"),
     SlashCommand("/exit", "Quit Mother"),
-    SlashCommand("/agent", "Toggle agent mode or enable deep research"),
+    SlashCommand("/agent", "Toggle agent mode or choose an agent profile"),
     SlashCommand("/models", "Browse and switch models"),
     SlashCommand("/reasoning", "Set reasoning effort", "auto|off|low|medium|high|xhigh"),
+)
+
+_AGENT_ARGUMENT_CHOICES: tuple[SlashArgumentChoice, ...] = (
+    SlashArgumentChoice(
+        "standard",
+        "standard",
+        ("agent", "conversational", "default", "normal"),
+    ),
+    SlashArgumentChoice(
+        "deep research",
+        "deep research",
+        ("deep", "research"),
+    ),
 )
 
 _REASONING_ARGUMENT_CHOICES: tuple[SlashArgumentChoice, ...] = (
@@ -79,6 +92,19 @@ def _filter_argument_choices(
 ) -> list[SlashArgumentChoice]:
     """Filter inline argument choices using shared picker search behavior."""
     return filter_picker_items(choices, query, _argument_choice_search_fields)
+
+
+def filter_agent_argument_choices(query: str) -> list[SlashArgumentChoice]:
+    """Return inline completion choices for ``/agent``."""
+    return _filter_argument_choices(_AGENT_ARGUMENT_CHOICES, query)
+
+
+def resolve_agent_argument(query: str) -> str | None:
+    """Resolve a ``/agent`` query to a canonical user-facing value."""
+    matches = filter_agent_argument_choices(query)
+    if not matches:
+        return None
+    return matches[0].value
 
 
 def filter_model_argument_choices(query: str) -> list[SlashArgumentChoice]:
@@ -120,6 +146,11 @@ def resolve_reasoning_argument(query: str) -> str | None:
 
 
 SLASH_ARGUMENT_SPECS: tuple[SlashArgumentSpec, ...] = (
+    SlashArgumentSpec(
+        command="/agent",
+        complete=filter_agent_argument_choices,
+        resolve=resolve_agent_argument,
+    ),
     SlashArgumentSpec(
         command="/models",
         complete=filter_model_argument_choices,

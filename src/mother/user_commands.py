@@ -103,6 +103,8 @@ def parse_user_input(
     - ``/save`` or ``/export``   → SaveSessionCommand()
     - ``/quit`` or ``/exit``     → QuitAppCommand()
     - ``/agent``                 → AgentModeCommand()
+    - ``/agent standard``        → AgentModeCommand(mode="standard")
+    - ``/agent conversational``  → AgentModeCommand(mode="conversational")
     - ``/agent deep research``   → AgentModeCommand(mode="deep research")
     - ``/models``                → ModelsCommand()
     - ``/models query``          → ModelsCommand(query=...)

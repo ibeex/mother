@@ -141,10 +141,35 @@ def _read_session_header(path: Path) -> SessionHeader | None:
         first_line = handle.readline().strip()
     if not first_line:
         return None
-    header = cast(dict[str, object], json.loads(first_line))
-    if header.get("type") != "session":
+
+    loaded = cast(object, json.loads(first_line))
+    if not isinstance(loaded, dict):
         return None
-    return cast(SessionHeader, header)
+
+    raw_header = cast(dict[str, object], loaded)
+    if raw_header.get("type") != "session":
+        return None
+
+    header: SessionHeader = {"type": "session"}
+    version = raw_header.get("version")
+    if isinstance(version, int):
+        header["version"] = version
+    session_id = raw_header.get("id")
+    if isinstance(session_id, str):
+        header["id"] = session_id
+    created = raw_header.get("created")
+    if isinstance(created, str):
+        header["created"] = created
+    cwd = raw_header.get("cwd")
+    if isinstance(cwd, str):
+        header["cwd"] = cwd
+    model = raw_header.get("model")
+    if isinstance(model, str):
+        header["model"] = model
+    pid = raw_header.get("pid")
+    if isinstance(pid, int):
+        header["pid"] = pid
+    return header
 
 
 def _render_details(summary: str, body: str) -> list[str]:
@@ -269,7 +294,11 @@ class SessionManager:
             return None
 
         session_pid = header.get("pid")
-        if isinstance(session_pid, int) and session_pid != os.getpid() and _process_is_alive(session_pid):
+        if (
+            isinstance(session_pid, int)
+            and session_pid != os.getpid()
+            and _process_is_alive(session_pid)
+        ):
             raise RuntimeError(
                 "Last session is still active in another Mother instance. Use /save there instead."
             )
@@ -392,7 +421,7 @@ class SessionManager:
                 if self._flushed or self.counter > 0:
                     raise RuntimeError(
                         "Current session log is missing on disk. "
-                        "It may have been removed by another Mother instance or `mother --save`."
+                        + "It may have been removed by another Mother instance or `mother --save`."
                     )
                 raise RuntimeError("Nothing to save — no messages were sent yet.")
 
@@ -729,7 +758,11 @@ class SessionManager:
         last_path = Path(last_file.read_text(encoding="utf-8").strip()).expanduser()
         header = _read_session_header(last_path)
         session_pid = None if header is None else header.get("pid")
-        if isinstance(session_pid, int) and session_pid != os.getpid() and _process_is_alive(session_pid):
+        if (
+            isinstance(session_pid, int)
+            and session_pid != os.getpid()
+            and _process_is_alive(session_pid)
+        ):
             return
 
         last_path.unlink(missing_ok=True)

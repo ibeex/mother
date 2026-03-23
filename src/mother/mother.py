@@ -256,6 +256,10 @@ class MotherApp(App[None]):
     def _current_slash_argument_value(self, command: str) -> str | None:
         """Return the active value to highlight for a slash command argument."""
         normalized_command = command.lower()
+        if normalized_command == "/agent":
+            if not self.agent_mode:
+                return None
+            return format_agent_profile(self.agent_profile)
         if normalized_command == "/models":
             return self.config.model
         if normalized_command == "/reasoning":
@@ -846,7 +850,7 @@ class MotherApp(App[None]):
             resolved_profile = normalize_agent_profile(parsed.mode)
             if resolved_profile is None:
                 self.notify(
-                    "Use /agent or /agent deep research",
+                    "Use /agent, /agent standard, or /agent deep research",
                     title="Agent mode",
                     severity="warning",
                 )
@@ -1358,7 +1362,10 @@ class MotherApp(App[None]):
             assert thinking_output is not None
             _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
 
-        if runtime_response.text != visible_text or id(response) in self._response_waiting_animations:
+        if (
+            runtime_response.text != visible_text
+            or id(response) in self._response_waiting_animations
+        ):
             visible_text = runtime_response.text
             _ = self.call_from_thread(self._update_response_output, response, visible_text)
 

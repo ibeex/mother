@@ -154,7 +154,10 @@ def test_new_session_keeps_previous_live_session_jsonl(tmp_path: Path):
     first = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
     first.append("user", "still running")
     lines = first.path.read_text(encoding="utf-8").splitlines()
-    header = json.loads(lines[0])
+    loaded_header = cast(object, json.loads(lines[0]))
+    if not isinstance(loaded_header, dict):
+        raise AssertionError("Expected session header object")
+    header = cast(dict[str, object], loaded_header)
     header["pid"] = 12345
     _ = first.path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8")
 
@@ -191,9 +194,14 @@ def test_save_last_rejects_active_session(tmp_path: Path):
     manager = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
     manager.append("user", "still open")
     lines = manager.path.read_text(encoding="utf-8").splitlines()
-    header = json.loads(lines[0])
+    loaded_header = cast(object, json.loads(lines[0]))
+    if not isinstance(loaded_header, dict):
+        raise AssertionError("Expected session header object")
+    header = cast(dict[str, object], loaded_header)
     header["pid"] = 12345
-    _ = manager.path.write_text("\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8")
+    _ = manager.path.write_text(
+        "\n".join([json.dumps(header), *lines[1:]]) + "\n", encoding="utf-8"
+    )
 
     with patch("mother.session._process_is_alive", return_value=True):
         try:
@@ -237,7 +245,10 @@ def test_append_recreates_session_header_when_log_was_deleted(tmp_path: Path):
     manager.append("assistant", "back again")
 
     lines = manager.path.read_text(encoding="utf-8").splitlines()
-    header = json.loads(lines[0])
+    loaded_header = cast(object, json.loads(lines[0]))
+    if not isinstance(loaded_header, dict):
+        raise AssertionError("Expected session header object")
+    header = cast(dict[str, object], loaded_header)
     assert header["type"] == "session"
     assert any("back again" in line for line in lines[1:])
 

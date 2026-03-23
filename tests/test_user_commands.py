@@ -71,6 +71,20 @@ def test_detect_agent_mode_command():
     assert result.mode is None
 
 
+def test_detect_standard_agent_mode_command():
+    result = parse_user_input(" /agent standard ")
+    assert isinstance(result, AgentModeCommand)
+    assert result.command == "/agent"
+    assert result.mode == "standard"
+
+
+def test_detect_conversational_agent_mode_command():
+    result = parse_user_input(" /agent conversational ")
+    assert isinstance(result, AgentModeCommand)
+    assert result.command == "/agent"
+    assert result.mode == "conversational"
+
+
 def test_detect_deep_research_agent_mode_command():
     result = parse_user_input(" /agent deep research ")
     assert isinstance(result, AgentModeCommand)
@@ -142,6 +156,8 @@ def test_should_submit_quit_on_enter():
 
 def test_should_submit_agent_on_enter():
     assert should_submit_on_enter("/agent") is True
+    assert should_submit_on_enter("/agent standard") is True
+    assert should_submit_on_enter("/agent conversational") is True
     assert should_submit_on_enter("/agent deep research") is True
 
 
