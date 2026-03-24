@@ -22,15 +22,13 @@ def _is_empty_argument(key: str, value: object) -> bool:
             return True
         return False
     if isinstance(value, dict | list | tuple | set):
-        return len(value) == 0
+        return not value
     return False
 
 
 def _filter_tool_arguments(arguments: dict[str, object]) -> dict[str, object]:
     """Drop empty values from rendered tool arguments."""
-    return {
-        key: value for key, value in arguments.items() if not _is_empty_argument(key, value)
-    }
+    return {key: value for key, value in arguments.items() if not _is_empty_argument(key, value)}
 
 
 def _format_argument_body(arguments: dict[str, object]) -> str:

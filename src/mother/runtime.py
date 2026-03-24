@@ -81,7 +81,7 @@ class ChatRuntime:
         return parts
 
     @staticmethod
-    def _tool_arguments(
+    def tool_arguments(
         tool: Tool[None], args: tuple[object, ...], kwargs: dict[str, object]
     ) -> dict[str, object]:
         tool_signature = signature(tool.function)
@@ -97,7 +97,8 @@ class ChatRuntime:
             if parameter is None:
                 filtered_arguments[name] = value
                 continue
-            if parameter.default is not Parameter.empty and value == parameter.default:
+            default_value = cast(object, parameter.default)
+            if default_value is not Parameter.empty and value == default_value:
                 continue
             filtered_arguments[name] = value
         return filtered_arguments
@@ -113,7 +114,7 @@ class ChatRuntime:
 
         @wraps(original)
         async def wrapped(*args: object, **kwargs: object) -> object:
-            arguments = ChatRuntime._tool_arguments(tool, args, kwargs)
+            arguments = ChatRuntime.tool_arguments(tool, args, kwargs)
             tool_state["sequence"] += 1
             call_id = f"{tool.name}-{tool_state['sequence']}"
             tool_state["started"] += 1

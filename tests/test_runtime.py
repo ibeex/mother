@@ -129,15 +129,16 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
 
 def test_tool_arguments_omit_function_defaults() -> None:
     def sample_tool(query: str, timeout: float = 30.0, mode: str = "auto") -> str:
+        _ = timeout, mode
         return query
 
     tool = Tool(sample_tool, name="sample")
 
-    only_required = ChatRuntime._tool_arguments(tool, ("docs",), {})
+    only_required = ChatRuntime.tool_arguments(tool, ("docs",), {})
     assert only_required == {"query": "docs"}
 
-    custom_timeout = ChatRuntime._tool_arguments(tool, ("docs",), {"timeout": 12.0})
+    custom_timeout = ChatRuntime.tool_arguments(tool, ("docs",), {"timeout": 12.0})
     assert custom_timeout == {"query": "docs", "timeout": 12.0}
 
-    explicit_default = ChatRuntime._tool_arguments(tool, ("docs",), {"timeout": 30.0})
+    explicit_default = ChatRuntime.tool_arguments(tool, ("docs",), {"timeout": 30.0})
     assert explicit_default == {"query": "docs"}
