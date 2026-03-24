@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from mother.bash_execution import BashExecution, format_for_context
+from mother.bash_execution import BashExecution, format_for_context, format_for_display
 from mother.user_commands import (
     AgentModeCommand,
     ModelsCommand,
@@ -201,7 +201,24 @@ def test_format_execution_for_context():
         exclude_from_context=False,
     )
     text = format_for_context(execution)
+    assert "Shell command:" in text
     assert "git status" in text
+    assert "Output:" in text
+    assert "On branch main" in text
+
+
+def test_format_execution_for_display():
+    execution = BashExecution(
+        command="git status",
+        output="On branch main\n",
+        exit_code=0,
+        timestamp=datetime.now(),
+        exclude_from_context=False,
+    )
+    text = format_for_display(execution)
+    assert "Command:" in text
+    assert "git status" in text
+    assert "Output:" in text
     assert "On branch main" in text
 
 

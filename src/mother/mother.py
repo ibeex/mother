@@ -29,7 +29,7 @@ from mother.agent_modes import (
     normalize_agent_profile,
     resolve_runtime_mode,
 )
-from mother.bash_execution import BashExecution, format_for_context
+from mother.bash_execution import BashExecution, format_for_context, format_for_display
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
@@ -998,15 +998,6 @@ class MotherApp(App[None]):
             text_area.read_only = False
             _ = text_area.focus()
 
-        shell_widget.set_text(output)
-        prefix = "!" if cmd.include_in_context else "!!"
-        self._record_session_message("user", f"{prefix}{cmd.command}")
-        self._record_session_message("assistant", f"$ {cmd.command}\n\n{output}")
-
-        if interrupted:
-            self._record_session_event("shell_command_interrupted", {"command": cmd.command})
-            return
-
         execution = BashExecution(
             command=cmd.command,
             output=output,
@@ -1014,6 +1005,15 @@ class MotherApp(App[None]):
             timestamp=datetime.now(),
             exclude_from_context=not cmd.include_in_context,
         )
+        shell_widget.set_text(format_for_display(execution))
+        prefix = "!" if cmd.include_in_context else "!!"
+        self._record_session_message("user", f"{prefix}{cmd.command}")
+        self._record_session_message("assistant", format_for_context(execution))
+
+        if interrupted:
+            self._record_session_event("shell_command_interrupted", {"command": cmd.command})
+            return
+
         self._pending_executions.append(execution)
 
     def _tool_output_key(
