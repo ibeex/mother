@@ -7,7 +7,7 @@ import mimetypes
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
-from inspect import isawaitable, signature
+from inspect import Parameter, isawaitable, signature
 from pathlib import Path
 from time import perf_counter
 from typing import Literal, cast
@@ -84,12 +84,23 @@ class ChatRuntime:
     def _tool_arguments(
         tool: Tool[None], args: tuple[object, ...], kwargs: dict[str, object]
     ) -> dict[str, object]:
-        bound = signature(tool.function).bind_partial(*args, **kwargs)
+        tool_signature = signature(tool.function)
+        bound = tool_signature.bind_partial(*args, **kwargs)
         raw_arguments = cast(dict[str, object], bound.arguments)
         arguments = dict(raw_arguments)
         if tool.takes_ctx:
             _ = arguments.pop("ctx", None)
-        return arguments
+
+        filtered_arguments: dict[str, object] = {}
+        for name, value in arguments.items():
+            parameter = tool_signature.parameters.get(name)
+            if parameter is None:
+                filtered_arguments[name] = value
+                continue
+            if parameter.default is not Parameter.empty and value == parameter.default:
+                continue
+            filtered_arguments[name] = value
+        return filtered_arguments
 
     @staticmethod
     def _wrapped_tool(

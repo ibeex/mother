@@ -10,6 +10,29 @@ def _format_section(title: str, body: str) -> str:
     return f"{title}:\n{body}"
 
 
+def _is_empty_argument(key: str, value: object) -> bool:
+    """Return whether a tool argument is effectively empty for display."""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return True
+        if key == "headers_json" and normalized == "{}":
+            return True
+        return False
+    if isinstance(value, dict | list | tuple | set):
+        return len(value) == 0
+    return False
+
+
+def _filter_tool_arguments(arguments: dict[str, object]) -> dict[str, object]:
+    """Drop empty values from rendered tool arguments."""
+    return {
+        key: value for key, value in arguments.items() if not _is_empty_argument(key, value)
+    }
+
+
 def _format_argument_body(arguments: dict[str, object]) -> str:
     """Render argument mappings without the outermost braces."""
     rendered = json.dumps(arguments, indent=2, sort_keys=True, default=repr)
@@ -23,13 +46,14 @@ def format_tool_arguments(arguments: dict[str, object]) -> str:
     """Render tool arguments as plain text."""
     lines: list[str] = []
 
-    command = arguments.get("command")
-    extras = {key: value for key, value in arguments.items() if key != "command"}
+    filtered_arguments = _filter_tool_arguments(arguments)
+    command = filtered_arguments.get("command")
+    extras = {key: value for key, value in filtered_arguments.items() if key != "command"}
 
     if isinstance(command, str) and command.strip():
         lines.append(_format_section("Command", command))
 
-    rendered_arguments = extras if lines else arguments
+    rendered_arguments = extras if lines else filtered_arguments
     if rendered_arguments:
         if lines:
             lines.append("")

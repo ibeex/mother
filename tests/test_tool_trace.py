@@ -10,11 +10,26 @@ def test_format_tool_arguments_renders_shell_command_as_plain_text():
 
 
 def test_format_tool_arguments_renders_extra_arguments_as_json():
-    text = format_tool_arguments({"command": "ls -la", "timeout": 30.0})
+    text = format_tool_arguments({"command": "ls -la", "timeout": 12.0})
     assert "Command:" in text
-    assert '"timeout": 30.0' in text
+    assert '"timeout": 12.0' in text
     assert "Arguments:\n{" not in text
     assert not text.rstrip().endswith("}")
+
+
+def test_format_tool_arguments_omits_empty_values():
+    text = format_tool_arguments(
+        {
+            "url": "https://example.com/docs",
+            "headers_json": "{}",
+            "body": "",
+            "extra": None,
+        }
+    )
+    assert '"url": "https://example.com/docs"' in text
+    assert '"headers_json"' not in text
+    assert '"body"' not in text
+    assert '"extra"' not in text
 
 
 def test_format_tool_event_renders_started_status():
