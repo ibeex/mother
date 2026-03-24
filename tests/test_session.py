@@ -113,6 +113,43 @@ def test_prompt_context_does_not_repeat_same_system_prompt(tmp_path: Path):
     assert "System prompt updated" not in markdown
 
 
+def test_turn_usage_event_renders_compact_summary_without_json(tmp_path: Path):
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions",
+        markdown_dir=tmp_path / "markdown",
+    )
+    manager.record_event(
+        "turn_usage",
+        {
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "duration_seconds": 1.7219462500070222,
+            "image_count": 0,
+            "model_id": "gpt-5-mini",
+            "provider": "openai-responses",
+            "request_tokens": 125,
+            "response_tokens": 11,
+            "tool_call_errors": 0,
+            "tool_calls_finished": 0,
+            "tool_calls_started": 0,
+            "total_tokens": 136,
+        },
+    )
+
+    output_path = manager.save_as_markdown()
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert "### Event · `turn_usage`" in markdown
+    assert (
+        "- Usage: duration `1.72s`, request tokens `125`, response tokens `11`, total tokens `136`"
+        in markdown
+    )
+    assert "```json" not in markdown
+    assert "cache_read_tokens" not in markdown
+    assert "provider" not in markdown
+    assert "model_id" not in markdown
+
+
 def test_repeated_saves_overwrite_same_markdown_file_for_one_session(tmp_path: Path):
     sessions_dir = tmp_path / "sessions"
     markdown_dir = tmp_path / "markdown"

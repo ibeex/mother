@@ -294,7 +294,7 @@ def build_cases() -> list[EvalCase]:
         ),
         EvalCase(
             "uv_python_write_file",
-            "uv run python -c 'from pathlib import Path; Path(\"note.txt\").write_text(\"hi\")'",
+            'uv run python -c \'from pathlib import Path; Path("note.txt").write_text("hi")\'',
             "Warning",
             "uv-python-warning",
         ),

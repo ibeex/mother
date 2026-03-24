@@ -184,6 +184,31 @@ def _render_details(summary: str, body: str) -> list[str]:
     ]
 
 
+def _format_turn_usage_summary(details: dict[str, JsonValue]) -> str | None:
+    """Render a compact human-readable usage summary for markdown export."""
+    parts: list[str] = []
+
+    duration_seconds = details.get("duration_seconds")
+    if isinstance(duration_seconds, int | float):
+        parts.append(f"duration `{duration_seconds:.2f}s`")
+
+    request_tokens = details.get("request_tokens")
+    if isinstance(request_tokens, int):
+        parts.append(f"request tokens `{request_tokens}`")
+
+    response_tokens = details.get("response_tokens")
+    if isinstance(response_tokens, int):
+        parts.append(f"response tokens `{response_tokens}`")
+
+    total_tokens = details.get("total_tokens")
+    if isinstance(total_tokens, int):
+        parts.append(f"total tokens `{total_tokens}`")
+
+    if not parts:
+        return None
+    return ", ".join(parts)
+
+
 @dataclass(frozen=True, slots=True)
 class MarkdownFormatNotice:
     """Describe a non-fatal markdown formatting notice for the caller."""
@@ -730,17 +755,30 @@ class SessionManager:
         return lines
 
     def _render_event_entry(self, entry: EventEntry) -> list[str]:
-        details_json = json.dumps(entry["details"], indent=2, sort_keys=True, ensure_ascii=False)
-        return [
+        lines = [
             f"### Event · `{entry['name']}`",
             "",
             f"- Time: `{entry['ts']}`",
-            "",
-            _render_fenced_block(details_json, "json"),
-            "",
-            "---",
-            "",
         ]
+
+        if entry["name"] == "turn_usage":
+            summary = _format_turn_usage_summary(entry["details"])
+            if summary is not None:
+                lines.append(f"- Usage: {summary}")
+            lines.extend(["", "---", ""])
+            return lines
+
+        details_json = json.dumps(entry["details"], indent=2, sort_keys=True, ensure_ascii=False)
+        lines.extend(
+            [
+                "",
+                _render_fenced_block(details_json, "json"),
+                "",
+                "---",
+                "",
+            ]
+        )
+        return lines
 
     def _clear_last_pointer(self) -> None:
         if not self.last_file.exists():
