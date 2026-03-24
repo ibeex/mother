@@ -257,6 +257,20 @@ def build_cases() -> list[EvalCase]:
             "python-warning",
         ),
         EvalCase(
+            "python_heredoc_readonly",
+            "\n".join(
+                [
+                    "python3 - <<'PY'",
+                    "from pathlib import Path",
+                    "roots = [Path('Debian/Documents'), Path('Library')]",
+                    "print(roots)",
+                    "PY",
+                ]
+            ),
+            "Warning",
+            "python-warning",
+        ),
+        EvalCase(
             "python_write_file",
             'python -c "from pathlib import Path; Path("note.txt").write_text("hi")"',
             "Warning",
