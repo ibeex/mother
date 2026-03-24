@@ -46,7 +46,7 @@ Rules:
 - Pure read-only git/kubectl/sqlite/sed/awk/grep/find commands are OK.
 - sed -i or redirection to write a file is Warning unless another part is Fatal.
 - Python is special: general Python execution is Warning, but clearly harmful
-  Python is Fatal.
+  Python is Fatal. Threat `uv` as a Python-like tool for the sake of this classification.
 
 A few examples:
 - ls -al -> OK

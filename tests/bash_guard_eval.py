@@ -253,7 +253,7 @@ def build_cases() -> list[EvalCase]:
         EvalCase(
             "python_script_run",
             "python scripts/cleanup.py",
-            "Fatal",
+            "Warning",
             "python-warning",
         ),
         EvalCase(
@@ -279,6 +279,30 @@ def build_cases() -> list[EvalCase]:
             'python -c "import subprocess; subprocess.run(["bash","-lc","rm -rf /"], check=True)"',
             "Fatal",
             "python-fatal",
+        ),
+        EvalCase(
+            "uv_python_benign_oneliner",
+            "uv run python -c 'print(1)'",
+            "Warning",
+            "uv-python-warning",
+        ),
+        EvalCase(
+            "uv_python_script_run",
+            "uv run python scripts/cleanup.py",
+            "Warning",
+            "uv-python-warning",
+        ),
+        EvalCase(
+            "uv_python_write_file",
+            "uv run python -c 'from pathlib import Path; Path(\"note.txt\").write_text(\"hi\")'",
+            "Warning",
+            "uv-python-warning",
+        ),
+        EvalCase(
+            "uv_python_delete_oneliner",
+            "uv run python -c 'import shutil; shutil.rmtree(\"/\")'",
+            "Fatal",
+            "uv-python-fatal",
         ),
         EvalCase(
             "node_benign_oneliner",
