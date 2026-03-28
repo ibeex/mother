@@ -33,6 +33,7 @@ from mother.bash_execution import BashExecution, format_for_context, format_for_
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
+from mother.history import PromptHistory
 from mother.interrupts import UserInterruptedError
 from mother.model_picker import (
     AgentModeProvider,
@@ -143,6 +144,7 @@ class MotherApp(App[None]):
         model_name: str | None = None,
         system: str | None = None,
         session_manager: SessionManager | None = None,
+        prompt_history: PromptHistory | None = None,
     ) -> None:
         super().__init__()
         base = config or MotherConfig()
@@ -156,6 +158,7 @@ class MotherApp(App[None]):
         )
         self.conversation_state: ConversationState = ConversationState()
         self.session_manager: SessionManager | None = session_manager
+        self.prompt_history: PromptHistory = prompt_history or PromptHistory()
         self._pending_executions: list[BashExecution] = []
         self._pending_image_attachments: dict[str, Path] = {}
         self._active_turn: ConversationTurn | None = None
@@ -168,6 +171,10 @@ class MotherApp(App[None]):
         self._session_cached_tokens: int | None = None
         self._last_response_time_seconds: float | None = None
         self._suppress_prompt_completion_once: str | None = None
+        self._suppress_prompt_history_once: str | None = None
+        self._prompt_history_index: int = 0
+        self._prompt_history_draft: str = ""
+        self._prompt_history_search_query: str | None = None
         self.auto_scroll_enabled: bool = True
         self._response_waiting_animations: dict[int, _ResponseWaitingAnimation] = {}
         self._last_interrupt_escape_at: float | None = None
@@ -252,6 +259,81 @@ class MotherApp(App[None]):
         """Hide inline slash-argument autocomplete and restore normal prompt keys."""
         self.slash_argument_complete.display = False
         self.prompt_input.slash_argument_complete_active = False
+
+    def _prompt_text_end_location(self, text: str) -> tuple[int, int]:
+        """Return the cursor location representing the end of ``text``."""
+        lines = text.split("\n")
+        return (len(lines) - 1, len(lines[-1]))
+
+    def _reset_prompt_history_state(self, draft: str | None = None) -> None:
+        """Reset history browsing/searching back to the current editable draft."""
+        self._prompt_history_index = 0
+        self._prompt_history_draft = self.prompt_input.text if draft is None else draft
+        self._prompt_history_search_query = None
+
+    def _apply_prompt_history_text(self, text: str) -> None:
+        """Load a history entry into the prompt without treating it as manual editing."""
+        self._suppress_prompt_history_once = text
+        self.prompt_input.load_text(text)
+        self.prompt_input.move_cursor(self._prompt_text_end_location(text), record_width=False)
+        _ = self.prompt_input.focus()
+
+    def action_prompt_history_previous(self) -> None:
+        """Recall the previous submitted prompt from persistent history."""
+        text_area = self.prompt_input
+        if text_area.read_only:
+            return
+        next_index = self._prompt_history_index + 1
+        try:
+            next_text = self.prompt_history.entry(next_index)
+        except IndexError:
+            return
+        if self._prompt_history_index == 0:
+            self._prompt_history_draft = text_area.text
+        self._prompt_history_index = next_index
+        self._prompt_history_search_query = None
+        self._apply_prompt_history_text(next_text)
+
+    def action_prompt_history_next(self) -> None:
+        """Move toward newer prompt-history entries or restore the current draft."""
+        text_area = self.prompt_input
+        if text_area.read_only or self._prompt_history_index == 0:
+            return
+        next_index = self._prompt_history_index - 1
+        self._prompt_history_index = next_index
+        self._prompt_history_search_query = None
+        if next_index == 0:
+            self._apply_prompt_history_text(self._prompt_history_draft)
+            return
+        self._apply_prompt_history_text(self.prompt_history.entry(next_index))
+
+    def action_prompt_history_search(self) -> None:
+        """Search backward through prompt history using the current draft as a query."""
+        text_area = self.prompt_input
+        if text_area.read_only:
+            return
+        if self._prompt_history_index == 0:
+            query = text_area.text.strip()
+            if not query:
+                self.notify(
+                    "Type part of a previous prompt, then press Ctrl+R",
+                    title="History",
+                    severity="warning",
+                )
+                return
+            self._prompt_history_draft = text_area.text
+        else:
+            query = self._prompt_history_search_query or text_area.text.strip()
+            if not query:
+                return
+        match = self.prompt_history.find_previous(query, before_index=self._prompt_history_index)
+        if match is None:
+            self.notify(f"No history match for '{query}'", title="History")
+            return
+        index, matched_text = match
+        self._prompt_history_index = index
+        self._prompt_history_search_query = query
+        self._apply_prompt_history_text(matched_text)
 
     def _current_slash_argument_value(self, command: str) -> str | None:
         """Return the active value to highlight for a slash command argument."""
@@ -743,12 +825,20 @@ class MotherApp(App[None]):
         """Refresh prompt autocomplete helpers as the main prompt changes."""
         if event.text_area is not self.prompt_input:
             return
+        if event.text_area.text == self._suppress_prompt_history_once:
+            self._suppress_prompt_history_once = None
+            self._hide_slash_argument_complete()
+            self._hide_slash_complete()
+            return
+        self._suppress_prompt_history_once = None
         if event.text_area.text == self._suppress_prompt_completion_once:
             self._suppress_prompt_completion_once = None
             self._hide_slash_argument_complete()
             self._hide_slash_complete()
+            self._reset_prompt_history_state(event.text_area.text)
             return
         self._suppress_prompt_completion_once = None
+        self._reset_prompt_history_state(event.text_area.text)
         self._refresh_prompt_completions(event.text_area.text)
 
     @on(PromptTextArea.SlashNavigate)
@@ -881,6 +971,8 @@ class MotherApp(App[None]):
             self._set_reasoning_effort(resolved_effort)
             return
         if isinstance(parsed, ShellCommand):
+            if parsed.include_in_context:
+                self.prompt_history.append(value)
             text_area.read_only = True
             self._active_shell_worker = self.run_worker(
                 self.run_user_command(parsed),
@@ -890,6 +982,7 @@ class MotherApp(App[None]):
             )
             return
 
+        self.prompt_history.append(value)
         attachments = self._consume_attachments_for_text(value)
         if attachments and not self.current_model_entry.supports_images:
             self.notify(

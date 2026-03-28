@@ -5,7 +5,7 @@ from typing import ClassVar, Protocol, cast, final, override
 
 import pyperclip
 from textual import events
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.widgets import Label, Markdown, OptionList, Static, TextArea
@@ -42,6 +42,16 @@ class _PromptInterruptApp(Protocol):
     def handle_interrupt_escape(self) -> bool: ...
 
 
+class _PromptHistoryApp(Protocol):
+    """Subset of app API used for prompt-history navigation/search."""
+
+    def action_prompt_history_previous(self) -> None: ...
+
+    def action_prompt_history_next(self) -> None: ...
+
+    def action_prompt_history_search(self) -> None: ...
+
+
 class Prompt(Markdown):
     """Markdown for the user prompt."""
 
@@ -50,6 +60,10 @@ class Prompt(Markdown):
 
 class PromptTextArea(TextArea):
     """Main prompt input with slash-complete key handling."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+r", "history_search", show=False),
+    ]
 
     slash_complete_active: bool = False
     slash_argument_complete_active: bool = False
@@ -245,6 +259,21 @@ class PromptTextArea(TextArea):
                 return
         await super()._on_key(event)
 
+    def action_history_previous(self) -> None:
+        """Recall the previous submitted prompt from persistent history."""
+        app = cast(_PromptHistoryApp, cast(object, self.app))
+        app.action_prompt_history_previous()
+
+    def action_history_next(self) -> None:
+        """Move toward newer prompt-history entries or restore the current draft."""
+        app = cast(_PromptHistoryApp, cast(object, self.app))
+        app.action_prompt_history_next()
+
+    def action_history_search(self) -> None:
+        """Search backward through prompt history using the current draft as a query."""
+        app = cast(_PromptHistoryApp, cast(object, self.app))
+        app.action_prompt_history_search()
+
     @override
     def action_cursor_up(self, select: bool = False) -> None:
         if self.slash_argument_complete_active and not select:
@@ -252,6 +281,10 @@ class PromptTextArea(TextArea):
             return
         if self.slash_complete_active and not select:
             _ = self.post_message(self.SlashNavigate(self, -1))
+            return
+        start, end = self.selection
+        if not select and start == end and start[0] == 0:
+            self.action_history_previous()
             return
         super().action_cursor_up(select=select)
 
@@ -262,6 +295,11 @@ class PromptTextArea(TextArea):
             return
         if self.slash_complete_active and not select:
             _ = self.post_message(self.SlashNavigate(self, 1))
+            return
+        start, end = self.selection
+        last_row = len(self.text.split("\n")) - 1
+        if not select and start == end and start[0] == last_row:
+            self.action_history_next()
             return
         super().action_cursor_down(select=select)
 

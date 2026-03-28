@@ -4,6 +4,7 @@ __all__ = (
     "BashExecution",
     "MotherApp",
     "MotherConfig",
+    "PromptHistory",
     "NormalPrompt",
     "AgentModeCommand",
     "ModelsCommand",
@@ -20,6 +21,7 @@ __all__ = (
 
 from .bash_execution import BashExecution
 from .config import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherConfig, load_config
+from .history import PromptHistory
 from .mother import MotherApp, cli
 from .session import SessionManager
 from .user_commands import (
