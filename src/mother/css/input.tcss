@@ -24,6 +24,7 @@
 
 #slash-complete,
 #slash-argument-complete,
+#prompt-history-complete,
 #model-complete {
     margin: 0 0 0 3;
     max-height: 8;

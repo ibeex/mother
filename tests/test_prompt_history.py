@@ -8,7 +8,7 @@ from textual.binding import Binding, BindingType
 
 from mother import MotherApp
 from mother.history import PromptHistory
-from mother.widgets import PromptTextArea
+from mother.widgets import PromptHistoryComplete, PromptTextArea
 
 
 def _binding_signature(binding: BindingType) -> tuple[str, str]:
@@ -34,6 +34,10 @@ def test_prompt_history_appends_persists_and_searches(tmp_path: Path) -> None:
     assert reloaded.find_previous("alpha") == (1, "second alpha test")
     assert reloaded.find_previous("alpha", before_index=1) == (2, "alpha test")
     assert reloaded.find_previous("missing") is None
+    assert [match.text for match in reloaded.search("alpha")] == [
+        "alpha test",
+        "second alpha test",
+    ]
 
 
 def test_prompt_text_area_exposes_history_search_binding() -> None:
@@ -74,7 +78,7 @@ def test_up_and_down_browse_prompt_history_and_restore_draft(tmp_path: Path) -> 
     asyncio.run(run())
 
 
-def test_ctrl_r_searches_backward_through_prompt_history(tmp_path: Path) -> None:
+def test_ctrl_r_on_empty_opens_fuzzy_history_search(tmp_path: Path) -> None:
     async def run() -> None:
         history = PromptHistory(tmp_path / "prompt_history.jsonl")
         history.append("older alpha")
@@ -85,16 +89,98 @@ def test_ctrl_r_searches_backward_through_prompt_history(tmp_path: Path) -> None
         async with app.run_test() as pilot:
             await pilot.pause()
             text_area = app.query_one(PromptTextArea)
+            history_complete = app.query_one(PromptHistoryComplete)
+
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+
+            assert text_area.history_search_active is True
+            assert history_complete.display is True
+            assert [match.text for match in history_complete.matches] == [
+                "newer alpha",
+                "beta",
+                "older alpha",
+            ]
+
+            await pilot.press("a", "l", "p")
+            await pilot.pause()
+            assert [match.text for match in history_complete.matches] == [
+                "newer alpha",
+                "older alpha",
+            ]
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert text_area.text == "newer alpha"
+            assert text_area.history_search_active is False
+            assert history_complete.display is False
+
+    asyncio.run(run())
+
+
+def test_ctrl_r_on_current_input_shows_multiple_fuzzy_matches(tmp_path: Path) -> None:
+    async def run() -> None:
+        history = PromptHistory(tmp_path / "prompt_history.jsonl")
+        history.append("older alpha")
+        history.append("beta")
+        history.append("newer alpha")
+        app = MotherApp(prompt_history=history)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            text_area = app.query_one(PromptTextArea)
+            history_complete = app.query_one(PromptHistoryComplete)
             text_area.load_text("alpha")
             await pilot.pause()
 
             await pilot.press("ctrl+r")
             await pilot.pause()
-            assert text_area.text == "newer alpha"
+
+            assert text_area.text == "alpha"
+            assert text_area.history_search_active is True
+            assert history_complete.display is True
+            assert [match.text for match in history_complete.matches] == [
+                "newer alpha",
+                "older alpha",
+            ]
+
+            await pilot.press("down")
+            await pilot.pause()
+            await pilot.press("enter")
+            await pilot.pause()
+
+            assert text_area.text == "older alpha"
+            assert history_complete.display is False
+
+    asyncio.run(run())
+
+
+def test_history_search_escape_restores_original_text(tmp_path: Path) -> None:
+    async def run() -> None:
+        history = PromptHistory(tmp_path / "prompt_history.jsonl")
+        history.append("older alpha")
+        history.append("newer alpha")
+        app = MotherApp(prompt_history=history)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            text_area = app.query_one(PromptTextArea)
+            history_complete = app.query_one(PromptHistoryComplete)
+            text_area.load_text("alpha")
+            await pilot.pause()
 
             await pilot.press("ctrl+r")
             await pilot.pause()
-            assert text_area.text == "older alpha"
+            await pilot.press("backspace")
+            await pilot.pause()
+            assert history_complete.display is True
+
+            await pilot.press("escape")
+            await pilot.pause()
+
+            assert text_area.text == "alpha"
+            assert text_area.history_search_active is False
+            assert history_complete.display is False
 
     asyncio.run(run())
 

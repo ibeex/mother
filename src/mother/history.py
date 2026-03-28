@@ -9,6 +9,8 @@ from pathlib import Path
 from threading import RLock
 from typing import TypedDict, cast
 
+from mother.picker_search import PickerSearchField, filter_picker_items
+
 DEFAULT_PROMPT_HISTORY_FILE = Path.home() / ".mother" / "prompt_history.jsonl"
 
 
@@ -18,6 +20,13 @@ class PromptHistoryEntry(TypedDict):
     input: str
     ts: str
 
+
+@dataclass(frozen=True, slots=True)
+class PromptHistoryMatch:
+    """A searchable prompt-history entry addressed by reverse index."""
+
+    index: int
+    text: str
 
 
 def default_prompt_history_path() -> Path:
@@ -114,3 +123,16 @@ class PromptHistory:
             if normalized_query in entry.casefold():
                 return index, entry
         return None
+
+    def search(self, query: str) -> list[PromptHistoryMatch]:
+        """Return recent prompt-history matches ordered by fuzzy picker relevance."""
+        self._ensure_loaded()
+        matches = [
+            PromptHistoryMatch(index=index, text=text)
+            for index, text in enumerate(reversed(self._entries), start=1)
+        ]
+        return filter_picker_items(
+            matches,
+            query,
+            lambda match: (PickerSearchField(match.text, primary=True),),
+        )

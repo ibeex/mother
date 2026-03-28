@@ -13,6 +13,7 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStrea
 from textual.widgets.option_list import Option
 
 from mother.clipboard import read_clipboard_text
+from mother.history import PromptHistoryMatch
 from mother.slash_commands import (
     SlashArgumentChoice,
     SlashCommand,
@@ -67,6 +68,7 @@ class PromptTextArea(TextArea):
 
     slash_complete_active: bool = False
     slash_argument_complete_active: bool = False
+    history_search_active: bool = False
 
     @property
     def model_complete_active(self) -> bool:
@@ -156,6 +158,40 @@ class PromptTextArea(TextArea):
         def control(self) -> "PromptTextArea":
             return self.text_area
 
+    @dataclass
+    class HistorySearchNavigate(Message):
+        """Request that the prompt-history popup move its highlight."""
+
+        text_area: "PromptTextArea"
+        direction: int
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
+    class HistorySearchDismiss(Message):
+        """Request that the prompt-history popup close."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
+    @dataclass
+    class HistorySearchAccept(Message):
+        """Request that the prompt-history popup accept its current selection."""
+
+        text_area: "PromptTextArea"
+
+        @property
+        @override
+        def control(self) -> "PromptTextArea":
+            return self.text_area
+
     ModelNavigate: type[SlashArgumentNavigate] = SlashArgumentNavigate
     ModelDismiss: type[SlashArgumentDismiss] = SlashArgumentDismiss
     ModelAccept: type[SlashArgumentAccept] = SlashArgumentAccept
@@ -174,7 +210,10 @@ class PromptTextArea(TextArea):
         return True
 
     async def handle_enter_key(self) -> None:
-        """Select slash completions, submit built-ins, or insert a newline."""
+        """Select completions, submit built-ins, or insert a newline."""
+        if self.history_search_active:
+            _ = self.post_message(self.HistorySearchAccept(self))
+            return
         if self.slash_complete_active:
             _ = self.post_message(self.SlashAccept(self))
             return
@@ -218,6 +257,11 @@ class PromptTextArea(TextArea):
             await self.handle_enter_key()
             return
         if event.key == "tab":
+            if self.history_search_active:
+                _ = event.stop()
+                _ = event.prevent_default()
+                _ = self.post_message(self.HistorySearchAccept(self))
+                return
             if self.slash_complete_active:
                 _ = event.stop()
                 _ = event.prevent_default()
@@ -232,6 +276,11 @@ class PromptTextArea(TextArea):
                 _ = event.stop()
                 _ = event.prevent_default()
                 return
+        if self.history_search_active and event.key == "escape":
+            _ = event.stop()
+            _ = event.prevent_default()
+            _ = self.post_message(self.HistorySearchDismiss(self))
+            return
         if self.slash_argument_complete_active and event.key == "escape":
             _ = event.stop()
             _ = event.prevent_default()
@@ -276,6 +325,9 @@ class PromptTextArea(TextArea):
 
     @override
     def action_cursor_up(self, select: bool = False) -> None:
+        if self.history_search_active and not select:
+            _ = self.post_message(self.HistorySearchNavigate(self, -1))
+            return
         if self.slash_argument_complete_active and not select:
             _ = self.post_message(self.SlashArgumentNavigate(self, -1))
             return
@@ -290,6 +342,9 @@ class PromptTextArea(TextArea):
 
     @override
     def action_cursor_down(self, select: bool = False) -> None:
+        if self.history_search_active and not select:
+            _ = self.post_message(self.HistorySearchNavigate(self, 1))
+            return
         if self.slash_argument_complete_active and not select:
             _ = self.post_message(self.SlashArgumentNavigate(self, 1))
             return
@@ -374,6 +429,49 @@ class SlashArgumentComplete(OptionList):
             return None
         try:
             return self.matches[highlighted].value
+        except IndexError:
+            return None
+
+
+@final
+class PromptHistoryComplete(OptionList):
+    """Option list showing fuzzy prompt-history matches."""
+
+    def __init__(self) -> None:
+        super().__init__(id="prompt-history-complete")
+        self.matches: list[PromptHistoryMatch] = []
+
+    @staticmethod
+    def _format_match_label(text: str) -> str:
+        normalized = " ".join(text.split())
+        if not normalized:
+            return "(empty)"
+        if len(normalized) <= 120:
+            return normalized
+        return f"{normalized[:117]}…"
+
+    def update_matches(self, matches: list[PromptHistoryMatch]) -> bool:
+        """Refresh visible prompt-history matches for the active query."""
+        self.matches = matches
+        _ = self.clear_options()
+        if not self.matches:
+            _ = self.add_option(Option("No history matches", disabled=True))
+            self.highlighted = None
+            return False
+        _ = self.add_options(
+            Option(self._format_match_label(match.text), id=str(match.index))
+            for match in self.matches
+        )
+        self.highlighted = 0
+        return True
+
+    def highlighted_match(self) -> PromptHistoryMatch | None:
+        """Return the currently highlighted history match, if any."""
+        highlighted = self.highlighted
+        if highlighted is None:
+            return None
+        try:
+            return self.matches[highlighted]
         except IndexError:
             return None
 

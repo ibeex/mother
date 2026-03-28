@@ -33,7 +33,7 @@ from mother.bash_execution import BashExecution, format_for_context, format_for_
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
-from mother.history import PromptHistory
+from mother.history import PromptHistory, PromptHistoryMatch
 from mother.interrupts import UserInterruptedError
 from mother.model_picker import (
     AgentModeProvider,
@@ -79,6 +79,7 @@ from mother.widgets import (
     ConversationTurn,
     ModelComplete,
     OutputSection,
+    PromptHistoryComplete,
     PromptTextArea,
     Response,
     ShellOutput,
@@ -175,6 +176,7 @@ class MotherApp(App[None]):
         self._prompt_history_index: int = 0
         self._prompt_history_draft: str = ""
         self._prompt_history_search_query: str | None = None
+        self._prompt_history_search_restore_text: str = ""
         self.auto_scroll_enabled: bool = True
         self._response_waiting_animations: dict[int, _ResponseWaitingAnimation] = {}
         self._last_interrupt_escape_at: float | None = None
@@ -197,6 +199,9 @@ class MotherApp(App[None]):
                 slash_argument_complete = SlashArgumentComplete()
                 slash_argument_complete.display = False
                 yield slash_argument_complete
+                prompt_history_complete = PromptHistoryComplete()
+                prompt_history_complete.display = False
+                yield prompt_history_complete
                 with Horizontal(id="prompt-row"):
                     yield TurnLabel(">", classes="turn-gutter input-gutter")
                     yield PromptTextArea(id="prompt-input")
@@ -250,6 +255,11 @@ class MotherApp(App[None]):
         """Backward-compatible alias for the inline slash-argument popup widget."""
         return self.query_one(ModelComplete)
 
+    @property
+    def prompt_history_complete(self) -> PromptHistoryComplete:
+        """Return the fuzzy prompt-history popup widget."""
+        return self.query_one(PromptHistoryComplete)
+
     def _hide_slash_complete(self) -> None:
         """Hide slash-command autocomplete and restore normal prompt keys."""
         self.slash_complete.display = False
@@ -259,6 +269,11 @@ class MotherApp(App[None]):
         """Hide inline slash-argument autocomplete and restore normal prompt keys."""
         self.slash_argument_complete.display = False
         self.prompt_input.slash_argument_complete_active = False
+
+    def _hide_prompt_history_complete(self) -> None:
+        """Hide prompt-history search results and restore normal prompt keys."""
+        self.prompt_history_complete.display = False
+        self.prompt_input.history_search_active = False
 
     def _prompt_text_end_location(self, text: str) -> tuple[int, int]:
         """Return the cursor location representing the end of ``text``."""
@@ -277,6 +292,49 @@ class MotherApp(App[None]):
         self.prompt_input.load_text(text)
         self.prompt_input.move_cursor(self._prompt_text_end_location(text), record_width=False)
         _ = self.prompt_input.focus()
+
+    def _refresh_prompt_history_search_matches(self, query: str) -> bool:
+        """Refresh the prompt-history popup for the current fuzzy query."""
+        matches = self.prompt_history.search(query)
+        has_matches = self.prompt_history_complete.update_matches(matches)
+        self.prompt_history_complete.display = True
+        self.prompt_input.history_search_active = True
+        return has_matches
+
+    def _selected_prompt_history_match(self) -> PromptHistoryMatch | None:
+        """Return the highlighted fuzzy prompt-history match, if any."""
+        if not self.prompt_history_complete.display:
+            return None
+        return self.prompt_history_complete.highlighted_match()
+
+    def _start_prompt_history_search(self, query: str | None = None) -> None:
+        """Open fuzzy prompt-history search using the prompt text as its initial query."""
+        initial_query = self.prompt_input.text if query is None else query
+        self._prompt_history_search_restore_text = self.prompt_input.text
+        self._prompt_history_search_query = initial_query
+        self._hide_slash_argument_complete()
+        self._hide_slash_complete()
+        _ = self._refresh_prompt_history_search_matches(initial_query)
+        _ = self.prompt_input.focus()
+
+    def _accept_prompt_history_search(self, match: PromptHistoryMatch | None = None) -> None:
+        """Accept the currently highlighted prompt-history search result."""
+        selected_match = match or self._selected_prompt_history_match()
+        if selected_match is None:
+            return
+        self._prompt_history_draft = self._prompt_history_search_restore_text
+        self._prompt_history_index = selected_match.index
+        self._prompt_history_search_query = None
+        self._apply_prompt_history_text(selected_match.text)
+        self._hide_prompt_history_complete()
+
+    def _dismiss_prompt_history_search(self) -> None:
+        """Close prompt-history search and restore the pre-search draft."""
+        restore_text = self._prompt_history_search_restore_text
+        self._prompt_history_search_query = None
+        self._hide_prompt_history_complete()
+        self._apply_prompt_history_text(restore_text)
+        self._reset_prompt_history_state(restore_text)
 
     def action_prompt_history_previous(self) -> None:
         """Recall the previous submitted prompt from persistent history."""
@@ -308,32 +366,14 @@ class MotherApp(App[None]):
         self._apply_prompt_history_text(self.prompt_history.entry(next_index))
 
     def action_prompt_history_search(self) -> None:
-        """Search backward through prompt history using the current draft as a query."""
+        """Open fuzzy prompt-history search for the current input or an empty query."""
         text_area = self.prompt_input
-        if text_area.read_only:
+        if text_area.read_only or text_area.history_search_active:
             return
-        if self._prompt_history_index == 0:
-            query = text_area.text.strip()
-            if not query:
-                self.notify(
-                    "Type part of a previous prompt, then press Ctrl+R",
-                    title="History",
-                    severity="warning",
-                )
-                return
-            self._prompt_history_draft = text_area.text
-        else:
-            query = self._prompt_history_search_query or text_area.text.strip()
-            if not query:
-                return
-        match = self.prompt_history.find_previous(query, before_index=self._prompt_history_index)
-        if match is None:
-            self.notify(f"No history match for '{query}'", title="History")
+        if self.prompt_history.size == 0:
+            self.notify("No prompt history yet", title="History")
             return
-        index, matched_text = match
-        self._prompt_history_index = index
-        self._prompt_history_search_query = query
-        self._apply_prompt_history_text(matched_text)
+        self._start_prompt_history_search(text_area.text)
 
     def _current_slash_argument_value(self, command: str) -> str | None:
         """Return the active value to highlight for a slash command argument."""
@@ -835,9 +875,17 @@ class MotherApp(App[None]):
             self._suppress_prompt_completion_once = None
             self._hide_slash_argument_complete()
             self._hide_slash_complete()
+            self._hide_prompt_history_complete()
             self._reset_prompt_history_state(event.text_area.text)
             return
         self._suppress_prompt_completion_once = None
+        if self.prompt_input.history_search_active:
+            self._prompt_history_search_query = event.text_area.text
+            self._hide_slash_argument_complete()
+            self._hide_slash_complete()
+            _ = self._refresh_prompt_history_search_matches(event.text_area.text)
+            return
+        self._hide_prompt_history_complete()
         self._reset_prompt_history_state(event.text_area.text)
         self._refresh_prompt_completions(event.text_area.text)
 
@@ -863,6 +911,19 @@ class MotherApp(App[None]):
             self.slash_argument_complete.action_cursor_up()
         else:
             self.slash_argument_complete.action_cursor_down()
+
+    @on(PromptTextArea.HistorySearchNavigate)
+    def on_prompt_text_area_history_search_navigate(
+        self,
+        event: PromptTextArea.HistorySearchNavigate,
+    ) -> None:
+        """Move the prompt-history fuzzy-search highlight while the prompt retains focus."""
+        if not event.text_area.history_search_active:
+            return
+        if event.direction < 0:
+            self.prompt_history_complete.action_cursor_up()
+        else:
+            self.prompt_history_complete.action_cursor_down()
 
     @on(PromptTextArea.SlashAccept)
     def on_prompt_text_area_slash_accept(self, event: PromptTextArea.SlashAccept) -> None:
@@ -900,6 +961,24 @@ class MotherApp(App[None]):
         if event.text_area is self.prompt_input:
             await self.action_submit()
 
+    @on(PromptTextArea.HistorySearchAccept)
+    def on_prompt_text_area_history_search_accept(
+        self,
+        event: PromptTextArea.HistorySearchAccept,
+    ) -> None:
+        """Insert the currently highlighted prompt-history search result into the prompt."""
+        if event.text_area.history_search_active:
+            self._accept_prompt_history_search()
+
+    @on(PromptTextArea.HistorySearchDismiss)
+    def on_prompt_text_area_history_search_dismiss(
+        self,
+        event: PromptTextArea.HistorySearchDismiss,
+    ) -> None:
+        """Dismiss prompt-history fuzzy search and restore the prior draft."""
+        if event.text_area.history_search_active:
+            self._dismiss_prompt_history_search()
+
     @on(OptionList.OptionSelected)
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         """Handle prompt popup selections from slash and argument helpers."""
@@ -917,6 +996,10 @@ class MotherApp(App[None]):
 
         if event.option_list is self.slash_argument_complete and event.option.id is not None:
             self._apply_slash_argument_completion(event.option.id)
+            return
+
+        if event.option_list is self.prompt_history_complete and event.option.id is not None:
+            self._accept_prompt_history_search()
 
     async def action_submit(self) -> None:
         """When the user hits Ctrl+Enter."""
