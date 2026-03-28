@@ -10,13 +10,13 @@ from typing import cast, final
 from unittest.mock import patch
 
 from pydantic_ai import Tool
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from textual.worker import Worker
 
 from mother import MotherApp, MotherConfig
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
-from mother.runtime import RuntimeResponse, RuntimeToolEvent
+from mother.runtime import RuntimePartialRunError, RuntimeResponse, RuntimeToolEvent
 from mother.stats import TurnUsage
 from mother.tools.bash_capture import BashResult
 from mother.widgets import PromptTextArea, Response, ShellOutput, ThinkingOutput
@@ -148,6 +148,15 @@ class _InterruptedRuntime:
         if on_text_update is not None:
             on_text_update("partial answer")
         raise UserInterruptedError()
+
+
+@final
+class _PartialHistoryRuntime:
+    def __init__(self, partial_messages: list[ModelMessage]) -> None:
+        self.partial_messages = partial_messages
+
+    async def run_stream(self, **_: object) -> RuntimeResponse:
+        raise RuntimePartialRunError(RuntimeError("boom"), self.partial_messages)
 
 
 def _call_from_thread(callback: object, *args: object) -> object:
@@ -504,6 +513,40 @@ def test_run_runtime_request_preserves_partial_output_when_interrupted() -> None
     assert response.appended_fragments == ["partial answer", "\n\n_Interrupted by user._"]
     assert response.stop_stream_calls == 1
     assert response.reset_texts == ["partial answer\n\n_Interrupted by user._"]
+
+
+def test_run_runtime_request_preserves_partial_history_on_failure() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+    partial_messages = [
+        cast(
+            ModelMessage,
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name="bash", content="README.md", tool_call_id="call-1")]
+            ),
+        )
+    ]
+
+    with (
+        patch("mother.mother.ChatRuntime", return_value=_PartialHistoryRuntime(partial_messages)),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text is None
+    assert app.conversation_state.message_history == partial_messages
+    assert response.updated_texts == ["**Error:** boom"]
+    assert response.stop_stream_calls == 1
+    assert response.reset_texts == ["**Error:** boom"]
 
 
 def test_handle_interrupt_escape_requires_double_press() -> None:

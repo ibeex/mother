@@ -12,16 +12,21 @@ from pathlib import Path
 from time import perf_counter
 from typing import Literal, cast
 
-from pydantic_ai import Agent, AgentRunResultEvent, Tool
+from pydantic_ai import Agent, AgentRunResultEvent, Tool, capture_run_messages
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
+    ModelRequest,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolReturnPart,
     UserContent,
 )
 from pydantic_ai.settings import ModelSettings
@@ -48,6 +53,18 @@ class RuntimeResponse:
     all_messages: list[ModelMessage]
     usage: TurnUsage
     agent_mode_used: bool
+
+
+class RuntimePartialRunError(Exception):
+    """Runtime error carrying safe partial history from a failed run."""
+
+    cause: Exception
+    partial_messages: list[ModelMessage]
+
+    def __init__(self, cause: Exception, partial_messages: list[ModelMessage]) -> None:
+        super().__init__(str(cause))
+        self.cause = cause
+        self.partial_messages = partial_messages
 
 
 class ChatRuntime:
@@ -183,6 +200,33 @@ class ChatRuntime:
             "tool" in message and ("unsupported" in message or "not support" in message)
         )
 
+    @staticmethod
+    def _preserve_partial_messages(
+        messages: list[ModelMessage], error: Exception
+    ) -> list[ModelMessage] | None:
+        if not isinstance(error, UsageLimitExceeded):
+            return None
+
+        preserved = list(messages)
+        while preserved:
+            last_message = preserved[-1]
+            if isinstance(last_message, ModelResponse) and last_message.tool_calls:
+                _ = preserved.pop()
+                continue
+            break
+
+        if not preserved:
+            return None
+
+        last_message = preserved[-1]
+        if not isinstance(last_message, ModelRequest):
+            return None
+        if not any(
+            isinstance(part, ToolReturnPart | RetryPromptPart) for part in last_message.parts
+        ):
+            return None
+        return preserved
+
     async def run_stream(
         self,
         *,
@@ -212,41 +256,43 @@ class ChatRuntime:
         usage_limits = UsageLimits(tool_calls_limit=tool_call_limit) if wrapped_tools else None
         started_at = perf_counter()
 
+        captured_messages: list[ModelMessage] = []
         try:
             full_text = ""
             full_thinking = ""
             final_result: AgentRunResultEvent[str] | None = None
 
-            async for event in agent.run_stream_events(
-                user_prompt,
-                message_history=message_history,
-                model_settings=cast(ModelSettings, cast(object, model_settings)),
-                usage_limits=usage_limits,
-            ):
-                if isinstance(event, AgentRunResultEvent):
-                    final_result = event
-                    break
+            with capture_run_messages() as captured_messages:
+                async for event in agent.run_stream_events(
+                    user_prompt,
+                    message_history=message_history,
+                    model_settings=cast(ModelSettings, cast(object, model_settings)),
+                    usage_limits=usage_limits,
+                ):
+                    if isinstance(event, AgentRunResultEvent):
+                        final_result = event
+                        break
 
-                if isinstance(event, PartStartEvent):
-                    if isinstance(event.part, ThinkingPart) and event.part.content:
-                        full_thinking += event.part.content
-                        if on_thinking_update is not None:
-                            on_thinking_update(full_thinking)
-                    elif isinstance(event.part, TextPart) and event.part.content:
-                        full_text += event.part.content
-                        if on_text_update is not None:
-                            on_text_update(full_text)
-                    continue
+                    if isinstance(event, PartStartEvent):
+                        if isinstance(event.part, ThinkingPart) and event.part.content:
+                            full_thinking += event.part.content
+                            if on_thinking_update is not None:
+                                on_thinking_update(full_thinking)
+                        elif isinstance(event.part, TextPart) and event.part.content:
+                            full_text += event.part.content
+                            if on_text_update is not None:
+                                on_text_update(full_text)
+                        continue
 
-                if isinstance(event, PartDeltaEvent):
-                    if isinstance(event.delta, ThinkingPartDelta) and event.delta.content_delta:
-                        full_thinking += event.delta.content_delta
-                        if on_thinking_update is not None:
-                            on_thinking_update(full_thinking)
-                    elif isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
-                        full_text += event.delta.content_delta
-                        if on_text_update is not None:
-                            on_text_update(full_text)
+                    if isinstance(event, PartDeltaEvent):
+                        if isinstance(event.delta, ThinkingPartDelta) and event.delta.content_delta:
+                            full_thinking += event.delta.content_delta
+                            if on_thinking_update is not None:
+                                on_thinking_update(full_thinking)
+                        elif isinstance(event.delta, TextPartDelta) and event.delta.content_delta:
+                            full_text += event.delta.content_delta
+                            if on_text_update is not None:
+                                on_text_update(full_text)
 
             if final_result is None:
                 raise RuntimeError("Agent stream ended without a final result")
@@ -280,21 +326,24 @@ class ChatRuntime:
             if isinstance(exc, UserInterruptedError):
                 raise
             if (
-                not wrapped_tools
-                or not allow_tool_fallback
-                or not self._is_unsupported_tools_error(exc)
+                wrapped_tools
+                and allow_tool_fallback
+                and self._is_unsupported_tools_error(exc)
             ):
-                raise
-            return await self.run_stream(
-                prompt_text=prompt_text,
-                system_prompt=system_prompt,
-                message_history=message_history,
-                attachments=attachments,
-                tools=[],
-                model_settings=model_settings,
-                tool_call_limit=None,
-                allow_tool_fallback=False,
-                on_text_update=on_text_update,
-                on_thinking_update=on_thinking_update,
-                on_tool_event=on_tool_event,
-            )
+                return await self.run_stream(
+                    prompt_text=prompt_text,
+                    system_prompt=system_prompt,
+                    message_history=message_history,
+                    attachments=attachments,
+                    tools=[],
+                    model_settings=model_settings,
+                    tool_call_limit=None,
+                    allow_tool_fallback=False,
+                    on_text_update=on_text_update,
+                    on_thinking_update=on_thinking_update,
+                    on_tool_event=on_tool_event,
+                )
+            partial_messages = self._preserve_partial_messages(captured_messages, exc)
+            if partial_messages is not None:
+                raise RuntimePartialRunError(exc, partial_messages) from exc
+            raise

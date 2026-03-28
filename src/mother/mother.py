@@ -51,7 +51,7 @@ from mother.reasoning import (
     supports_openai_reasoning_summary,
     supports_reasoning_effort,
 )
-from mother.runtime import ChatRuntime, RuntimeToolEvent
+from mother.runtime import ChatRuntime, RuntimePartialRunError, RuntimeToolEvent
 from mother.session import SessionManager, format_markdown_export
 from mother.slash_commands import (
     SLASH_COMMANDS,
@@ -1542,6 +1542,13 @@ class MotherApp(App[None]):
             interrupted_text = self._format_interrupted_output(visible_text or exc.partial_output)
             self._show_error(response, interrupted_text)
             self._record_session_event("turn_interrupted", {"agent_mode": self.agent_mode})
+            return None
+        except RuntimePartialRunError as exc:
+            if thinking_streaming:
+                assert thinking_output is not None
+                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+            self.conversation_state.message_history = list(exc.partial_messages)
+            self._show_error(response, f"**Error:** {exc.cause}")
             return None
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")

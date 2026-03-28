@@ -6,15 +6,21 @@ from unittest.mock import patch
 
 from pydantic_ai import AgentRunResultEvent, Tool
 from pydantic_ai._agent_graph import GraphAgentState
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
+    RetryPromptPart,
     TextPart,
     TextPartDelta,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
@@ -125,6 +131,57 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
             "usage_limits": None,
         }
     ]
+
+
+def test_preserve_partial_messages_keeps_completed_tool_results() -> None:
+    request = ModelRequest(parts=[UserPromptPart("read the readme")])
+    first_response = ModelResponse(
+        parts=[ToolCallPart(tool_name="bash", args={"command": "ls"}, tool_call_id="call-1")]
+    )
+    tool_result_request = ModelRequest(
+        parts=[ToolReturnPart(tool_name="bash", content="README.md", tool_call_id="call-1")]
+    )
+    blocked_response = ModelResponse(
+        parts=[ToolCallPart(tool_name="read", args={"path": "README.md"}, tool_call_id="call-2")]
+    )
+
+    preserved = ChatRuntime._preserve_partial_messages(  # pyright: ignore[reportPrivateUsage]
+        [request, first_response, tool_result_request, blocked_response],
+        UsageLimitExceeded("tool limit reached"),
+    )
+
+    assert preserved == [request, first_response, tool_result_request]
+
+
+def test_preserve_partial_messages_skips_unresolved_tool_batches() -> None:
+    request = ModelRequest(parts=[UserPromptPart("read the readme")])
+    blocked_response = ModelResponse(
+        parts=[
+            ToolCallPart(tool_name="bash", args={"command": "ls"}, tool_call_id="call-1"),
+            ToolCallPart(tool_name="read", args={"path": "README.md"}, tool_call_id="call-2"),
+        ]
+    )
+
+    preserved = ChatRuntime._preserve_partial_messages(  # pyright: ignore[reportPrivateUsage]
+        [request, blocked_response],
+        UsageLimitExceeded("tool limit reached"),
+    )
+
+    assert preserved is None
+
+
+def test_preserve_partial_messages_keeps_retry_prompt_requests() -> None:
+    request = ModelRequest(parts=[UserPromptPart("open config")])
+    retry_request = ModelRequest(
+        parts=[RetryPromptPart(content="bad args", tool_name="read", tool_call_id="call-1")]
+    )
+
+    preserved = ChatRuntime._preserve_partial_messages(  # pyright: ignore[reportPrivateUsage]
+        [request, retry_request],
+        UsageLimitExceeded("tool limit reached"),
+    )
+
+    assert preserved == [request, retry_request]
 
 
 def test_tool_arguments_omit_function_defaults() -> None:
