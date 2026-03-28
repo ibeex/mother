@@ -36,6 +36,10 @@ from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry, create_pydantic_model
 from mother.stats import TurnUsage
 
+_TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT = (
+    "Reply to the user in plain text only using the completed tool result. Do not call tools."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeToolEvent:
@@ -53,6 +57,7 @@ class RuntimeResponse:
     all_messages: list[ModelMessage]
     usage: TurnUsage
     agent_mode_used: bool
+    tool_limit_recovery_used: bool = False
 
 
 class RuntimePartialRunError(Exception):
@@ -227,6 +232,27 @@ class ChatRuntime:
             return None
         return preserved
 
+    @staticmethod
+    def _should_retry_text_only_after_tool_limit(
+        error: Exception,
+        *,
+        partial_messages: list[ModelMessage] | None,
+        wrapped_tools: list[Tool[None]],
+        tool_call_limit: int | None,
+    ) -> bool:
+        if not (
+            isinstance(error, UsageLimitExceeded)
+            and bool(wrapped_tools)
+            and tool_call_limit == 1
+            and partial_messages
+        ):
+            return False
+
+        last_message = partial_messages[-1]
+        return isinstance(last_message, ModelRequest) and any(
+            isinstance(part, ToolReturnPart) for part in last_message.parts
+        )
+
     async def run_stream(
         self,
         *,
@@ -344,6 +370,33 @@ class ChatRuntime:
                     on_tool_event=on_tool_event,
                 )
             partial_messages = self._preserve_partial_messages(captured_messages, exc)
+            if self._should_retry_text_only_after_tool_limit(
+                exc,
+                partial_messages=partial_messages,
+                wrapped_tools=wrapped_tools,
+                tool_call_limit=tool_call_limit,
+            ):
+                assert partial_messages is not None
+                recovery_response = await self.run_stream(
+                    prompt_text=_TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT,
+                    system_prompt=system_prompt,
+                    message_history=partial_messages,
+                    attachments=[],
+                    tools=[],
+                    model_settings=model_settings,
+                    tool_call_limit=None,
+                    allow_tool_fallback=False,
+                    on_text_update=on_text_update,
+                    on_thinking_update=on_thinking_update,
+                    on_tool_event=on_tool_event,
+                )
+                return RuntimeResponse(
+                    text=recovery_response.text,
+                    all_messages=recovery_response.all_messages,
+                    usage=recovery_response.usage,
+                    agent_mode_used=recovery_response.agent_mode_used,
+                    tool_limit_recovery_used=True,
+                )
             if partial_messages is not None:
                 raise RuntimePartialRunError(exc, partial_messages) from exc
             raise

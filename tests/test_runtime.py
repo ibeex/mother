@@ -32,11 +32,13 @@ from mother.runtime import ChatRuntime
 @final
 class _FakeAgent:
     events: tuple[object, ...] = ()
+    event_batches: list[tuple[object, ...]] = []
     init_calls: list[dict[str, object]] = []
     run_calls: list[dict[str, object]] = []
 
     def __init__(self, model: object, tools: list[object], instructions: str) -> None:
         type(self).init_calls.append({"model": model, "tools": tools, "instructions": instructions})
+        self._events = type(self).event_batches.pop(0) if type(self).event_batches else type(self).events
 
     async def run_stream_events(
         self,
@@ -54,7 +56,9 @@ class _FakeAgent:
                 "usage_limits": usage_limits,
             }
         )
-        for event in type(self).events:
+        for event in self._events:
+            if isinstance(event, Exception):
+                raise event
             yield event
 
 
@@ -86,6 +90,7 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
         PartDeltaEvent(index=1, delta=TextPartDelta(content_delta="answer")),
         AgentRunResultEvent(result=result),
     )
+    _FakeAgent.event_batches = []
     _FakeAgent.init_calls = []
     _FakeAgent.run_calls = []
     callback_events: list[tuple[str, str]] = []
@@ -117,6 +122,7 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
     ]
     assert runtime_response.text == "final answer"
     assert runtime_response.all_messages == [cast(ModelMessage, response)]
+    assert runtime_response.tool_limit_recovery_used is False
     assert runtime_response.usage.request_tokens == 123
     assert runtime_response.usage.response_tokens == 45
     assert runtime_response.usage.cache_read_tokens == 6
@@ -182,6 +188,75 @@ def test_preserve_partial_messages_keeps_retry_prompt_requests() -> None:
     )
 
     assert preserved == [request, retry_request]
+
+
+def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
+    entry = ModelEntry(
+        id="local_3",
+        name="local_3",
+        api_type="openai-chat",
+        supports_reasoning=True,
+    )
+    preserved_messages = [
+        ModelRequest(parts=[UserPromptPart("tell me about current project")]),
+        ModelResponse(
+            parts=[ToolCallPart(tool_name="bash", args={"command": "ls -la"}, tool_call_id="call-1")]
+        ),
+        ModelRequest(
+            parts=[ToolReturnPart(tool_name="bash", content="README.md\nsrc\ntests", tool_call_id="call-1")]
+        ),
+    ]
+    final_text = "I found README.md, src, and tests. Would you like me to inspect README next?"
+    final_response = ModelResponse(parts=[TextPart(content=final_text)])
+    usage = RunUsage(input_tokens=12, output_tokens=9)
+    result = AgentRunResult(
+        final_text,
+        _state=GraphAgentState(
+            message_history=[*preserved_messages, cast(ModelMessage, final_response)],
+            usage=usage,
+        ),
+    )
+
+    async def sample_tool() -> str:
+        return "ok"
+
+    _FakeAgent.events = ()
+    _FakeAgent.event_batches = [
+        (UsageLimitExceeded("tool limit reached"),),
+        (AgentRunResultEvent(result=result),),
+    ]
+    _FakeAgent.init_calls = []
+    _FakeAgent.run_calls = []
+
+    runtime = ChatRuntime(entry)
+
+    with (
+        patch("mother.runtime.Agent", _FakeAgent),
+        patch("mother.runtime.create_pydantic_model", return_value=object()),
+        patch.object(ChatRuntime, "_preserve_partial_messages", return_value=preserved_messages),
+    ):
+        runtime_response = asyncio.run(
+            runtime.run_stream(
+                prompt_text="hi, tell me about current project",
+                system_prompt="system",
+                message_history=[],
+                attachments=[],
+                tools=[Tool(sample_tool, name="bash")],
+                model_settings={},
+                tool_call_limit=1,
+                allow_tool_fallback=False,
+            )
+        )
+
+    assert runtime_response.text == final_text
+    assert runtime_response.tool_limit_recovery_used is True
+    assert len(_FakeAgent.init_calls) == 2
+    assert len(cast(list[object], _FakeAgent.init_calls[0]["tools"])) == 1
+    assert len(cast(list[object], _FakeAgent.init_calls[1]["tools"])) == 0
+    assert _FakeAgent.run_calls[1]["message_history"] == preserved_messages
+    assert _FakeAgent.run_calls[1]["user_prompt"] == (
+        "Reply to the user in plain text only using the completed tool result. Do not call tools."
+    )
 
 
 def test_tool_arguments_omit_function_defaults() -> None:

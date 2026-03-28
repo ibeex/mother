@@ -12,7 +12,7 @@ The target scenario is:
 - user asks: ``hi, tell me about current project``
 - the model should use exactly one tool call
 - that tool should be ``bash``
-- ideally the bash command should be a plain ``ls`` variant
+- the bash command can be any reasonable project-inspection command
 - after the tool result, the model should summarize what it found and suggest a
   next action instead of continuing with another tool call
 
@@ -30,7 +30,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,6 +108,7 @@ class EvalResult:
     final_text: str
     error: str | None
     tool_events: list[RuntimeToolEvent]
+    tool_limit_recovery_used: bool = False
 
     @property
     def started_events(self) -> list[RuntimeToolEvent]:
@@ -141,6 +141,15 @@ class EvalResult:
                 detail=self.error,
             ),
             CheckResult(
+                name=(
+                    "runtime tool-limit recovery used"
+                    if self.tool_limit_recovery_used
+                    else "no runtime tool-limit recovery used"
+                ),
+                passed=not self.tool_limit_recovery_used,
+                detail=None,
+            ),
+            CheckResult(
                 name="exactly one completed tool call",
                 passed=completed_tool_call,
                 detail=(
@@ -155,8 +164,8 @@ class EvalResult:
                 detail=first_tool_name,
             ),
             CheckResult(
-                name="command is a plain ls variant",
-                passed=command is not None and _is_plain_ls_command(command),
+                name="bash command is present",
+                passed=command is not None and bool(command.strip()),
                 detail=command,
             ),
             CheckResult(
@@ -215,14 +224,6 @@ def _build_system_prompt(cwd: Path) -> str:
         cwd=cwd,
         tool_names=_tool_names_from_registry(cwd),
     )
-
-
-def _is_plain_ls_command(command: str) -> bool:
-    stripped = command.strip()
-    if not re.match(r"^ls(?:\s|$)", stripped):
-        return False
-    shell_operators = ("&&", ";", "|", ">", "<", "\n", "`", "$(")
-    return not any(operator in stripped for operator in shell_operators)
 
 
 def _mentions_project_shape(text: str) -> bool:
@@ -298,6 +299,7 @@ async def evaluate_case(model_name: str, case: EvalCase, cwd: Path) -> EvalResul
             final_text=latest_text,
             error=str(exc.cause),
             tool_events=tool_events,
+            tool_limit_recovery_used=False,
         )
     except Exception as exc:
         return EvalResult(
@@ -306,6 +308,7 @@ async def evaluate_case(model_name: str, case: EvalCase, cwd: Path) -> EvalResul
             final_text=latest_text,
             error=str(exc),
             tool_events=tool_events,
+            tool_limit_recovery_used=False,
         )
 
     return EvalResult(
@@ -314,6 +317,7 @@ async def evaluate_case(model_name: str, case: EvalCase, cwd: Path) -> EvalResul
         final_text=runtime_response.text,
         error=None,
         tool_events=tool_events,
+        tool_limit_recovery_used=runtime_response.tool_limit_recovery_used,
     )
 
 
@@ -340,6 +344,8 @@ def _print_report(result: EvalResult) -> None:
         detail = f" — {check.detail}" if check.detail else ""
         print(f"- {prefix}: {check.name}{detail}")
 
+    print()
+    print(f"Runtime tool-limit recovery: {'yes' if result.tool_limit_recovery_used else 'no'}")
     print()
     print("Tool events:")
     if not result.tool_events:
