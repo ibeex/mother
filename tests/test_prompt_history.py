@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import patch
 
+from rich.text import Text
 from textual.binding import Binding, BindingType
 
 from mother import MotherApp
@@ -38,6 +39,20 @@ def test_prompt_history_appends_persists_and_searches(tmp_path: Path) -> None:
         "alpha test",
         "second alpha test",
     ]
+
+
+def test_prompt_history_search_deduplicates_identical_entries(tmp_path: Path) -> None:
+    history_path = tmp_path / "prompt_history.jsonl"
+    history = PromptHistory(history_path)
+
+    history.append("duplicate prompt")
+    history.append("something else")
+    history.append("duplicate prompt")
+
+    matches = history.search("")
+
+    assert [match.text for match in matches] == ["duplicate prompt", "something else"]
+    assert matches[0].index == 1
 
 
 def test_prompt_text_area_exposes_history_search_binding() -> None:
@@ -90,11 +105,13 @@ def test_ctrl_r_on_empty_opens_fuzzy_history_search(tmp_path: Path) -> None:
             await pilot.pause()
             text_area = app.query_one(PromptTextArea)
             history_complete = app.query_one(PromptHistoryComplete)
+            history_help = app.query_one("#prompt-history-help")
 
             await pilot.press("ctrl+r")
             await pilot.pause()
 
             assert text_area.history_search_active is True
+            assert history_help.display is True
             assert history_complete.display is True
             assert [match.text for match in history_complete.matches] == [
                 "newer alpha",
@@ -113,7 +130,33 @@ def test_ctrl_r_on_empty_opens_fuzzy_history_search(tmp_path: Path) -> None:
             await pilot.pause()
             assert text_area.text == "newer alpha"
             assert text_area.history_search_active is False
+            assert history_help.display is False
             assert history_complete.display is False
+
+    asyncio.run(run())
+
+
+def test_history_search_formats_multiline_preview_and_highlights_query(tmp_path: Path) -> None:
+    async def run() -> None:
+        history = PromptHistory(tmp_path / "prompt_history.jsonl")
+        history.append("first line\nsecond line\nthird line")
+        app = MotherApp(prompt_history=history)
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            text_area = app.query_one(PromptTextArea)
+            history_complete = app.query_one(PromptHistoryComplete)
+            text_area.load_text("second")
+            await pilot.pause()
+
+            await pilot.press("ctrl+r")
+            await pilot.pause()
+
+            option = history_complete.get_option_at_index(0)
+            prompt = option.prompt
+            assert isinstance(prompt, Text)
+            assert prompt.plain == "first line ↵ second line ↵ +1 more"
+            assert any(span.style == "bold reverse" for span in prompt.spans)
 
     asyncio.run(run())
 
@@ -130,6 +173,7 @@ def test_ctrl_r_on_current_input_shows_multiple_fuzzy_matches(tmp_path: Path) ->
             await pilot.pause()
             text_area = app.query_one(PromptTextArea)
             history_complete = app.query_one(PromptHistoryComplete)
+            history_help = app.query_one("#prompt-history-help")
             text_area.load_text("alpha")
             await pilot.pause()
 
@@ -138,6 +182,7 @@ def test_ctrl_r_on_current_input_shows_multiple_fuzzy_matches(tmp_path: Path) ->
 
             assert text_area.text == "alpha"
             assert text_area.history_search_active is True
+            assert history_help.display is True
             assert history_complete.display is True
             assert [match.text for match in history_complete.matches] == [
                 "newer alpha",
@@ -150,6 +195,7 @@ def test_ctrl_r_on_current_input_shows_multiple_fuzzy_matches(tmp_path: Path) ->
             await pilot.pause()
 
             assert text_area.text == "older alpha"
+            assert history_help.display is False
             assert history_complete.display is False
 
     asyncio.run(run())
@@ -166,6 +212,7 @@ def test_history_search_escape_restores_original_text(tmp_path: Path) -> None:
             await pilot.pause()
             text_area = app.query_one(PromptTextArea)
             history_complete = app.query_one(PromptHistoryComplete)
+            history_help = app.query_one("#prompt-history-help")
             text_area.load_text("alpha")
             await pilot.pause()
 
@@ -173,6 +220,7 @@ def test_history_search_escape_restores_original_text(tmp_path: Path) -> None:
             await pilot.pause()
             await pilot.press("backspace")
             await pilot.pause()
+            assert history_help.display is True
             assert history_complete.display is True
 
             await pilot.press("escape")
@@ -180,6 +228,7 @@ def test_history_search_escape_restores_original_text(tmp_path: Path) -> None:
 
             assert text_area.text == "alpha"
             assert text_area.history_search_active is False
+            assert history_help.display is False
             assert history_complete.display is False
 
     asyncio.run(run())

@@ -17,7 +17,7 @@ from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
-from textual.widgets import Footer, Header, OptionList, TextArea
+from textual.widgets import Footer, Header, OptionList, Static, TextArea
 from textual.worker import Worker, WorkerState
 
 from mother.agent_modes import (
@@ -199,6 +199,12 @@ class MotherApp(App[None]):
                 slash_argument_complete = SlashArgumentComplete()
                 slash_argument_complete.display = False
                 yield slash_argument_complete
+                prompt_history_help = Static(
+                    "History search · ↑↓ navigate · Enter accept · Esc cancel",
+                    id="prompt-history-help",
+                )
+                prompt_history_help.display = False
+                yield prompt_history_help
                 prompt_history_complete = PromptHistoryComplete()
                 prompt_history_complete.display = False
                 yield prompt_history_complete
@@ -256,6 +262,11 @@ class MotherApp(App[None]):
         return self.query_one(ModelComplete)
 
     @property
+    def prompt_history_help(self) -> Static:
+        """Return the prompt-history helper label shown above the picker."""
+        return self.query_one("#prompt-history-help", Static)
+
+    @property
     def prompt_history_complete(self) -> PromptHistoryComplete:
         """Return the fuzzy prompt-history popup widget."""
         return self.query_one(PromptHistoryComplete)
@@ -272,6 +283,7 @@ class MotherApp(App[None]):
 
     def _hide_prompt_history_complete(self) -> None:
         """Hide prompt-history search results and restore normal prompt keys."""
+        self.prompt_history_help.display = False
         self.prompt_history_complete.display = False
         self.prompt_input.history_search_active = False
 
@@ -296,7 +308,7 @@ class MotherApp(App[None]):
     def _refresh_prompt_history_search_matches(self, query: str) -> bool:
         """Refresh the prompt-history popup for the current fuzzy query."""
         matches = self.prompt_history.search(query)
-        has_matches = self.prompt_history_complete.update_matches(matches)
+        has_matches = self.prompt_history_complete.update_matches(matches, query)
         self.prompt_history_complete.display = True
         self.prompt_input.history_search_active = True
         return has_matches
@@ -314,6 +326,7 @@ class MotherApp(App[None]):
         self._prompt_history_search_query = initial_query
         self._hide_slash_argument_complete()
         self._hide_slash_complete()
+        self.prompt_history_help.display = True
         _ = self._refresh_prompt_history_search_matches(initial_query)
         _ = self.prompt_input.focus()
 

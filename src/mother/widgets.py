@@ -1,9 +1,11 @@
 """Reusable TUI widget classes for Mother."""
 
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import ClassVar, Protocol, cast, final, override
 
 import pyperclip
+from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
@@ -437,29 +439,103 @@ class SlashArgumentComplete(OptionList):
 class PromptHistoryComplete(OptionList):
     """Option list showing fuzzy prompt-history matches."""
 
+    PREVIEW_LIMIT: ClassVar[int] = 140
+
     def __init__(self) -> None:
         super().__init__(id="prompt-history-complete")
         self.matches: list[PromptHistoryMatch] = []
+        self.search_query: str = ""
 
     @staticmethod
-    def _format_match_label(text: str) -> str:
-        normalized = " ".join(text.split())
-        if not normalized:
-            return "(empty)"
-        if len(normalized) <= 120:
-            return normalized
-        return f"{normalized[:117]}…"
+    def _normalize_line(line: str) -> str:
+        return " ".join(line.split())
 
-    def update_matches(self, matches: list[PromptHistoryMatch]) -> bool:
+    @classmethod
+    def _preview_parts(cls, text: str) -> list[tuple[str, str]]:
+        lines = text.splitlines() or [text]
+        normalized_lines = [cls._normalize_line(line) or "…" for line in lines]
+        if not normalized_lines:
+            normalized_lines = ["(empty)"]
+
+        parts: list[tuple[str, str]] = [(normalized_lines[0], "text")]
+        if len(normalized_lines) >= 2:
+            parts.append((" ↵ ", "meta"))
+            parts.append((normalized_lines[1], "text"))
+        if len(normalized_lines) > 2:
+            parts.append((f" ↵ +{len(normalized_lines) - 2} more", "meta"))
+
+        plain = "".join(part for part, _ in parts)
+        if len(plain) <= cls.PREVIEW_LIMIT:
+            return parts
+
+        overflow = len(plain) - cls.PREVIEW_LIMIT + 1
+        text_indices = [index for index, (_, kind) in enumerate(parts) if kind == "text"]
+        if text_indices:
+            last_index = text_indices[-1]
+            last_text, last_kind = parts[last_index]
+            trimmed = last_text[:-overflow] if overflow < len(last_text) else ""
+            parts[last_index] = ((trimmed.rstrip() or trimmed) + "…", last_kind)
+        return parts
+
+    @staticmethod
+    def _find_query_positions(query: str, text: str) -> list[int]:
+        folded_query = query.casefold().strip()
+        if not folded_query:
+            return []
+        folded_text = text.casefold()
+        substring_index = folded_text.find(folded_query)
+        if substring_index >= 0:
+            return list(range(substring_index, substring_index + len(folded_query)))
+
+        positions: list[int] = []
+        start_index = 0
+        for character in folded_query:
+            position = folded_text.find(character, start_index)
+            if position < 0:
+                return []
+            positions.append(position)
+            start_index = position + 1
+        return positions
+
+    @classmethod
+    def _format_match_label(cls, text: str, query: str) -> Text:
+        parts = cls._preview_parts(text)
+        label = Text()
+        offset = 0
+        meta_ranges: list[tuple[int, int]] = []
+        for part_text, kind in parts:
+            _ = label.append(part_text)
+            if kind == "meta":
+                meta_ranges.append((offset, offset + len(part_text)))
+            offset += len(part_text)
+        for start, end in meta_ranges:
+            label.stylize("dim", start, end)
+
+        positions = cls._find_query_positions(query, label.plain)
+        if positions:
+            range_start = positions[0]
+            range_end = positions[0] + 1
+            for previous, current in pairwise(positions):
+                if current == previous + 1:
+                    range_end = current + 1
+                    continue
+                label.stylize("bold reverse", range_start, range_end)
+                range_start = current
+                range_end = current + 1
+            label.stylize("bold reverse", range_start, range_end)
+        return label
+
+    def update_matches(self, matches: list[PromptHistoryMatch], query: str = "") -> bool:
         """Refresh visible prompt-history matches for the active query."""
         self.matches = matches
+        self.search_query = query
         _ = self.clear_options()
         if not self.matches:
             _ = self.add_option(Option("No history matches", disabled=True))
             self.highlighted = None
             return False
         _ = self.add_options(
-            Option(self._format_match_label(match.text), id=str(match.index))
+            Option(self._format_match_label(match.text, query), id=str(match.index))
             for match in self.matches
         )
         self.highlighted = 0

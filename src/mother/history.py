@@ -125,12 +125,18 @@ class PromptHistory:
         return None
 
     def search(self, query: str) -> list[PromptHistoryMatch]:
-        """Return recent prompt-history matches ordered by fuzzy picker relevance."""
+        """Return recent prompt-history matches ordered by fuzzy picker relevance.
+
+        Exact duplicate prompt texts are collapsed so the newest copy wins.
+        """
         self._ensure_loaded()
-        matches = [
-            PromptHistoryMatch(index=index, text=text)
-            for index, text in enumerate(reversed(self._entries), start=1)
-        ]
+        seen: set[str] = set()
+        matches: list[PromptHistoryMatch] = []
+        for index, text in enumerate(reversed(self._entries), start=1):
+            if text in seen:
+                continue
+            seen.add(text)
+            matches.append(PromptHistoryMatch(index=index, text=text))
         return filter_picker_items(
             matches,
             query,
