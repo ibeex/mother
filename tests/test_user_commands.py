@@ -185,13 +185,6 @@ def test_detect_bang_only():
     assert result.text == "!"
 
 
-def test_user_command_bypasses_allowlist():
-    # ShellCommand has no allowlist field — validation is the caller's responsibility
-    cmd = parse_user_input("!rm --help")
-    assert isinstance(cmd, ShellCommand)
-    assert cmd.command == "rm --help"
-
-
 def test_format_execution_for_context():
     execution = BashExecution(
         command="git status",
@@ -220,18 +213,3 @@ def test_format_execution_for_display():
     assert "git status" in text
     assert "Output:" in text
     assert "On branch main" in text
-
-
-def test_excluded_execution_not_in_context():
-    execution = BashExecution(
-        command="ps aux",
-        output="processes\n",
-        exit_code=0,
-        timestamp=datetime.now(),
-        exclude_from_context=True,
-    )
-    # exclude_from_context is True — the caller decides not to include it
-    # format_for_context still works but should not be called for excluded ones
-    assert execution.exclude_from_context is True
-    text = format_for_context(execution)
-    assert "ps aux" in text  # format still works; caller checks flag

@@ -351,11 +351,7 @@ class ChatRuntime:
         except Exception as exc:
             if isinstance(exc, UserInterruptedError):
                 raise
-            if (
-                wrapped_tools
-                and allow_tool_fallback
-                and self._is_unsupported_tools_error(exc)
-            ):
+            if wrapped_tools and allow_tool_fallback and self._is_unsupported_tools_error(exc):
                 return await self.run_stream(
                     prompt_text=prompt_text,
                     system_prompt=system_prompt,

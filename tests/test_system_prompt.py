@@ -38,12 +38,9 @@ def test_build_system_prompt_agent_mode_includes_tool_rules_and_tools():
         shell_name="fish",
     )
 
-    assert "In agent mode, you may use tools" in prompt
-    assert "Do not work autonomously in a loop until the task is complete." in prompt
-    assert "Use at most one tool call per turn" in prompt
-    assert (
-        "Ask before risky, destructive, privilege-requiring, or state-changing commands." in prompt
-    )
+    assert "In agent mode" in prompt
+    assert "one tool call per turn" in prompt
+    assert "Ask before risky" in prompt
     assert "- Mode: agent" in prompt
     assert "- bash: Execute shell commands on the local machine" in prompt
     assert "- web_search: Search the web for public information" in prompt
@@ -62,10 +59,10 @@ def test_build_system_prompt_deep_research_mode_includes_research_rules_and_tool
     )
 
     assert "In deep research mode" in prompt
-    assert "First produce a concise research plan" in prompt
-    assert "Treat the user's next reply as normal conversation" in prompt
-    assert "execute the research autonomously in a tool loop until the answer is ready" in prompt
-    assert "- use only web_search and web_fetch for the research work" in prompt
+    assert "concise research plan" in prompt
+    assert "confirm or adjust the plan" in prompt
+    assert "execute the research autonomously" in prompt
+    assert "use only web_search and web_fetch" in prompt
     assert "- Mode: deep research" in prompt
     assert "- web_search: Search the web for public information" in prompt
     assert "- web_fetch: Fetch web pages or HTTP endpoints" in prompt

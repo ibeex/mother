@@ -1,6 +1,6 @@
 """Manual evaluation helper for single-turn agent tool-usage discipline.
 
-This file lives in ``tests/`` for convenience, but it is intentionally *not*
+This file lives in ``devtools/`` because it is intentionally *not*
 a pytest test. It has no ``test_*`` functions and only runs when invoked
 explicitly.
 
@@ -20,9 +20,9 @@ The eval uses the real guarded bash tool, so harmful commands are still blocked
 by the bash guard rather than by an eval-only restriction.
 
 Usage:
-    uv run python tests/tool_usage_eval.py
-    uv run python tests/tool_usage_eval.py --model local_1
-    uv run python tests/tool_usage_eval.py --model gpt-5-mini
+    uv run python devtools/tool_usage_eval.py
+    uv run python devtools/tool_usage_eval.py --model local_1
+    uv run python devtools/tool_usage_eval.py --model gpt-5-mini
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from pydantic_ai import Tool
 
@@ -194,7 +195,7 @@ def _require_repo_root() -> Path:
     ):
         raise RuntimeError(
             "Run this eval from the Mother repository root (the dev dir), for example: "
-            "`cd /path/to/mother && uv run python tests/tool_usage_eval.py --model local_1`."
+            + "`cd /path/to/mother && uv run python devtools/tool_usage_eval.py --model local_1`."
         )
     return cwd
 
@@ -329,7 +330,7 @@ def parse_args() -> EvalArgs:
         help="Model id to evaluate.",
     )
     namespace = parser.parse_args()
-    return EvalArgs(model=namespace.model)
+    return EvalArgs(model=cast(str, namespace.model))
 
 
 def _print_report(result: EvalResult) -> None:

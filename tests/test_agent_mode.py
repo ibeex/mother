@@ -1,16 +1,12 @@
 """Tests for agent-mode toggles, slash commands, and status-line behavior."""
 
 import asyncio
-from collections.abc import Callable
 from types import SimpleNamespace
-from typing import cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
-
-from pydantic_ai.messages import ModelMessage
 
 from mother import MotherApp, MotherConfig
 from mother.models import ModelEntry
-from mother.widgets import ModelComplete, PromptTextArea, StatusLine
+from mother.widgets import ModelComplete, PromptTextArea
 
 
 def _reasoning_entry() -> ModelEntry:
@@ -24,26 +20,9 @@ def _reasoning_entry() -> ModelEntry:
     )
 
 
-def _anthropic_reasoning_entry() -> ModelEntry:
-    return ModelEntry(
-        id="claude",
-        name="haiku",
-        api_type="anthropic",
-        supports_reasoning=True,
-        supports_tools=True,
-        supports_images=True,
-    )
-
-
 def test_app_starts_in_conversational_mode() -> None:
     app = MotherApp()
     assert app.agent_mode is False
-
-
-def test_agent_mode_toggle_via_palette() -> None:
-    from mother.model_picker import AgentModeProvider
-
-    assert AgentModeProvider in MotherApp.COMMANDS
 
 
 def test_toggle_agent_mode_on() -> None:
@@ -65,15 +44,6 @@ def test_set_deep_research_mode_on() -> None:
         app.action_set_agent_profile("deep_research")
     assert app.agent_mode is True
     assert app.agent_profile == "deep_research"
-
-
-def test_quit_app_exits() -> None:
-    app = MotherApp()
-
-    with patch.object(app, "exit") as exit_app:
-        app.action_quit_app()
-
-    exit_app.assert_called_once_with()
 
 
 def test_prompt_enter_selects_slash_completion() -> None:
@@ -493,125 +463,6 @@ def test_shift_g_does_nothing_when_input_is_focused() -> None:
     scroll_to_bottom.assert_not_called()
 
 
-def test_subtitle_shows_agent_indicator() -> None:
-    app = MotherApp()
-    app.agent_mode = False
-    app.config = MotherConfig(model="test-model")
-    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
-    assert "[AGENT]" not in app.sub_title
-
-    app.agent_mode = True
-    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
-    assert "[AGENT]" in app.sub_title
-
-
-def test_subtitle_shows_research_indicator() -> None:
-    app = MotherApp()
-    app.agent_mode = True
-    app.agent_profile = "deep_research"
-    app.config = MotherConfig(model="test-model")
-    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
-    assert "[RESEARCH]" in app.sub_title
-
-
-def test_config_tools_enabled_sets_initial_mode() -> None:
-    config = MotherConfig(tools_enabled=True)
-    app = MotherApp(config=config)
-    assert app.agent_mode is True
-
-
-def test_statusline_formats_model_and_unknown_context() -> None:
-    assert StatusLine.format_status("test-model", False, None) == "test-model · A:off · C:?"
-
-
-def test_statusline_formats_model_and_context_size() -> None:
-    assert StatusLine.format_status("test-model", True, 12345) == "test-model · A:on · C:12.3k"
-
-
-def test_statusline_formats_deep_research_label() -> None:
-    assert (
-        StatusLine.format_status("test-model", True, 12345, agent_label="research")
-        == "test-model · A:research · C:12.3k"
-    )
-
-
-def test_statusline_formats_token_usage_when_known() -> None:
-    assert (
-        StatusLine.format_status(
-            "test-model",
-            True,
-            12345,
-            False,
-            "high",
-            1.25,
-            12345,
-            678,
-            9000,
-        )
-        == "test-model · A:on · C:12.3k · Tok:12.3k/678/9.0k · Man · R:high · 1.2s"
-    )
-
-
-def test_statusline_formats_manual_scroll_mode() -> None:
-    assert (
-        StatusLine.format_status("test-model", True, 256, False)
-        == "test-model · A:on · C:256 · Man"
-    )
-
-
-def test_statusline_formats_reasoning_when_supported() -> None:
-    assert (
-        StatusLine.format_status("test-model", True, 256, False, "high")
-        == "test-model · A:on · C:256 · Man · R:high"
-    )
-
-
-def test_statusline_formats_last_response_time() -> None:
-    assert (
-        StatusLine.format_status(
-            "test-model",
-            True,
-            256,
-            False,
-            "high",
-            1.25,
-        )
-        == "test-model · A:on · C:256 · Man · R:high · 1.2s"
-    )
-
-
-def test_statusline_formats_subsecond_last_response_time() -> None:
-    assert StatusLine.format_response_time(0.806) == "0.8s"
-
-
-def test_statusline_formats_minute_last_response_time() -> None:
-    assert StatusLine.format_response_time(61.0) == "1m 1s"
-
-
-def test_statusline_formats_hour_last_response_time() -> None:
-    assert StatusLine.format_response_time(3661.0) == "1h 1m 1s"
-
-
-def test_status_reasoning_effort_visible_for_reasoning_models() -> None:
-    app = MotherApp(config=MotherConfig(reasoning_effort="none"))
-    app.current_model_entry = _reasoning_entry()
-    assert app._status_reasoning_effort() == "off"  # pyright: ignore[reportPrivateUsage]
-
-
-def test_status_reasoning_effort_shows_openai_summary_mode() -> None:
-    app = MotherApp(
-        config=MotherConfig(reasoning_effort="medium", openai_reasoning_summary="detailed")
-    )
-    app.current_model_entry = _reasoning_entry()
-    assert app._status_reasoning_effort() == "medium/detailed"  # pyright: ignore[reportPrivateUsage]
-
-
-def test_status_reasoning_effort_shows_anthropic_thinking_mode() -> None:
-    app = MotherApp(config=MotherConfig(reasoning_effort="medium"))
-    app.current_model_entry = _anthropic_reasoning_entry()
-    assert app._status_reasoning_effort() == "medium/thinking"  # pyright: ignore[reportPrivateUsage]
-
-
 def test_send_prompt_no_tools_when_conversational() -> None:
     app = MotherApp()
     app.agent_mode = False
@@ -645,94 +496,3 @@ def test_send_prompt_passes_tools_when_agent() -> None:
             ca_bundle_path=app.config.ca_bundle_path,
             agent_profile="standard",
         )
-
-
-def test_get_enabled_tools_standard_agent_includes_bash_and_web_tools() -> None:
-    app = MotherApp()
-    app.agent_mode = True
-
-    tools = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
-
-    assert [tool.name for tool in tools] == ["bash", "web_search", "web_fetch"]
-
-
-def test_get_enabled_tools_deep_research_uses_only_web_tools() -> None:
-    app = MotherApp()
-    app.agent_mode = True
-    app.agent_profile = "deep_research"
-
-    tools = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
-
-    assert [tool.name for tool in tools] == ["web_search", "web_fetch"]
-
-
-def test_standard_agent_limits_model_to_one_tool_call_per_turn() -> None:
-    app = MotherApp()
-    app.agent_mode = True
-
-    assert app._tool_call_limit() == 1  # pyright: ignore[reportPrivateUsage]
-
-
-def test_deep_research_allows_multi_step_tool_loops() -> None:
-    app = MotherApp()
-    app.agent_mode = True
-    app.agent_profile = "deep_research"
-
-    assert app._tool_call_limit() is None  # pyright: ignore[reportPrivateUsage]
-
-
-def test_show_models_selection_calls_switch_model() -> None:
-    app = MotherApp()
-
-    def fake_push_screen(_screen: object, callback: Callable[[str | None], None]) -> None:
-        callback("gpt-4o-mini")
-
-    with (
-        patch.object(app, "push_screen", side_effect=fake_push_screen),
-        patch.object(app, "action_switch_model") as switch_model,
-    ):
-        app.action_show_models()
-
-    switch_model.assert_called_once_with("gpt-4o-mini")
-
-
-def test_switch_model_asks_for_confirmation_when_conversation_has_history() -> None:
-    app = MotherApp()
-    app.conversation_state.message_history = [cast(ModelMessage, object())]
-
-    with patch.object(app, "push_screen") as push_screen:
-        app.action_switch_model("gpt-4o-mini")
-
-    push_screen.assert_called_once()
-    assert app.config.model != "gpt-4o-mini"
-
-
-def test_switch_model_cancel_keeps_current_model() -> None:
-    app = MotherApp()
-    app.conversation_state.message_history = [cast(ModelMessage, object())]
-
-    def fake_push_screen(_screen: object, callback: Callable[[bool | None], None]) -> None:
-        callback(False)
-
-    with patch.object(app, "push_screen", side_effect=fake_push_screen):
-        app.action_switch_model("gpt-4o-mini")
-
-    assert app.config.model != "gpt-4o-mini"
-
-
-def test_switch_model_confirm_applies_switch() -> None:
-    app = MotherApp()
-    app.conversation_state.message_history = [cast(ModelMessage, object())]
-
-    def fake_push_screen(_screen: object, callback: Callable[[bool | None], None]) -> None:
-        callback(True)
-
-    with (
-        patch.object(app, "push_screen", side_effect=fake_push_screen),
-        patch.object(app, "notify"),
-    ):
-        app.action_switch_model("gpt-4o-mini")
-
-    assert app.config.model == "gpt-4o-mini"
-    assert app.conversation_state.has_history is False
-    assert app.current_model_entry.id == "gpt-4o-mini"

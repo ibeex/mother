@@ -1,13 +1,13 @@
 """Manual evaluation helper for the LLM-based bash safety guard.
 
-This file lives in ``tests/`` for convenience, but it is intentionally *not*
+This file lives in ``devtools/`` because it is intentionally *not*
 a pytest test. It has no ``test_*`` functions and only runs when invoked
 explicitly.
 
 Usage:
-    uv run python tests/bash_guard_eval.py
-    uv run python tests/bash_guard_eval.py --model local_1 --seed 7 --limit 12
-    uv run python tests/bash_guard_eval.py --only Fatal --fail-on-mismatch
+    uv run python devtools/bash_guard_eval.py
+    uv run python devtools/bash_guard_eval.py --model local_1 --seed 7 --limit 12
+    uv run python devtools/bash_guard_eval.py --only Fatal --fail-on-mismatch
 """
 
 from __future__ import annotations

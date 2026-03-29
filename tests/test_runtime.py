@@ -38,7 +38,9 @@ class _FakeAgent:
 
     def __init__(self, model: object, tools: list[object], instructions: str) -> None:
         type(self).init_calls.append({"model": model, "tools": tools, "instructions": instructions})
-        self._events = type(self).event_batches.pop(0) if type(self).event_batches else type(self).events
+        self._events = (
+            type(self).event_batches.pop(0) if type(self).event_batches else type(self).events
+        )
 
     async def run_stream_events(
         self,
@@ -200,10 +202,16 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
     preserved_messages = [
         ModelRequest(parts=[UserPromptPart("tell me about current project")]),
         ModelResponse(
-            parts=[ToolCallPart(tool_name="bash", args={"command": "ls -la"}, tool_call_id="call-1")]
+            parts=[
+                ToolCallPart(tool_name="bash", args={"command": "ls -la"}, tool_call_id="call-1")
+            ]
         ),
         ModelRequest(
-            parts=[ToolReturnPart(tool_name="bash", content="README.md\nsrc\ntests", tool_call_id="call-1")]
+            parts=[
+                ToolReturnPart(
+                    tool_name="bash", content="README.md\nsrc\ntests", tool_call_id="call-1"
+                )
+            ]
         ),
     ]
     final_text = "I found README.md, src, and tests. Would you like me to inspect README next?"
