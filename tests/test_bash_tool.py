@@ -84,7 +84,8 @@ def test_bash_tool_warning_blocks_and_copies_to_clipboard():
     mock_exec.assert_not_called()
     assert output.startswith("Warning:")
     assert "It was not executed" in output
-    assert "copied to clipboard" in output
+    assert "copied to the clipboard" in output
+    assert "separate shell" in output
     assert "!<command>" in output
     assert "!!<command>" in output
 
@@ -109,6 +110,7 @@ def test_bash_tool_fatal_blocks_and_copies_to_clipboard():
     mock_exec.assert_not_called()
     assert output.startswith("Fatal:")
     assert "It was not executed" in output
+    assert "copied to the clipboard" in output
 
 
 def test_bash_tool_guard_error_fails_closed():

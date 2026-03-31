@@ -1658,6 +1658,34 @@ class MotherApp(App[None]):
             return None
         return 1
 
+    @staticmethod
+    def _blocked_bash_clipboard_notice(event: RuntimeToolEvent) -> str | None:
+        """Return a deterministic user-facing notice for blocked bash commands."""
+        if event.phase != "finished" or event.tool_name != "bash":
+            return None
+
+        output = event.output or ""
+        if "bash guard blocked this command. It was not executed." not in output:
+            return None
+        if "The exact command has been copied to the clipboard." not in output:
+            return None
+
+        return (
+            "Note: the exact blocked command is already in your clipboard. "
+            "Review it, then either paste it into a separate shell, or run it here with "
+            "`!<command>` to include the output in chat context or `!!<command>` to exclude it."
+        )
+
+    @staticmethod
+    def _append_notice_if_missing(text: str, notice: str) -> str:
+        """Append a notice unless the response already mentions the clipboard."""
+        stripped = text.rstrip()
+        if "clipboard" in stripped.casefold():
+            return stripped
+        if not stripped:
+            return notice
+        return f"{stripped}\n\n{notice}"
+
     async def _run_runtime_request(
         self,
         prompt: str,
@@ -1671,6 +1699,7 @@ class MotherApp(App[None]):
         visible_text = ""
         thinking_text = ""
         thinking_streaming = False
+        blocked_bash_notices: list[str] = []
 
         def on_text_update(text: str) -> None:
             nonlocal visible_text, thinking_streaming
@@ -1690,6 +1719,13 @@ class MotherApp(App[None]):
                 thinking_streaming = True
             _ = self.call_from_thread(self._update_thinking_output, thinking_output, thinking_text)
 
+        def on_tool_event(event: RuntimeToolEvent) -> None:
+            if not blocked_bash_notices:
+                notice = self._blocked_bash_clipboard_notice(event)
+                if notice is not None:
+                    blocked_bash_notices.append(notice)
+            self._handle_runtime_tool_event(event)
+
         try:
             runtime_response = await runtime.run_stream(
                 prompt_text=prompt,
@@ -1701,7 +1737,7 @@ class MotherApp(App[None]):
                 tool_call_limit=self._tool_call_limit(),
                 on_text_update=on_text_update,
                 on_thinking_update=on_thinking_update if thinking_output is not None else None,
-                on_tool_event=self._handle_runtime_tool_event,
+                on_tool_event=on_tool_event,
             )
         except UserInterruptedError as exc:
             if thinking_streaming:
@@ -1726,11 +1762,12 @@ class MotherApp(App[None]):
             assert thinking_output is not None
             _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
 
-        if (
-            runtime_response.text != visible_text
-            or id(response) in self._response_waiting_animations
-        ):
-            visible_text = runtime_response.text
+        final_text = runtime_response.text
+        if blocked_bash_notices:
+            final_text = self._append_notice_if_missing(final_text, blocked_bash_notices[0])
+
+        if final_text != visible_text or id(response) in self._response_waiting_animations:
+            visible_text = final_text
             _ = self.call_from_thread(self._update_response_output, response, visible_text)
 
         _ = self.call_from_thread(response.stop_stream)

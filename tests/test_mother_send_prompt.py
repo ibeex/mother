@@ -100,9 +100,15 @@ class _FakeThinkingOutput:
 
 @final
 class _FakeRuntime:
-    def __init__(self, response: RuntimeResponse, updates: list[tuple[str, str]]) -> None:
+    def __init__(
+        self,
+        response: RuntimeResponse,
+        updates: list[tuple[str, str]],
+        tool_events: list[RuntimeToolEvent] | None = None,
+    ) -> None:
         self.response = response
         self.updates = updates
+        self.tool_events = tool_events or []
         self.calls: list[dict[str, object]] = []
 
     async def run_stream(
@@ -135,6 +141,9 @@ class _FakeRuntime:
         )
         latest_text = ""
         latest_thinking = ""
+        for event in self.tool_events:
+            if on_tool_event is not None:
+                on_tool_event(event)
         for text, thinking in self.updates:
             if on_thinking_update is not None and thinking != latest_thinking:
                 latest_thinking = thinking
@@ -455,6 +464,103 @@ def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:
         title="Agent mode",
         severity="warning",
     )
+
+
+def test_run_runtime_request_appends_clipboard_notice_for_blocked_bash_tool() -> None:
+    app = _make_app(agent_mode=True)
+    response = _FakeResponse()
+    blocked_event = RuntimeToolEvent(
+        phase="finished",
+        tool_name="bash",
+        tool_call_id="bash-1",
+        arguments={"command": "python3 --version"},
+        output=(
+            "Warning: bash guard blocked this command. It was not executed.\n\n"
+            "Command:\n```bash\npython3 --version\n```\n\n"
+            "Guard model: test-guard\n"
+            "The exact command has been copied to the clipboard."
+        ),
+    )
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="I tried, but the local safety guard blocked the Python command.",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+        ),
+        [("I tried, but the local safety guard blocked the Python command.", "")],
+        tool_events=[blocked_event],
+    )
+
+    with (
+        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "_handle_runtime_tool_event") as handle_tool_event,
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text is not None
+    assert "already in your clipboard" in full_text
+    assert "`!<command>`" in full_text
+    assert "`!!<command>`" in full_text
+    assert response.reset_texts == [full_text]
+    handle_tool_event.assert_called_once_with(blocked_event)
+
+
+def test_run_runtime_request_does_not_append_clipboard_notice_when_response_mentions_it() -> None:
+    app = _make_app(agent_mode=True)
+    response = _FakeResponse()
+    blocked_event = RuntimeToolEvent(
+        phase="finished",
+        tool_name="bash",
+        tool_call_id="bash-1",
+        arguments={"command": "python3 --version"},
+        output=(
+            "Warning: bash guard blocked this command. It was not executed.\n\n"
+            "Command:\n```bash\npython3 --version\n```\n\n"
+            "Guard model: test-guard\n"
+            "The exact command has been copied to the clipboard."
+        ),
+    )
+    response_text = "The exact blocked command is already in your clipboard for review."
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text=response_text,
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+        ),
+        [(response_text, "")],
+        tool_events=[blocked_event],
+    )
+
+    with (
+        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "_handle_runtime_tool_event"),
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text == response_text
+    assert response.reset_texts == [response_text]
 
 
 def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
