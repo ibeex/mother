@@ -88,15 +88,25 @@ def should_submit_on_enter(text: str) -> bool:
     if "\n" in text:
         return False
     parsed = parse_user_input(text)
+    if isinstance(parsed, CouncilCommand):
+        return parsed.prompt is not None
     return isinstance(
         parsed,
-        SaveSessionCommand
-        | QuitAppCommand
-        | AgentModeCommand
-        | ModelsCommand
-        | ReasoningCommand
-        | CouncilCommand,
+        SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand | ReasoningCommand,
     )
+
+
+def is_council_multiline_input(text: str) -> bool:
+    """Return whether the prompt is composing a multiline ``/council`` question."""
+    if "\n" not in text:
+        return False
+    candidate = text.lstrip()
+    normalized = candidate.lower()
+    if not normalized.startswith(_COUNCIL_COMMAND):
+        return False
+    if len(candidate) == len(_COUNCIL_COMMAND):
+        return False
+    return candidate[len(_COUNCIL_COMMAND)].isspace()
 
 
 def parse_user_input(
@@ -125,6 +135,7 @@ def parse_user_input(
     - ``/reasoning value``       → ReasoningCommand(effort=...)
     - ``/council``               → CouncilCommand()
     - ``/council question``      → CouncilCommand(prompt=...)
+    - ``/council\nquestion``     → CouncilCommand(prompt=...)
     - ``!!command``              → ShellCommand(..., include_in_context=False)
     - ``!command``               → ShellCommand(..., include_in_context=True)
     - anything else              → NormalPrompt(text)
@@ -151,8 +162,11 @@ def parse_user_input(
         return ReasoningCommand(effort=candidate[len(_REASONING_COMMAND) :].strip())
     if normalized == _COUNCIL_COMMAND:
         return CouncilCommand()
-    if normalized.startswith(f"{_COUNCIL_COMMAND} "):
-        return CouncilCommand(prompt=candidate[len(_COUNCIL_COMMAND) :].strip())
+    if normalized.startswith(_COUNCIL_COMMAND) and len(candidate) > len(_COUNCIL_COMMAND):
+        separator = candidate[len(_COUNCIL_COMMAND)]
+        if separator.isspace():
+            prompt = candidate[len(_COUNCIL_COMMAND) :].strip()
+            return CouncilCommand(prompt=prompt or None)
 
     if text.startswith("!!"):
         command = text[2:].strip()

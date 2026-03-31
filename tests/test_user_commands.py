@@ -14,6 +14,7 @@ from mother.user_commands import (
     ShellCommand,
     current_model_query,
     current_reasoning_query,
+    is_council_multiline_input,
     parse_user_input,
     should_expand_models_query,
     should_expand_reasoning_query,
@@ -135,6 +136,13 @@ def test_detect_council_question_command():
     assert result.prompt == "summarize this thread"
 
 
+def test_detect_multiline_council_question_command():
+    result = parse_user_input(" /council\nSummarize this thread\nand list next steps ")
+    assert isinstance(result, CouncilCommand)
+    assert result.command == "/council"
+    assert result.prompt == "Summarize this thread\nand list next steps"
+
+
 def test_current_model_query_detects_models_arguments():
     assert current_model_query("/models opus") == "opus"
     assert current_model_query("/models   ") == ""
@@ -187,8 +195,18 @@ def test_should_submit_reasoning_on_enter():
 
 
 def test_should_submit_council_on_enter():
-    assert should_submit_on_enter("/council") is True
+    assert should_submit_on_enter("/council") is False
+    assert should_submit_on_enter("/council ") is False
     assert should_submit_on_enter("/council summarize this") is True
+    assert should_submit_on_enter("/council\nsummarize this") is False
+
+
+def test_is_council_multiline_input():
+    assert is_council_multiline_input("/council\n") is True
+    assert is_council_multiline_input(" /council\nquestion") is True
+    assert is_council_multiline_input("/council summarize this") is False
+    assert is_council_multiline_input("/council") is False
+    assert is_council_multiline_input("hello\n/council") is False
 
 
 def test_should_not_submit_normal_prompt_on_enter():

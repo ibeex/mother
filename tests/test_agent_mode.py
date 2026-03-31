@@ -110,6 +110,69 @@ def test_selected_slash_command_submits_on_second_enter() -> None:
     asyncio.run(run())
 
 
+def test_selected_council_command_enters_multiline_mode_on_second_enter() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            council_help = app.query_one("#prompt-council-help")
+            text_area.load_text("/council")
+            await pilot.pause()
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert text_area.text == "/council "
+            assert app.slash_complete.display is False
+            assert council_help.display is False
+
+            await pilot.press("enter")
+            await pilot.pause()
+            assert text_area.text == "/council \n"
+            assert council_help.display is True
+
+    asyncio.run(run())
+
+
+def test_multiline_council_submit_uses_followup_lines_as_question() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+        council_member = ModelEntry(
+            id="gpt-5",
+            name="gpt-5",
+            api_type="openai-responses",
+        )
+        council_judge = ModelEntry(
+            id="opus",
+            name="opus",
+            api_type="anthropic",
+        )
+
+        with (
+            patch.object(
+                app,
+                "_resolve_council_models",
+                return_value=((council_member,), council_judge),
+            ),
+            patch.object(app, "send_council", return_value=object()) as send_council,
+        ):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/council\nSummarize this thread\nand suggest next steps")
+                await pilot.pause()
+
+                await app.action_submit()
+                await pilot.pause()
+
+                send_council.assert_called_once()
+                assert send_council.call_args.kwargs["user_question"] == (
+                    "Summarize this thread\nand suggest next steps"
+                )
+                assert text_area.text == ""
+
+    asyncio.run(run())
+
+
 def test_models_command_enter_opens_model_picker() -> None:
     async def run() -> None:
         app = MotherApp(config=MotherConfig(model="test-model"))

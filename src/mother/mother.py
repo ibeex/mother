@@ -75,6 +75,7 @@ from mother.user_commands import (
     ReasoningCommand,
     SaveSessionCommand,
     ShellCommand,
+    is_council_multiline_input,
     parse_user_input,
 )
 from mother.widgets import (
@@ -211,6 +212,12 @@ class MotherApp(App[None]):
                 prompt_history_complete = PromptHistoryComplete()
                 prompt_history_complete.display = False
                 yield prompt_history_complete
+                prompt_council_help = Static(
+                    "Council multiline mode · Enter newline · Ctrl+Enter submit",
+                    id="prompt-council-help",
+                )
+                prompt_council_help.display = False
+                yield prompt_council_help
                 with Horizontal(id="prompt-row"):
                     yield TurnLabel(">", classes="turn-gutter input-gutter")
                     yield PromptTextArea(id="prompt-input")
@@ -274,6 +281,11 @@ class MotherApp(App[None]):
         """Return the fuzzy prompt-history popup widget."""
         return self.query_one(PromptHistoryComplete)
 
+    @property
+    def prompt_council_help(self) -> Static:
+        """Return the multiline ``/council`` helper label shown above the prompt."""
+        return self.query_one("#prompt-council-help", Static)
+
     def _hide_slash_complete(self) -> None:
         """Hide slash-command autocomplete and restore normal prompt keys."""
         self.slash_complete.display = False
@@ -329,6 +341,7 @@ class MotherApp(App[None]):
         self._prompt_history_search_query = initial_query
         self._hide_slash_argument_complete()
         self._hide_slash_complete()
+        self.prompt_council_help.display = False
         self.prompt_history_help.display = True
         _ = self._refresh_prompt_history_search_matches(initial_query)
         _ = self.prompt_input.focus()
@@ -403,6 +416,10 @@ class MotherApp(App[None]):
         if normalized_command == "/reasoning":
             return format_reasoning_effort(self.config.reasoning_effort)
         return None
+
+    def _refresh_prompt_inline_help(self, text: str) -> None:
+        """Show contextual helper text for prompt workflows that span multiple lines."""
+        self.prompt_council_help.display = is_council_multiline_input(text)
 
     def _refresh_prompt_completions(self, text: str) -> None:
         """Show, filter, or hide prompt helpers for slash commands and arguments."""
@@ -955,6 +972,7 @@ class MotherApp(App[None]):
             self._suppress_prompt_history_once = None
             self._hide_slash_argument_complete()
             self._hide_slash_complete()
+            self._refresh_prompt_inline_help(event.text_area.text)
             return
         self._suppress_prompt_history_once = None
         if event.text_area.text == self._suppress_prompt_completion_once:
@@ -963,17 +981,20 @@ class MotherApp(App[None]):
             self._hide_slash_complete()
             self._hide_prompt_history_complete()
             self._reset_prompt_history_state(event.text_area.text)
+            self._refresh_prompt_inline_help(event.text_area.text)
             return
         self._suppress_prompt_completion_once = None
         if self.prompt_input.history_search_active:
             self._prompt_history_search_query = event.text_area.text
             self._hide_slash_argument_complete()
             self._hide_slash_complete()
+            self.prompt_council_help.display = False
             _ = self._refresh_prompt_history_search_matches(event.text_area.text)
             return
         self._hide_prompt_history_complete()
         self._reset_prompt_history_state(event.text_area.text)
         self._refresh_prompt_completions(event.text_area.text)
+        self._refresh_prompt_inline_help(event.text_area.text)
 
     @on(PromptTextArea.SlashNavigate)
     def on_prompt_text_area_slash_navigate(self, event: PromptTextArea.SlashNavigate) -> None:
@@ -1142,7 +1163,7 @@ class MotherApp(App[None]):
         if isinstance(parsed, CouncilCommand):
             if parsed.prompt is None:
                 self.notify(
-                    "Usage: /council <question>",
+                    "Usage: /council [question] — add the question inline or on the next line, then press Ctrl+Enter",
                     title="Council",
                     severity="warning",
                 )

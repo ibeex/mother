@@ -63,7 +63,7 @@ in `~/.config/mother/config.toml`.
 
 ## Council
 
-Use `/council <question>` to run an anonymous multi-model deliberation pass.
+Use `/council [question]` to run an anonymous multi-model deliberation pass.
 
 What it does:
 
@@ -72,6 +72,8 @@ What it does:
 - collects independent answers from the configured council members
 - runs anonymous peer review over `Response A`, `Response B`, `Response C`, ...
 - asks the configured judge to synthesize the final answer without seeing model ids
+
+You can keep the question on the same line, or type just `/council`, press `Enter` to continue on the next line, then press `Ctrl+Enter` to submit the full multiline question.
 
 Important behavior:
 
