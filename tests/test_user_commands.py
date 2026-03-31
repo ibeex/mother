@@ -5,6 +5,7 @@ from datetime import datetime
 from mother.bash_execution import BashExecution, format_for_context, format_for_display
 from mother.user_commands import (
     AgentModeCommand,
+    CouncilCommand,
     ModelsCommand,
     NormalPrompt,
     QuitAppCommand,
@@ -120,6 +121,20 @@ def test_detect_reasoning_value_command():
     assert result.effort == "high"
 
 
+def test_detect_council_command():
+    result = parse_user_input("/council")
+    assert isinstance(result, CouncilCommand)
+    assert result.command == "/council"
+    assert result.prompt is None
+
+
+def test_detect_council_question_command():
+    result = parse_user_input(" /council summarize this thread ")
+    assert isinstance(result, CouncilCommand)
+    assert result.command == "/council"
+    assert result.prompt == "summarize this thread"
+
+
 def test_current_model_query_detects_models_arguments():
     assert current_model_query("/models opus") == "opus"
     assert current_model_query("/models   ") == ""
@@ -169,6 +184,11 @@ def test_should_submit_models_on_enter():
 def test_should_submit_reasoning_on_enter():
     assert should_submit_on_enter("/reasoning") is True
     assert should_submit_on_enter("/reasoning medium") is True
+
+
+def test_should_submit_council_on_enter():
+    assert should_submit_on_enter("/council") is True
+    assert should_submit_on_enter("/council summarize this") is True
 
 
 def test_should_not_submit_normal_prompt_on_enter():

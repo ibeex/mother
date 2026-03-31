@@ -92,6 +92,10 @@ TurnLabel {
     color: $secondary;
 }
 
+.council-title {
+    color: $warning;
+}
+
 Prompt.grouped,
 Response.grouped,
 ThinkingOutput.grouped,

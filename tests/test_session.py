@@ -6,6 +6,12 @@ from typing import cast, final
 from unittest.mock import call, patch
 
 from mother import MotherApp, MotherConfig
+from mother.council import (
+    CouncilAggregateRanking,
+    CouncilCandidateResponse,
+    CouncilPeerReview,
+    CouncilResult,
+)
 from mother.session import MarkdownFormatNotice, SessionManager, format_markdown_export
 
 
@@ -148,6 +154,74 @@ def test_turn_usage_event_renders_compact_summary_without_json(tmp_path: Path):
     assert "cache_read_tokens" not in markdown
     assert "provider" not in markdown
     assert "model_id" not in markdown
+
+
+def test_council_completed_event_renders_full_trace_sections(tmp_path: Path) -> None:
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions",
+        markdown_dir=tmp_path / "markdown",
+    )
+    result = CouncilResult(
+        final_text="Flagged rollout recommended.",
+        judge_model_id="opus",
+        stage1=(
+            CouncilCandidateResponse(
+                label="Response A",
+                model_id="gpt-5",
+                text="Roll out in two phases.",
+            ),
+            CouncilCandidateResponse(
+                label="Response B",
+                model_id="g3",
+                text="Use a feature flag first.",
+            ),
+        ),
+        stage2=(
+            CouncilPeerReview(
+                reviewer_model_id="opus",
+                text="Response B is safer.\n\nFINAL RANKING:\n1. Response B\n2. Response A",
+                parsed_ranking=("Response B", "Response A"),
+            ),
+        ),
+        aggregate_rankings=(
+            CouncilAggregateRanking(label="Response B", average_rank=1.0, rankings_count=1),
+        ),
+        label_to_model={"Response A": "gpt-5", "Response B": "g3"},
+        duration_seconds=9.5,
+    )
+
+    manager.record_event(
+        "council_invoked",
+        {
+            "question": "How should we launch this?",
+            "members": ["gpt-5", "g3", "opus"],
+            "judge": "opus",
+        },
+    )
+    manager.append("assistant", result.final_text)
+    manager.record_event("council_completed", result.to_event_details())
+
+    output_path = manager.save_as_markdown()
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert "### Event · `council_invoked`" in markdown
+    assert "- Members: `gpt-5`, `g3`, `opus`" in markdown
+    assert "### Event · `council_completed`" in markdown
+    assert "- Judge: `opus`" in markdown
+    assert "- Stage 1 responses: `2`" in markdown
+    assert "- Stage 2 reviews: `1`" in markdown
+    assert "- Duration: `9.50s`" in markdown
+    assert "<summary>Council · Stage 1 · Response A · gpt-5</summary>" in markdown
+    assert "Roll out in two phases." in markdown
+    assert "<summary>Council · Stage 2 · Review 1</summary>" in markdown
+    assert "Parsed ranking: Response B · g3 > Response A · gpt-5" in markdown
+    assert "<summary>Council · Stage 2 · Aggregate rankings</summary>" in markdown
+    assert "<summary>Council · Stage 3 · Judge metadata</summary>" in markdown
+    assert (
+        "Models seen: `opus`, `gpt-5`, `g3`" in markdown
+        or "Models seen: `gpt-5`, `g3`, `opus`" in markdown
+    )
+    assert '"trace_sections"' not in markdown
 
 
 def test_repeated_saves_overwrite_same_markdown_file_for_one_session(tmp_path: Path):

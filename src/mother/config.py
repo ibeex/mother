@@ -62,6 +62,14 @@ model = ""
 # LLM-based bash guard.
 # allowlist = ["ls", "cat"]
 
+# Anonymous multi-model council used by /council.
+# The ids here must match [[models]] entries below.
+# [council]
+# members = ["gpt-5", "g3", "opus"]
+# judge = "opus"
+# max_context_turns = 8
+# max_context_chars = 12000
+
 # Add your own [[models]] entries below.
 # Default config intentionally ships with no models.
 # Put named secrets in ~/.config/mother/keys.json and reference them here.
@@ -84,6 +92,16 @@ model = ""
 """
 
 
+@dataclass(frozen=True, slots=True)
+class CouncilConfig:
+    """Configuration for the anonymous /council workflow."""
+
+    members: tuple[str, ...] = ("gpt-5", "g3", "opus")
+    judge: str = "opus"
+    max_context_turns: int = 8
+    max_context_chars: int = 12000
+
+
 @dataclass
 class MotherConfig:
     model: str = ""
@@ -96,6 +114,7 @@ class MotherConfig:
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
     allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
     models: list[ModelEntry] = field(default_factory=default_model_entries)
+    council: CouncilConfig = field(default_factory=CouncilConfig)
 
 
 DEFAULT_MODEL = MotherConfig().model
@@ -105,6 +124,66 @@ DEFAULT_SYSTEM = MotherConfig().system_prompt
 def save_default_config(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text(_DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
+
+
+def _parse_council_members(value: object, *, default: tuple[str, ...]) -> tuple[str, ...]:
+    if value is None:
+        return default
+    if not isinstance(value, list):
+        raise ValueError("Config field 'council.members' must be an array of strings.")
+
+    members: list[str] = []
+    for item in cast(list[object], value):
+        if not isinstance(item, str):
+            raise ValueError("Config field 'council.members' must be an array of strings.")
+        stripped = item.strip()
+        if stripped:
+            members.append(stripped)
+    return tuple(members)
+
+
+def _parse_council_judge(value: object, *, default: str) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError("Config field 'council.judge' must be a string.")
+    return value.strip()
+
+
+def _parse_council_limit(value: object, *, field_name: str, default: int) -> int:
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"Config field {field_name!r} must be a non-negative integer.")
+    return value
+
+
+def _load_council_config(data: dict[str, object]) -> CouncilConfig:
+    raw_council = data.get("council")
+    default = CouncilConfig()
+    if raw_council is None:
+        return default
+    if not isinstance(raw_council, dict):
+        raise ValueError("Config field 'council' must be a table.")
+
+    council_data = cast(dict[str, object], raw_council)
+    return CouncilConfig(
+        members=_parse_council_members(
+            council_data.get("members"),
+            default=default.members,
+        ),
+        judge=_parse_council_judge(council_data.get("judge"), default=default.judge),
+        max_context_turns=_parse_council_limit(
+            council_data.get("max_context_turns"),
+            field_name="council.max_context_turns",
+            default=default.max_context_turns,
+        ),
+        max_context_chars=_parse_council_limit(
+            council_data.get("max_context_chars"),
+            field_name="council.max_context_chars",
+            default=default.max_context_chars,
+        ),
+    )
 
 
 def load_config(path: Path | None = None) -> MotherConfig:
@@ -146,6 +225,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
         ),
         allowlist=allowlist,
         models=load_model_entries(cast(dict[str, object], data)),
+        council=_load_council_config(cast(dict[str, object], data)),
     )
 
 
@@ -165,4 +245,5 @@ def apply_cli_overrides(
         session_markdown_dir=config.session_markdown_dir,
         allowlist=config.allowlist,
         models=list(config.models),
+        council=config.council,
     )

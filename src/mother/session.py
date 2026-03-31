@@ -184,13 +184,21 @@ def _render_details(summary: str, body: str) -> list[str]:
     ]
 
 
+def _format_seconds_value(seconds: JsonValue) -> str | None:
+    """Format a numeric duration value in seconds for markdown output."""
+    if not isinstance(seconds, int | float):
+        return None
+    return f"{seconds:.2f}s"
+
+
 def _format_turn_usage_summary(details: dict[str, JsonValue]) -> str | None:
     """Render a compact human-readable usage summary for markdown export."""
     parts: list[str] = []
 
     duration_seconds = details.get("duration_seconds")
-    if isinstance(duration_seconds, int | float):
-        parts.append(f"duration `{duration_seconds:.2f}s`")
+    formatted_duration = _format_seconds_value(duration_seconds)
+    if formatted_duration is not None:
+        parts.append(f"duration `{formatted_duration}`")
 
     request_tokens = details.get("request_tokens")
     if isinstance(request_tokens, int):
@@ -558,10 +566,45 @@ class SessionManager:
             elif entry["type"] == "tool_result":
                 tool_results += 1
                 tools_seen.add(entry["tool_name"])
-            elif entry["type"] == "event" and entry["name"] == "model_change":
-                model_value = entry["details"].get("model")
-                if isinstance(model_value, str) and model_value and model_value not in models_seen:
-                    models_seen.append(model_value)
+            elif entry["type"] == "event":
+                if entry["name"] == "model_change":
+                    model_value = entry["details"].get("model")
+                    if (
+                        isinstance(model_value, str)
+                        and model_value
+                        and model_value not in models_seen
+                    ):
+                        models_seen.append(model_value)
+                elif entry["name"] == "council_invoked":
+                    members_value = entry["details"].get("members")
+                    if isinstance(members_value, list):
+                        for member in members_value:
+                            if isinstance(member, str) and member and member not in models_seen:
+                                models_seen.append(member)
+                    judge_value = entry["details"].get("judge")
+                    if (
+                        isinstance(judge_value, str)
+                        and judge_value
+                        and judge_value not in models_seen
+                    ):
+                        models_seen.append(judge_value)
+                elif entry["name"] == "council_completed":
+                    judge_value = entry["details"].get("judge_model")
+                    if (
+                        isinstance(judge_value, str)
+                        and judge_value
+                        and judge_value not in models_seen
+                    ):
+                        models_seen.append(judge_value)
+                    label_map_value = entry["details"].get("label_to_model")
+                    if isinstance(label_map_value, dict):
+                        for model_value in label_map_value.values():
+                            if (
+                                isinstance(model_value, str)
+                                and model_value
+                                and model_value not in models_seen
+                            ):
+                                models_seen.append(model_value)
 
         summary = [
             f"{len(entries)} recorded entries",
@@ -754,20 +797,119 @@ class SessionManager:
         lines.extend(["", "---", ""])
         return lines
 
-    def _render_event_entry(self, entry: EventEntry) -> list[str]:
+    def _render_council_invoked_event(self, entry: EventEntry) -> list[str]:
+        details = entry["details"]
         lines = [
-            f"### Event · `{entry['name']}`",
+            "### Event · `council_invoked`",
+            "",
+            f"- Time: `{entry['ts']}`",
+        ]
+        question = details.get("question")
+        if isinstance(question, str) and question:
+            lines.append(f"- Question: {question}")
+        members = details.get("members")
+        if isinstance(members, list):
+            member_values = [member for member in members if isinstance(member, str) and member]
+            if member_values:
+                lines.append("- Members: " + ", ".join(f"`{member}`" for member in member_values))
+        judge = details.get("judge")
+        if isinstance(judge, str) and judge:
+            lines.append(f"- Judge: `{judge}`")
+        lines.extend(["", "---", ""])
+        return lines
+
+    def _render_council_completed_event(self, entry: EventEntry) -> list[str]:
+        details = entry["details"]
+        lines = [
+            "### Event · `council_completed`",
             "",
             f"- Time: `{entry['ts']}`",
         ]
 
+        judge_model = details.get("judge_model")
+        if isinstance(judge_model, str) and judge_model:
+            lines.append(f"- Judge: `{judge_model}`")
+
+        stage1_count = details.get("stage1_count")
+        if isinstance(stage1_count, int):
+            lines.append(f"- Stage 1 responses: `{stage1_count}`")
+
+        stage2_count = details.get("stage2_count")
+        if isinstance(stage2_count, int):
+            lines.append(f"- Stage 2 reviews: `{stage2_count}`")
+
+        formatted_duration = _format_seconds_value(details.get("duration_seconds"))
+        if formatted_duration is not None:
+            lines.append(f"- Duration: `{formatted_duration}`")
+
+        used_fallback = details.get("used_fallback")
+        if isinstance(used_fallback, bool):
+            if used_fallback:
+                fallback_reason = details.get("fallback_reason")
+                reason = (
+                    fallback_reason
+                    if isinstance(fallback_reason, str) and fallback_reason
+                    else "unknown"
+                )
+                lines.append(f"- Fallback: `yes` (`{reason}`)")
+            else:
+                lines.append("- Fallback: `no`")
+
+        label_to_model = details.get("label_to_model")
+        if isinstance(label_to_model, dict) and label_to_model:
+            mapping_lines = [
+                f"- `{label}` → `{model}`"
+                for label, model in label_to_model.items()
+                if isinstance(model, str)
+            ]
+            if mapping_lines:
+                lines.extend(
+                    [""]
+                    + _render_details(
+                        "Response labels",
+                        "\n".join(mapping_lines),
+                    )
+                )
+
+        trace_sections = details.get("trace_sections")
+        if isinstance(trace_sections, list):
+            for section in trace_sections:
+                if not isinstance(section, dict):
+                    continue
+                title = section.get("title")
+                text = section.get("text")
+                if not isinstance(title, str) or not isinstance(text, str):
+                    continue
+                lines.extend([""])
+                lines.extend(_render_details(title, _render_fenced_block(text)))
+
+        lines.extend(["", "---", ""])
+        return lines
+
+    def _render_event_entry(self, entry: EventEntry) -> list[str]:
         if entry["name"] == "turn_usage":
+            lines = [
+                "### Event · `turn_usage`",
+                "",
+                f"- Time: `{entry['ts']}`",
+            ]
             summary = _format_turn_usage_summary(entry["details"])
             if summary is not None:
                 lines.append(f"- Usage: {summary}")
             lines.extend(["", "---", ""])
             return lines
 
+        if entry["name"] == "council_invoked":
+            return self._render_council_invoked_event(entry)
+
+        if entry["name"] == "council_completed":
+            return self._render_council_completed_event(entry)
+
+        lines = [
+            f"### Event · `{entry['name']}`",
+            "",
+            f"- Time: `{entry['ts']}`",
+        ]
         details_json = json.dumps(entry["details"], indent=2, sort_keys=True, ensure_ascii=False)
         lines.extend(
             [

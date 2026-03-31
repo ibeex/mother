@@ -121,3 +121,7 @@ def test_default_slash_commands_expose_models() -> None:
 
 def test_default_slash_commands_expose_reasoning() -> None:
     assert any(command.command == "/reasoning" for command in SLASH_COMMANDS)
+
+
+def test_default_slash_commands_expose_council() -> None:
+    assert any(command.command == "/council" for command in SLASH_COMMANDS)

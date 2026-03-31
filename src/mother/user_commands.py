@@ -9,6 +9,7 @@ from mother.slash_commands import current_slash_argument_query, should_expand_sl
 _AGENT_COMMAND = "/agent"
 _MODELS_COMMAND = "/models"
 _REASONING_COMMAND = "/reasoning"
+_COUNCIL_COMMAND = "/council"
 
 
 @dataclass
@@ -50,6 +51,12 @@ class ReasoningCommand:
     effort: str | None = None
 
 
+@dataclass
+class CouncilCommand:
+    command: str = _COUNCIL_COMMAND
+    prompt: str | None = None
+
+
 def current_model_query(text: str) -> str | None:
     """Return the active ``/models`` query for inline model completion."""
     query = current_slash_argument_query(text)
@@ -83,7 +90,12 @@ def should_submit_on_enter(text: str) -> bool:
     parsed = parse_user_input(text)
     return isinstance(
         parsed,
-        SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand | ReasoningCommand,
+        SaveSessionCommand
+        | QuitAppCommand
+        | AgentModeCommand
+        | ModelsCommand
+        | ReasoningCommand
+        | CouncilCommand,
     )
 
 
@@ -96,6 +108,7 @@ def parse_user_input(
     | AgentModeCommand
     | ModelsCommand
     | ReasoningCommand
+    | CouncilCommand
     | ShellCommand
 ):
     """Parse user input for built-in slash commands and ! / !! shell commands.
@@ -110,6 +123,8 @@ def parse_user_input(
     - ``/models query``          → ModelsCommand(query=...)
     - ``/reasoning``             → ReasoningCommand()
     - ``/reasoning value``       → ReasoningCommand(effort=...)
+    - ``/council``               → CouncilCommand()
+    - ``/council question``      → CouncilCommand(prompt=...)
     - ``!!command``              → ShellCommand(..., include_in_context=False)
     - ``!command``               → ShellCommand(..., include_in_context=True)
     - anything else              → NormalPrompt(text)
@@ -134,6 +149,10 @@ def parse_user_input(
         return ReasoningCommand()
     if normalized.startswith(f"{_REASONING_COMMAND} "):
         return ReasoningCommand(effort=candidate[len(_REASONING_COMMAND) :].strip())
+    if normalized == _COUNCIL_COMMAND:
+        return CouncilCommand()
+    if normalized.startswith(f"{_COUNCIL_COMMAND} "):
+        return CouncilCommand(prompt=candidate[len(_COUNCIL_COMMAND) :].strip())
 
     if text.startswith("!!"):
         command = text[2:].strip()

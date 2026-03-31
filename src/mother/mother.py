@@ -33,6 +33,7 @@ from mother.bash_execution import BashExecution, format_for_context, format_for_
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
+from mother.council import CouncilResult, CouncilRunner
 from mother.history import PromptHistory, PromptHistoryMatch
 from mother.interrupts import UserInterruptedError
 from mother.model_picker import (
@@ -41,7 +42,7 @@ from mother.model_picker import (
     ModelProvider,
     ModelSwitchConfirmScreen,
 )
-from mother.models import ModelEntry, resolve_model_entry
+from mother.models import ModelEntry, find_model_entry, resolve_model_entry
 from mother.reasoning import (
     REASONING_EFFORT_HELP,
     build_reasoning_options,
@@ -68,6 +69,7 @@ from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.user_commands import (
     AgentModeCommand,
+    CouncilCommand,
     ModelsCommand,
     QuitAppCommand,
     ReasoningCommand,
@@ -77,6 +79,7 @@ from mother.user_commands import (
 )
 from mother.widgets import (
     ConversationTurn,
+    CouncilOutput,
     ModelComplete,
     OutputSection,
     PromptHistoryComplete,
@@ -772,15 +775,20 @@ class MotherApp(App[None]):
         """Refresh the status line for the latest normalized usage state."""
         _ = self.call_from_thread(self._update_statusline)
 
-    def _flush_pending_context(self, value: str) -> str:
-        """Build prompt with any pending shell output prepended, then clear the queue."""
+    def _drain_pending_context_text(self) -> str:
+        """Return any pending shell context and clear the queue."""
         context_parts: list[str] = []
         for execution in self._pending_executions:
             if not execution.exclude_from_context:
                 context_parts.append(format_for_context(execution))
         self._pending_executions.clear()
-        if context_parts:
-            return "\n\n".join(context_parts) + "\n\n" + value
+        return "\n\n".join(context_parts)
+
+    def _flush_pending_context(self, value: str) -> str:
+        """Build prompt with any pending shell output prepended, then clear the queue."""
+        pending_context = self._drain_pending_context_text()
+        if pending_context:
+            return pending_context + "\n\n" + value
         return value
 
     def capture_clipboard_image(self) -> str | None:
@@ -836,6 +844,71 @@ class MotherApp(App[None]):
             tool_names=tool_names,
             attachment_paths=attachment_paths,
         )
+
+    def _build_council_context(self) -> str:
+        """Return a bounded plain-text transcript snapshot for /council."""
+        return self.conversation_state.formatted_recent_transcript(
+            max_turns=self.config.council.max_context_turns,
+            max_chars=self.config.council.max_context_chars,
+        )
+
+    def _resolve_council_models(self) -> tuple[tuple[ModelEntry, ...], ModelEntry] | None:
+        """Resolve configured council members and judge from Mother's model registry."""
+        if not self.config.council.members:
+            self.notify(
+                "Configure council.members in ~/.config/mother/config.toml first",
+                title="Council",
+                severity="warning",
+            )
+            return None
+        if not self.config.council.judge:
+            self.notify(
+                "Configure council.judge in ~/.config/mother/config.toml first",
+                title="Council",
+                severity="warning",
+            )
+            return None
+
+        resolved_members: list[ModelEntry] = []
+        missing_members: list[str] = []
+        seen_member_ids: set[str] = set()
+        for model_id in self.config.council.members:
+            if model_id in seen_member_ids:
+                continue
+            seen_member_ids.add(model_id)
+            entry = find_model_entry(model_id, self.config.models)
+            if entry is None:
+                missing_members.append(model_id)
+                continue
+            resolved_members.append(entry)
+
+        if missing_members:
+            missing_text = ", ".join(missing_members)
+            self.notify(
+                f"Council members not found in config: {missing_text}",
+                title="Council",
+                severity="warning",
+            )
+            return None
+
+        if not resolved_members:
+            self.notify(
+                "Configure at least one valid council member first",
+                title="Council",
+                severity="warning",
+            )
+            return None
+
+        judge_entry = find_model_entry(self.config.council.judge, self.config.models)
+        if judge_entry is None:
+            self.notify(
+                ("Council judge not found in config: " + self.config.council.judge),
+                title="Council",
+                severity="warning",
+            )
+            return None
+
+        return tuple(resolved_members), judge_entry
 
     def _start_new_session(self) -> None:
         """Rotate to a fresh transient session after a successful save."""
@@ -1066,6 +1139,54 @@ class MotherApp(App[None]):
             )
             self._set_reasoning_effort(resolved_effort)
             return
+        if isinstance(parsed, CouncilCommand):
+            if parsed.prompt is None:
+                self.notify(
+                    "Usage: /council <question>",
+                    title="Council",
+                    severity="warning",
+                )
+                return
+            council_models = self._resolve_council_models()
+            if council_models is None:
+                return
+            council_members, council_judge = council_models
+            self.prompt_history.append(value)
+            discarded_attachments = self._consume_attachments_for_text(value)
+            if discarded_attachments:
+                self.notify(
+                    "/council does not yet support image attachments — ignoring them",
+                    title="Council",
+                    severity="warning",
+                )
+            self._record_session_message("user", value)
+            self._record_session_event(
+                "council_invoked",
+                {
+                    "members": [entry.id for entry in council_members],
+                    "judge": council_judge.id,
+                    "question": parsed.prompt,
+                },
+            )
+            chat_view = self.query_one("#chat-view")
+            should_follow = self._should_follow_chat_updates()
+            text_area.read_only = True
+            supplemental_context = self._drain_pending_context_text()
+            conversation_context = self._build_council_context()
+            turn = ConversationTurn(prompt_text=value, include_thinking=False)
+            self._active_turn = turn
+            _ = await chat_view.mount(turn)
+            if should_follow:
+                self._scroll_chat_to_end(force=True)
+            self._active_prompt_worker = self.send_council(
+                user_question=parsed.prompt,
+                response=turn.response_widget,
+                conversation_context=conversation_context,
+                supplemental_context=supplemental_context,
+                council_members=council_members,
+                council_judge=council_judge,
+            )
+            return
         if isinstance(parsed, ShellCommand):
             if parsed.include_in_context:
                 self.prompt_history.append(value)
@@ -1263,6 +1384,32 @@ class MotherApp(App[None]):
                 chat_view = self.query_one("#chat-view", VerticalScroll)
                 _ = chat_view.mount(section)
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
+        if should_follow:
+            self._scroll_chat_to_end(force=True)
+
+    def _show_council_trace(self, result: CouncilResult) -> None:
+        """Mount inspectable council stage traces within the active conversation turn."""
+        sections = result.trace_sections()
+        if not sections:
+            return
+
+        should_follow = self._should_follow_chat_updates()
+        active_turn = self._active_turn
+        if active_turn is not None:
+            active_turn.tool_trace_stack.display = True
+            for trace in sections:
+                _ = active_turn.tool_trace_stack.mount(
+                    OutputSection(trace.title, "council-title", CouncilOutput(trace.text))
+                )
+        else:
+            try:
+                chat_view = self.query_one("#chat-view", VerticalScroll)
+            except (NoMatches, ScreenStackError):
+                return
+            for trace in sections:
+                _ = chat_view.mount(
+                    OutputSection(trace.title, "council-title", CouncilOutput(trace.text))
+                )
         if should_follow:
             self._scroll_chat_to_end(force=True)
 
@@ -1574,6 +1721,66 @@ class MotherApp(App[None]):
             _ = self.call_from_thread(self._disable_agent_mode_unsupported)
         return visible_text
 
+    async def _run_council_request(
+        self,
+        *,
+        user_question: str,
+        response: Response,
+        conversation_context: str,
+        supplemental_context: str,
+        council_members: tuple[ModelEntry, ...],
+        council_judge: ModelEntry,
+    ) -> str | None:
+        runner = CouncilRunner(
+            members=council_members,
+            judge=council_judge,
+            base_system_prompt=self.config.system_prompt,
+            reasoning_effort=self.config.reasoning_effort,
+            openai_reasoning_summary=self.config.openai_reasoning_summary,
+            cwd=Path.cwd(),
+        )
+        try:
+            result = await runner.run(
+                user_question=user_question,
+                conversation_context=conversation_context,
+                supplemental_context=supplemental_context,
+            )
+        except UserInterruptedError:
+            interrupted_text = self._format_interrupted_output()
+            self._show_error(response, interrupted_text)
+            self._record_session_event(
+                "council_interrupted",
+                {
+                    "members": [entry.id for entry in council_members],
+                    "judge": council_judge.id,
+                    "question": user_question,
+                },
+            )
+            return None
+        except Exception as exc:
+            self._show_error(response, f"**Error:** {exc}")
+            self._record_session_event(
+                "council_failed",
+                {
+                    "members": [entry.id for entry in council_members],
+                    "judge": council_judge.id,
+                    "question": user_question,
+                    "error": str(exc),
+                },
+            )
+            return None
+
+        final_text = result.final_text
+        if final_text or id(response) in self._response_waiting_animations:
+            _ = self.call_from_thread(self._update_response_output, response, final_text)
+        _ = self.call_from_thread(self._show_council_trace, result)
+        _ = self.call_from_thread(response.stop_stream)
+        response.reset_state(final_text)
+        self.conversation_state.append_synthetic_turn(user_question, final_text)
+        self._record_session_message("assistant", final_text)
+        self._record_session_event("council_completed", result.to_event_details())
+        return final_text
+
     @staticmethod
     def _format_interrupted_output(partial_output: str = "") -> str:
         """Format the user-facing interruption notice, preserving partial output."""
@@ -1636,7 +1843,45 @@ class MotherApp(App[None]):
             asyncio.set_event_loop(None)
 
         if full_text is not None:
+            self.conversation_state.append_transcript_turn(user_text, full_text)
             self._record_session_message("assistant", full_text)
+
+    @work(thread=True)
+    def send_council(
+        self,
+        *,
+        user_question: str,
+        response: Response,
+        conversation_context: str,
+        supplemental_context: str,
+        council_members: tuple[ModelEntry, ...],
+        council_judge: ModelEntry,
+    ) -> None:
+        """Run /council in a worker thread without polluting main model history."""
+        _ = self.call_from_thread(self._start_response_waiting_animation, response)
+
+        loop = asyncio.new_event_loop()
+        task: asyncio.Task[str | None] | None = None
+        self._active_runtime_loop = loop
+        try:
+            asyncio.set_event_loop(loop)
+            task = loop.create_task(
+                self._run_council_request(
+                    user_question=user_question,
+                    response=response,
+                    conversation_context=conversation_context,
+                    supplemental_context=supplemental_context,
+                    council_members=council_members,
+                    council_judge=council_judge,
+                )
+            )
+            self._active_runtime_task = task
+            _ = loop.run_until_complete(task)
+        finally:
+            self._active_runtime_task = None
+            self._active_runtime_loop = None
+            loop.close()
+            asyncio.set_event_loop(None)
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""

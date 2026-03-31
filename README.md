@@ -12,6 +12,7 @@ It supports three modes:
 
 - terminal-first chat UI
 - model switching
+- anonymous multi-model `/council` synthesis across configurable members and a configurable judge
 - optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
 - clipboard image paste in the prompt via `Ctrl+V` (with `Cmd+V` still working for normal paste on macOS)
@@ -59,6 +60,41 @@ Each app launch starts a new transient JSONL session under `~/.mother/sessions`.
 Markdown exports default to `~/Debian/Documents/mother` when that directory exists,
 otherwise `~/Documents/mother`. You can override this with `session_markdown_dir`
 in `~/.config/mother/config.toml`.
+
+## Council
+
+Use `/council <question>` to run an anonymous multi-model deliberation pass.
+
+What it does:
+
+- sends the council question plus a bounded snapshot of recent conversation context
+- includes any pending shell context that would normally be flushed into the next turn
+- collects independent answers from the configured council members
+- runs anonymous peer review over `Response A`, `Response B`, `Response C`, ...
+- asks the configured judge to synthesize the final answer without seeing model ids
+
+Important behavior:
+
+- only the stripped council question and the final synthesized answer are added back into the main chat context
+- intermediate council drafts, rankings, and reviews stay internal and do not pollute future prompts
+- council traces are still inspectable in the TUI and are included in markdown session exports
+- `/council` currently ignores image attachments
+
+Example configuration in `~/.config/mother/config.toml`:
+
+```toml
+[council]
+members = ["gpt-5", "g3", "opus"]
+judge = "opus"
+max_context_turns = 8
+max_context_chars = 12000
+```
+
+Notes:
+
+- `members` and `judge` must reference ids from your configured `[[models]]`
+- the judge may also be one of the members
+- the judge sees anonymous response labels, not model names
 
 ## Tools in agent mode
 

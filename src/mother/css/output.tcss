@@ -24,6 +24,19 @@ ToolOutput:focus {
     background: $secondary 6%;
 }
 
+CouncilOutput {
+    height: auto;
+    border: none;
+    background: transparent;
+    color: $text;
+    margin: 0;
+    padding: 0 1;
+}
+
+CouncilOutput:focus {
+    background: $warning 8%;
+}
+
 ThinkingOutput {
     height: auto;
     border: none;

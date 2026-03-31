@@ -10,10 +10,23 @@ from typing import cast, final
 from unittest.mock import patch
 
 from pydantic_ai import Tool
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from textual.worker import Worker
 
 from mother import MotherApp, MotherConfig
+from mother.council import (
+    CouncilAggregateRanking,
+    CouncilCandidateResponse,
+    CouncilPeerReview,
+    CouncilResult,
+)
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
 from mother.runtime import RuntimePartialRunError, RuntimeResponse, RuntimeToolEvent
@@ -157,6 +170,29 @@ class _PartialHistoryRuntime:
 
     async def run_stream(self, **_: object) -> RuntimeResponse:
         raise RuntimePartialRunError(RuntimeError("boom"), self.partial_messages)
+
+
+@final
+class _FakeCouncilRunner:
+    def __init__(self, result: CouncilResult) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    async def run(
+        self,
+        *,
+        user_question: str,
+        conversation_context: str = "",
+        supplemental_context: str = "",
+    ) -> CouncilResult:
+        self.calls.append(
+            {
+                "user_question": user_question,
+                "conversation_context": conversation_context,
+                "supplemental_context": supplemental_context,
+            }
+        )
+        return self.result
 
 
 def _call_from_thread(callback: object, *args: object) -> object:
@@ -504,6 +540,99 @@ def test_run_runtime_request_preserves_partial_history_on_failure() -> None:
     assert response.updated_texts == ["**Error:** boom"]
     assert response.stop_stream_calls == 1
     assert response.reset_texts == ["**Error:** boom"]
+
+
+def test_run_council_request_appends_only_synthesized_turn_to_main_context() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+    app.conversation_state.append_synthetic_turn("Earlier question", "Earlier answer")
+    council_context = app._build_council_context()  # pyright: ignore[reportPrivateUsage]
+    council_result = CouncilResult(
+        final_text="Final council answer",
+        judge_model_id="opus",
+        stage1=(
+            CouncilCandidateResponse(
+                label="Response A",
+                model_id="gpt-5",
+                text="Draft answer A",
+            ),
+            CouncilCandidateResponse(
+                label="Response B",
+                model_id="opus",
+                text="Draft answer B",
+            ),
+        ),
+        stage2=(
+            CouncilPeerReview(
+                reviewer_model_id="g3",
+                text="Response B is stronger.\n\nFINAL RANKING:\n1. Response B\n2. Response A",
+                parsed_ranking=("Response B", "Response A"),
+            ),
+        ),
+        aggregate_rankings=(
+            CouncilAggregateRanking(label="Response B", average_rank=1.0, rankings_count=1),
+        ),
+        label_to_model={"Response A": "gpt-5", "Response B": "opus"},
+    )
+    fake_runner = _FakeCouncilRunner(council_result)
+
+    with (
+        patch("mother.mother.CouncilRunner", return_value=fake_runner),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+    ):
+        full_text = asyncio.run(
+            app._run_council_request(  # pyright: ignore[reportPrivateUsage]
+                user_question="Need a launch plan",
+                response=cast(Response, cast(object, response)),
+                conversation_context=council_context,
+                supplemental_context="Shell command: git status",
+                council_members=(
+                    ModelEntry(
+                        id="gpt-5",
+                        name="gpt-5",
+                        api_type="openai-responses",
+                    ),
+                    ModelEntry(
+                        id="g3",
+                        name="g3",
+                        api_type="openai-responses",
+                    ),
+                    ModelEntry(
+                        id="opus",
+                        name="opus",
+                        api_type="anthropic",
+                    ),
+                ),
+                council_judge=ModelEntry(
+                    id="opus",
+                    name="opus",
+                    api_type="anthropic",
+                ),
+            )
+        )
+
+    assert full_text == "Final council answer"
+    assert response.updated_texts == ["Final council answer"]
+    assert response.stop_stream_calls == 1
+    assert response.reset_texts == ["Final council answer"]
+    assert fake_runner.calls == [
+        {
+            "user_question": "Need a launch plan",
+            "conversation_context": "User: Earlier question\n\nAssistant: Earlier answer",
+            "supplemental_context": "Shell command: git status",
+        }
+    ]
+    assert len(app.conversation_state.transcript_messages) == 4
+    assert app.conversation_state.transcript_messages[-2].content == "Need a launch plan"
+    assert app.conversation_state.transcript_messages[-1].content == "Final council answer"
+    latest_request = cast(ModelRequest, app.conversation_state.message_history[-2])
+    latest_response = cast(ModelResponse, app.conversation_state.message_history[-1])
+    request_part = latest_request.parts[0]
+    response_part = latest_response.parts[0]
+    assert isinstance(request_part, UserPromptPart)
+    assert request_part.content == "Need a launch plan"
+    assert isinstance(response_part, TextPart)
+    assert response_part.content == "Final council answer"
 
 
 def test_handle_interrupt_escape_requires_double_press() -> None:

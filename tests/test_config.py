@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherConfig, load_config
-from mother.config import apply_cli_overrides
+from mother.config import CouncilConfig, apply_cli_overrides
 
 
 def test_load_config_defaults(tmp_path: Path) -> None:
@@ -16,13 +16,30 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.openai_reasoning_summary == "auto"
     assert config.tools_enabled is False
     assert config.ca_bundle_path == ""
+    assert config.council == CouncilConfig()
     assert config_file.exists()
 
 
 def test_load_config_from_file(tmp_path: Path) -> None:
     config_file = tmp_path / "config.toml"
     _ = config_file.write_text(
-        'model = "gpt-4o"\ntheme = "textual-dark"\nreasoning_effort = "high"\nopenai_reasoning_summary = "detailed"\ntools_enabled = true\nca_bundle_path = "/etc/ssl/certs/ib_cert.pem"\n'
+        "\n".join(
+            [
+                'model = "gpt-4o"',
+                'theme = "textual-dark"',
+                'reasoning_effort = "high"',
+                'openai_reasoning_summary = "detailed"',
+                "tools_enabled = true",
+                'ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"',
+                "",
+                "[council]",
+                'members = ["gpt-5", "g3", "opus"]',
+                'judge = "opus"',
+                "max_context_turns = 4",
+                "max_context_chars = 6000",
+                "",
+            ]
+        )
     )
     config = load_config(config_file)
     assert config.model == "gpt-4o"
@@ -32,6 +49,12 @@ def test_load_config_from_file(tmp_path: Path) -> None:
     assert config.tools_enabled is True
     assert config.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
     assert config.system_prompt == DEFAULT_SYSTEM
+    assert config.council == CouncilConfig(
+        members=("gpt-5", "g3", "opus"),
+        judge="opus",
+        max_context_turns=4,
+        max_context_chars=6000,
+    )
 
 
 def test_load_config_rejects_invalid_reasoning_effort(tmp_path: Path) -> None:
@@ -66,6 +89,7 @@ def test_apply_cli_overrides() -> None:
         reasoning_effort="high",
         openai_reasoning_summary="detailed",
         ca_bundle_path="/etc/ssl/certs/ib_cert.pem",
+        council=CouncilConfig(members=("gpt-5",), judge="gpt-5"),
     )
     result = apply_cli_overrides(base, model="gpt-4o-mini", system=None)
     assert result.model == "gpt-4o-mini"
@@ -74,6 +98,7 @@ def test_apply_cli_overrides() -> None:
     assert result.reasoning_effort == "high"
     assert result.openai_reasoning_summary == "detailed"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
+    assert result.council == CouncilConfig(members=("gpt-5",), judge="gpt-5")
 
 
 def test_apply_cli_overrides_none() -> None:
@@ -84,6 +109,7 @@ def test_apply_cli_overrides_none() -> None:
         reasoning_effort="auto",
         openai_reasoning_summary="concise",
         ca_bundle_path="/etc/ssl/certs/ib_cert.pem",
+        council=CouncilConfig(members=("opus",), judge="opus"),
     )
     result = apply_cli_overrides(base, model=None, system=None)
     assert result.model == "gpt-5"
@@ -92,6 +118,7 @@ def test_apply_cli_overrides_none() -> None:
     assert result.reasoning_effort == "auto"
     assert result.openai_reasoning_summary == "concise"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
+    assert result.council == CouncilConfig(members=("opus",), judge="opus")
 
 
 def test_config_allowlist_from_toml(tmp_path: Path) -> None:
