@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import cast
+from typing import Self, cast
 
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
@@ -50,6 +51,69 @@ class CouncilTraceSection:
 
     title: str
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class CouncilProgressUpdate:
+    """A user-visible progress update for one council stage."""
+
+    stage: str
+    stage_number: int
+    stage_total: int
+    description: str
+    completed: int = 0
+    total: int = 0
+
+    @classmethod
+    def stage1(cls, completed: int, total: int) -> Self:
+        """Return a progress update for stage 1 candidate generation."""
+        return cls(
+            stage="stage1",
+            stage_number=1,
+            stage_total=3,
+            description="collecting answers",
+            completed=completed,
+            total=total,
+        )
+
+    @classmethod
+    def stage2(cls, completed: int, total: int) -> Self:
+        """Return a progress update for stage 2 peer review."""
+        return cls(
+            stage="stage2",
+            stage_number=2,
+            stage_total=3,
+            description="running peer review",
+            completed=completed,
+            total=total,
+        )
+
+    @classmethod
+    def stage2_skipped(cls) -> Self:
+        """Return a progress update for a skipped stage-2 review pass."""
+        return cls(
+            stage="stage2",
+            stage_number=2,
+            stage_total=3,
+            description="peer review skipped",
+        )
+
+    @classmethod
+    def stage3(cls) -> Self:
+        """Return a progress update for final synthesis."""
+        return cls(
+            stage="stage3",
+            stage_number=3,
+            stage_total=3,
+            description="finalizing answer",
+        )
+
+    def status_text(self) -> str:
+        """Return the placeholder text shown while the council is running."""
+        prefix = f"Council stage {self.stage_number}/{self.stage_total} · {self.description}"
+        if self.total <= 0:
+            return prefix
+        return f"{prefix} · {self.completed}/{self.total} complete"
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +339,7 @@ class CouncilRunner:
     reasoning_effort: str
     openai_reasoning_summary: str
     cwd: Path
+    on_progress: Callable[[CouncilProgressUpdate], None] | None
 
     def __init__(
         self,
@@ -285,6 +350,7 @@ class CouncilRunner:
         reasoning_effort: str,
         openai_reasoning_summary: str,
         cwd: Path | None = None,
+        on_progress: Callable[[CouncilProgressUpdate], None] | None = None,
     ) -> None:
         self.members = members
         self.judge = judge
@@ -292,6 +358,13 @@ class CouncilRunner:
         self.reasoning_effort = reasoning_effort
         self.openai_reasoning_summary = openai_reasoning_summary
         self.cwd = cwd or Path.cwd()
+        self.on_progress = on_progress
+
+    def _emit_progress(self, update: CouncilProgressUpdate) -> None:
+        """Forward a council progress update to the UI, when configured."""
+        if self.on_progress is None:
+            return
+        self.on_progress(update)
 
     async def run(
         self,
@@ -311,6 +384,7 @@ class CouncilRunner:
             self.members,
             prompt_text=stage1_prompt,
             system_prompt=self._member_system_prompt(),
+            progress_factory=CouncilProgressUpdate.stage1,
         )
         if not stage1_replies:
             raise RuntimeError("All council members failed to respond.")
@@ -344,6 +418,7 @@ class CouncilRunner:
             stage2_reviews=stage2_results,
             aggregate_rankings=aggregate_rankings,
         )
+        self._emit_progress(CouncilProgressUpdate.stage3())
         judge_reply = await self._query_model(
             self.judge,
             prompt_text=stage3_prompt,
@@ -382,6 +457,7 @@ class CouncilRunner:
         stage1_results: tuple[CouncilCandidateResponse, ...],
     ) -> tuple[CouncilPeerReview, ...]:
         if len(stage1_results) < 2:
+            self._emit_progress(CouncilProgressUpdate.stage2_skipped())
             return ()
 
         reviewer_prompt = self._build_stage2_prompt(
@@ -394,6 +470,7 @@ class CouncilRunner:
             self.members,
             prompt_text=reviewer_prompt,
             system_prompt=self._reviewer_system_prompt(),
+            progress_factory=CouncilProgressUpdate.stage2,
         )
         return tuple(
             CouncilPeerReview(
@@ -410,19 +487,41 @@ class CouncilRunner:
         *,
         prompt_text: str,
         system_prompt: str,
+        progress_factory: Callable[[int, int], CouncilProgressUpdate],
     ) -> tuple[_CouncilModelReply, ...]:
-        tasks = [
-            asyncio.create_task(
-                self._query_model(
+        if not models:
+            return ()
+
+        async def _query_one(index: int, model: ModelEntry) -> tuple[int, _CouncilModelReply | None]:
+            return (
+                index,
+                await self._query_model(
                     model,
                     prompt_text=prompt_text,
                     system_prompt=system_prompt,
-                )
+                ),
             )
-            for model in models
+
+        self._emit_progress(progress_factory(0, len(models)))
+        ordered_results: list[_CouncilModelReply | None] = [None] * len(models)
+        tasks = [
+            asyncio.create_task(_query_one(index, model)) for index, model in enumerate(models)
         ]
-        results = await asyncio.gather(*tasks)
-        return tuple(result for result in results if result is not None)
+        completed = 0
+        try:
+            for task in asyncio.as_completed(tasks):
+                index, result = await task
+                ordered_results[index] = result
+                completed += 1
+                self._emit_progress(progress_factory(completed, len(models)))
+        finally:
+            pending_tasks = [task for task in tasks if not task.done()]
+            for task in pending_tasks:
+                _ = task.cancel()
+            if pending_tasks:
+                _ = await asyncio.gather(*pending_tasks, return_exceptions=True)
+
+        return tuple(result for result in ordered_results if result is not None)
 
     async def _query_model(
         self,

@@ -25,6 +25,7 @@ from mother.council import (
     CouncilAggregateRanking,
     CouncilCandidateResponse,
     CouncilPeerReview,
+    CouncilProgressUpdate,
     CouncilResult,
 )
 from mother.interrupts import UserInterruptedError
@@ -739,6 +740,77 @@ def test_run_council_request_appends_only_synthesized_turn_to_main_context() -> 
     assert request_part.content == "Need a launch plan"
     assert isinstance(response_part, TextPart)
     assert response_part.content == "Final council answer"
+
+
+def test_run_council_request_updates_waiting_message_from_progress_callbacks() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+    council_result = CouncilResult(
+        final_text="Final council answer",
+        judge_model_id="judge",
+        stage1=(),
+        stage2=(),
+        aggregate_rankings=(),
+        label_to_model={},
+    )
+    progress_updates = [
+        CouncilProgressUpdate.stage1(1, 3),
+        CouncilProgressUpdate.stage2(2, 3),
+        CouncilProgressUpdate.stage3(),
+    ]
+
+    class _ProgressRunner:
+        def __init__(self, **kwargs: object) -> None:
+            self.on_progress: Callable[[CouncilProgressUpdate], None] = cast(
+                Callable[[CouncilProgressUpdate], None],
+                kwargs["on_progress"],
+            )
+
+        async def run(
+            self,
+            *,
+            user_question: str,
+            conversation_context: str = "",
+            supplemental_context: str = "",
+        ) -> CouncilResult:
+            _ = user_question
+            _ = conversation_context
+            _ = supplemental_context
+            for update in progress_updates:
+                self.on_progress(update)
+            return council_result
+
+    with (
+        patch("mother.mother.CouncilRunner", _ProgressRunner),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "_set_response_waiting_message") as set_waiting_message,
+        patch.object(app, "_show_council_trace"),
+    ):
+        full_text = asyncio.run(
+            app._run_council_request(  # pyright: ignore[reportPrivateUsage]
+                user_question="Need a launch plan",
+                response=cast(Response, cast(object, response)),
+                conversation_context="Context",
+                supplemental_context="Shell command: git status",
+                council_members=(
+                    ModelEntry(
+                        id="gpt-5",
+                        name="gpt-5",
+                        api_type="openai-responses",
+                    ),
+                ),
+                council_judge=ModelEntry(
+                    id="judge",
+                    name="judge",
+                    api_type="anthropic",
+                ),
+            )
+        )
+
+    assert full_text == "Final council answer"
+    assert [call.args[1] for call in set_waiting_message.call_args_list] == [
+        update.status_text() for update in progress_updates
+    ]
 
 
 def test_handle_interrupt_escape_requires_double_press() -> None:

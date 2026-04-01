@@ -1,14 +1,22 @@
 """Tests for anonymous council helpers."""
 
+import asyncio
+from pathlib import Path
+from typing import override
+
+import mother.council as council_module
 from mother.council import (
     CouncilAggregateRanking,
     CouncilCandidateResponse,
     CouncilPeerReview,
+    CouncilProgressUpdate,
     CouncilResult,
+    CouncilRunner,
     build_stage3_prompt,
     calculate_aggregate_rankings,
     parse_ranking_from_text,
 )
+from mother.models import ModelEntry
 
 
 def test_parse_ranking_from_text_prefers_final_ranking_section() -> None:
@@ -91,6 +99,78 @@ def test_build_stage3_prompt_keeps_model_ids_out_of_judge_prompt() -> None:
     assert "g3" not in prompt
     assert "Response A" in prompt
     assert "Response B" in prompt
+
+
+def test_council_progress_status_text_reports_stage_and_counts() -> None:
+    assert CouncilProgressUpdate.stage1(0, 3).status_text() == (
+        "Council stage 1/3 · collecting answers · 0/3 complete"
+    )
+    assert CouncilProgressUpdate.stage2(2, 4).status_text() == (
+        "Council stage 2/3 · running peer review · 2/4 complete"
+    )
+    assert CouncilProgressUpdate.stage3().status_text() == "Council stage 3/3 · finalizing answer"
+
+
+def test_council_runner_reports_progress_and_preserves_member_order() -> None:
+    members = (
+        ModelEntry(id="slow", name="slow", api_type="openai-responses"),
+        ModelEntry(id="fast", name="fast", api_type="openai-responses"),
+        ModelEntry(id="mid", name="mid", api_type="openai-responses"),
+    )
+    updates: list[str] = []
+
+    class _ProgressRunner(CouncilRunner):
+        @override
+        async def _query_model(
+            self,
+            model: ModelEntry,
+            *,
+            prompt_text: str,
+            system_prompt: str,
+        ) -> council_module._CouncilModelReply | None:  # pyright: ignore[reportPrivateUsage]
+            if "answer-generation step" in system_prompt:
+                await asyncio.sleep({"slow": 0.03, "fast": 0.0, "mid": 0.01}[model.id])
+                return council_module._CouncilModelReply(  # pyright: ignore[reportPrivateUsage]
+                    model_id=model.id,
+                    text=f"answer {model.id}",
+                )
+            if "careful reviewer comparing anonymous candidate answers" in system_prompt:
+                await asyncio.sleep({"slow": 0.02, "fast": 0.0, "mid": 0.01}[model.id])
+                return council_module._CouncilModelReply(  # pyright: ignore[reportPrivateUsage]
+                    model_id=model.id,
+                    text="Response B is best.\n\nFINAL RANKING:\n1. Response B\n2. Response A\n3. Response C",
+                )
+            if "internal council synthesis step" in system_prompt:
+                return council_module._CouncilModelReply(  # pyright: ignore[reportPrivateUsage]
+                    model_id=model.id,
+                    text="final answer",
+                )
+            raise AssertionError(f"Unexpected system prompt: {system_prompt}")
+
+    runner = _ProgressRunner(
+        members=members,
+        judge=ModelEntry(id="judge", name="judge", api_type="anthropic"),
+        base_system_prompt="You are helpful.",
+        reasoning_effort="high",
+        openai_reasoning_summary="auto",
+        cwd=Path("/tmp"),
+        on_progress=lambda update: updates.append(update.status_text()),
+    )
+
+    result = asyncio.run(runner.run(user_question="How should we ship this?"))
+
+    assert [candidate.model_id for candidate in result.stage1] == ["slow", "fast", "mid"]
+    assert updates == [
+        "Council stage 1/3 · collecting answers · 0/3 complete",
+        "Council stage 1/3 · collecting answers · 1/3 complete",
+        "Council stage 1/3 · collecting answers · 2/3 complete",
+        "Council stage 1/3 · collecting answers · 3/3 complete",
+        "Council stage 2/3 · running peer review · 0/3 complete",
+        "Council stage 2/3 · running peer review · 1/3 complete",
+        "Council stage 2/3 · running peer review · 2/3 complete",
+        "Council stage 2/3 · running peer review · 3/3 complete",
+        "Council stage 3/3 · finalizing answer",
+    ]
 
 
 def test_council_result_trace_sections_include_stage_details_and_model_mapping() -> None:

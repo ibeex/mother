@@ -33,7 +33,7 @@ from mother.bash_execution import BashExecution, format_for_context, format_for_
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
-from mother.council import CouncilResult, CouncilRunner
+from mother.council import CouncilProgressUpdate, CouncilResult, CouncilRunner
 from mother.history import PromptHistory, PromptHistoryMatch
 from mother.interrupts import UserInterruptedError
 from mother.model_picker import (
@@ -1507,13 +1507,29 @@ class MotherApp(App[None]):
             self._waiting_response_text(animation.frame_index, animation.message)
         )
 
-    def _start_response_waiting_animation(self, response: Response) -> None:
+    def _start_response_waiting_animation(
+        self,
+        response: Response,
+        message: str | None = None,
+    ) -> None:
         """Begin animating the temporary MU-TH-UR-style waiting line."""
         animation = _ResponseWaitingAnimation(
             response=response,
-            message=choice(self.RESPONSE_WAITING_MESSAGES),
+            message=message or choice(self.RESPONSE_WAITING_MESSAGES),
         )
         self._response_waiting_animations[id(response)] = animation
+        self._render_response_waiting_frame(animation)
+        if self._should_follow_chat_updates():
+            self._scroll_chat_to_end(force=True)
+
+    def _set_response_waiting_message(self, response: Response, message: str) -> None:
+        """Update the animated waiting line for an in-flight response."""
+        animation = self._response_waiting_animations.get(id(response))
+        if animation is None:
+            self._start_response_waiting_animation(response, message)
+            return
+        animation.message = message
+        animation.frame_index = 0
         self._render_response_waiting_frame(animation)
         if self._should_follow_chat_updates():
             self._scroll_chat_to_end(force=True)
@@ -1789,6 +1805,13 @@ class MotherApp(App[None]):
         council_members: tuple[ModelEntry, ...],
         council_judge: ModelEntry,
     ) -> str | None:
+        def on_progress(update: CouncilProgressUpdate) -> None:
+            _ = self.call_from_thread(
+                self._set_response_waiting_message,
+                response,
+                update.status_text(),
+            )
+
         runner = CouncilRunner(
             members=council_members,
             judge=council_judge,
@@ -1796,6 +1819,7 @@ class MotherApp(App[None]):
             reasoning_effort=self.config.reasoning_effort,
             openai_reasoning_summary=self.config.openai_reasoning_summary,
             cwd=Path.cwd(),
+            on_progress=on_progress,
         )
         try:
             result = await runner.run(
@@ -1916,7 +1940,12 @@ class MotherApp(App[None]):
         council_judge: ModelEntry,
     ) -> None:
         """Run /council in a worker thread without polluting main model history."""
-        _ = self.call_from_thread(self._start_response_waiting_animation, response)
+        initial_progress = CouncilProgressUpdate.stage1(0, len(council_members))
+        _ = self.call_from_thread(
+            self._start_response_waiting_animation,
+            response,
+            initial_progress.status_text(),
+        )
 
         loop = asyncio.new_event_loop()
         task: asyncio.Task[str | None] | None = None
