@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Literal, cast
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.parse import urlparse
 
 from mother.tools.web_common import (
@@ -16,6 +17,8 @@ from mother.tools.web_common import (
     ReadableResponse,
     ResponseContext,
     build_ssl_context,
+    fetch_result_metadata_lines,
+    format_fetch_error,
     get_jina_api_key,
     is_local_url,
     parse_headers_json,
@@ -23,6 +26,16 @@ from mother.tools.web_common import (
 )
 
 FetchMode = Literal["auto", "raw", "jina"]
+
+
+@dataclass(frozen=True, slots=True)
+class FetchResult:
+    url: str
+    mode: FetchMode
+    content: str
+    status: int | None = None
+    content_type: str | None = None
+
 
 MAX_TIMEOUT = 120.0
 MAX_CONTENT_BYTES = 512_000
@@ -145,7 +158,7 @@ def _run_raw_request(
     body: str,
     timeout: float,
     ca_bundle_path: str,
-) -> str:
+) -> FetchResult:
     request = _build_raw_request(
         url,
         method,
@@ -171,17 +184,12 @@ def _run_raw_request(
     with response_context as response:
         content_type = _header_value(response.headers, "Content-Type") or "unknown"
         body_text = _read_response_content(response)
-        return "\n".join(
-            [
-                "## Fetch Result",
-                "",
-                "- Mode: raw",
-                f"- URL: {url}",
-                f"- Status: {response.status}",
-                f"- Content-Type: {content_type}",
-                "",
-                body_text,
-            ]
+        return FetchResult(
+            url=url,
+            mode="raw",
+            content=body_text,
+            status=response.status,
+            content_type=content_type,
         )
 
 
@@ -203,6 +211,74 @@ def _run_jina_request(
     response_context = _open_request(request, timeout, ca_bundle_path)
     with response_context as response:
         return _read_response_content(response)
+
+
+def fetch_url(
+    url: str,
+    *,
+    mode: FetchMode = "auto",
+    method: str = "GET",
+    headers_json: str = "",
+    body: str = "",
+    timeout: float = DEFAULT_TIMEOUT,
+    pass_path: str = DEFAULT_PASS_PATH,
+    ca_bundle_path: str = "",
+) -> FetchResult:
+    """Fetch a URL and return structured content for reuse outside tool mode."""
+    normalized_method = method.strip().upper() or "GET"
+    normalized_url = _validate_url(url)
+    resolved_timeout = _resolve_timeout(timeout)
+    resolved_mode = _resolve_mode(
+        normalized_url,
+        mode,
+        normalized_method,
+        headers_json,
+        body,
+    )
+    if resolved_mode == "jina" and is_local_url(normalized_url):
+        raise ValueError("jina mode cannot fetch local URLs. Use mode=raw instead.")
+
+    if resolved_mode == "raw":
+        headers = parse_headers_json(headers_json)
+        return _run_raw_request(
+            normalized_url,
+            normalized_method,
+            headers,
+            body,
+            resolved_timeout,
+            ca_bundle_path,
+        )
+
+    try:
+        content = _run_jina_request(
+            normalized_url,
+            resolved_timeout,
+            ca_bundle_path,
+        )
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        if not should_retry_with_jina_api_key(exc.code, detail):
+            raise
+
+        api_key = get_jina_api_key(pass_path)
+        content = _run_jina_request(
+            normalized_url,
+            resolved_timeout,
+            ca_bundle_path,
+            api_key,
+        )
+
+    return FetchResult(
+        url=normalized_url,
+        mode="jina",
+        content=content or "(empty response body)",
+    )
+
+
+def _format_fetch_result(result: FetchResult) -> str:
+    metadata_lines = [f"- {line}" for line in fetch_result_metadata_lines(result)]
+    lines = ["## Fetch Result", "", *metadata_lines, "", result.content]
+    return "\n".join(lines)
 
 
 def make_web_fetch_tool(
@@ -243,72 +319,19 @@ def make_web_fetch_tool(
         Returns:
             Retrieved content formatted for chat, or a readable error message.
         """
-        normalized_method = method.strip().upper() or "GET"
         try:
-            normalized_url = _validate_url(url)
-            resolved_timeout = _resolve_timeout(timeout)
-            resolved_mode = _resolve_mode(
-                normalized_url,
-                mode,
-                normalized_method,
-                headers_json,
-                body,
+            result = fetch_url(
+                url,
+                mode=mode,
+                method=method,
+                headers_json=headers_json,
+                body=body,
+                timeout=timeout,
+                pass_path=pass_path,
+                ca_bundle_path=ca_bundle_path,
             )
-            if resolved_mode == "jina" and is_local_url(normalized_url):
-                return "Error: jina mode cannot fetch local URLs. Use mode=raw instead."
-
-            if resolved_mode == "raw":
-                headers = parse_headers_json(headers_json)
-                return _run_raw_request(
-                    normalized_url,
-                    normalized_method,
-                    headers,
-                    body,
-                    resolved_timeout,
-                    ca_bundle_path,
-                )
-
-            try:
-                content = _run_jina_request(
-                    normalized_url,
-                    resolved_timeout,
-                    ca_bundle_path,
-                )
-            except HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace").strip()
-                if not should_retry_with_jina_api_key(exc.code, detail):
-                    if detail:
-                        return f"Error: HTTP {exc.code} - {exc.reason}\n{detail}"
-                    return f"Error: HTTP {exc.code} - {exc.reason}"
-
-                api_key = get_jina_api_key(pass_path)
-                content = _run_jina_request(
-                    normalized_url,
-                    resolved_timeout,
-                    ca_bundle_path,
-                    api_key,
-                )
-
-            return "\n".join(
-                [
-                    "## Fetch Result",
-                    "",
-                    "- Mode: jina",
-                    f"- URL: {normalized_url}",
-                    "",
-                    content or "(empty response body)",
-                ]
-            )
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace").strip()
-            if detail:
-                return f"Error: HTTP {exc.code} - {exc.reason}\n{detail}"
-            return f"Error: HTTP {exc.code} - {exc.reason}"
-        except URLError as exc:
-            return f"Error: {exc.reason}"
-        except (RuntimeError, ValueError) as exc:
-            return f"Error: {exc}"
         except Exception as exc:
-            return f"Error: {exc}"
+            return format_fetch_error(exc)
+        return _format_fetch_result(result)
 
     return web_fetch

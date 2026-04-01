@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -16,6 +17,8 @@ from mother.models import ModelEntry
 from mother.reasoning import build_reasoning_options
 from mother.runtime import ChatRuntime
 from mother.system_prompt import build_system_prompt
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,7 +495,9 @@ class CouncilRunner:
         if not models:
             return ()
 
-        async def _query_one(index: int, model: ModelEntry) -> tuple[int, _CouncilModelReply | None]:
+        async def _query_one(
+            index: int, model: ModelEntry
+        ) -> tuple[int, _CouncilModelReply | None]:
             return (
                 index,
                 await self._query_model(
@@ -548,6 +553,10 @@ class CouncilRunner:
         except UserInterruptedError:
             raise
         except Exception:
+            logger.exception(
+                "Council model query failed for %s during anonymous council run",
+                model.id,
+            )
             return None
 
         text = response.text.strip()

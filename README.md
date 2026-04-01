@@ -16,6 +16,7 @@ It supports three modes:
 - optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
 - clipboard image paste in the prompt via `Ctrl+V` (with `Cmd+V` still working for normal paste on macOS)
+- explicit `[[fetch https://...]]` prompt expansion in any chat or agent turn
 - agent mode with tool traces
 - deep research mode with plan-first web research loops
 - guarded local `bash` execution
@@ -45,6 +46,29 @@ works for plain text when no image is present in the clipboard.
 - if no image is present, `Ctrl+V` falls back to normal text paste, including system clipboard text on macOS
 
 Your selected model must support image attachments for multimodal prompts to work.
+
+## Inline web fetch expansion
+
+You can explicitly fetch a URL into the next prompt by writing:
+
+```text
+[[fetch https://example.com/page]]
+```
+
+Mother fetches the page before sending the turn to the model, injects the fetched
+content into the prompt context, and rewrites the user-visible prompt portion to
+contain the plain URL.
+
+This works in normal chat turns and in agent-mode turns because it happens before
+runtime execution rather than through an LLM tool call.
+
+Notes:
+
+- only explicit `[[fetch ...]]` directives are expanded
+- repeated URLs in the same turn are fetched once
+- prompt expansion currently limits itself to the first 3 fetched URLs per turn
+- fetched content is truncated before injection to avoid exploding prompt size
+- fetch failures are included as inline error notes instead of aborting the turn
 
 ## Sessions
 

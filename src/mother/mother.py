@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from pathlib import Path, PurePath
 from random import choice
 from time import monotonic
@@ -43,6 +45,7 @@ from mother.model_picker import (
     ModelSwitchConfirmScreen,
 )
 from mother.models import ModelEntry, find_model_entry, resolve_model_entry
+from mother.prompt_expansion import expand_prompt_fetch_directives
 from mother.reasoning import (
     REASONING_EFFORT_HELP,
     build_reasoning_options,
@@ -103,6 +106,8 @@ APP_CSS_PATHS: list[str | PurePath] = [
     CSS_DIR / "input.tcss",
 ]
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class _ResponseWaitingAnimation:
@@ -111,6 +116,18 @@ class _ResponseWaitingAnimation:
     response: Response
     message: str
     frame_index: int = 0
+
+
+@dataclass(slots=True)
+class _RuntimeStreamState:
+    """Track mutable state for one streamed runtime request."""
+
+    response: Response
+    thinking_output: ThinkingOutput | None
+    visible_text: str = ""
+    thinking_text: str = ""
+    thinking_streaming: bool = False
+    blocked_bash_notice: str | None = None
 
 
 class MotherApp(App[None]):
@@ -807,6 +824,18 @@ class MotherApp(App[None]):
         if pending_context:
             return pending_context + "\n\n" + value
         return value
+
+    def _expand_prompt_fetch_directives(self, prompt: str, user_text: str) -> str:
+        """Expand explicit inline fetch directives in the user portion of a prompt."""
+        expanded_user_prompt = expand_prompt_fetch_directives(
+            user_text,
+            ca_bundle_path=self.config.ca_bundle_path,
+        ).prompt_text
+        if prompt == user_text:
+            return expanded_user_prompt
+        if prompt.endswith(f"\n\n{user_text}"):
+            return f"{prompt[: -len(user_text)]}{expanded_user_prompt}"
+        return expanded_user_prompt
 
     def capture_clipboard_image(self) -> str | None:
         """Save a clipboard image to a temp file and register it as a pending attachment."""
@@ -1702,6 +1731,66 @@ class MotherApp(App[None]):
             return notice
         return f"{stripped}\n\n{notice}"
 
+    def _runtime_on_text_update(self, stream_state: _RuntimeStreamState, text: str) -> None:
+        """Handle streamed visible-text updates for a runtime request."""
+        if (
+            stream_state.thinking_output is not None
+            and stream_state.thinking_streaming
+            and text != stream_state.visible_text
+        ):
+            _ = self.call_from_thread(
+                self._finish_thinking_output,
+                stream_state.thinking_output,
+            )
+            stream_state.thinking_streaming = False
+        stream_state.visible_text = text
+        _ = self.call_from_thread(
+            self._update_response_output,
+            stream_state.response,
+            stream_state.visible_text,
+        )
+
+    def _runtime_on_thinking_update(
+        self,
+        stream_state: _RuntimeStreamState,
+        text: str,
+    ) -> None:
+        """Handle streamed reasoning/thinking updates for a runtime request."""
+        if stream_state.thinking_output is None:
+            return
+        stream_state.thinking_text = text
+        if not stream_state.thinking_streaming:
+            _ = self.call_from_thread(
+                self._start_thinking_output,
+                stream_state.thinking_output,
+            )
+            stream_state.thinking_streaming = True
+        _ = self.call_from_thread(
+            self._update_thinking_output,
+            stream_state.thinking_output,
+            stream_state.thinking_text,
+        )
+
+    def _runtime_on_tool_event(
+        self,
+        stream_state: _RuntimeStreamState,
+        event: RuntimeToolEvent,
+    ) -> None:
+        """Handle tool events emitted while a runtime request is running."""
+        if stream_state.blocked_bash_notice is None:
+            stream_state.blocked_bash_notice = self._blocked_bash_clipboard_notice(event)
+        self._handle_runtime_tool_event(event)
+
+    def _finish_runtime_thinking_if_needed(self, stream_state: _RuntimeStreamState) -> None:
+        """Finalize any in-progress thinking widget stream."""
+        if not stream_state.thinking_streaming or stream_state.thinking_output is None:
+            return
+        _ = self.call_from_thread(
+            self._finish_thinking_output,
+            stream_state.thinking_output,
+        )
+        stream_state.thinking_streaming = False
+
     async def _run_runtime_request(
         self,
         prompt: str,
@@ -1712,35 +1801,7 @@ class MotherApp(App[None]):
         thinking_output: ThinkingOutput | None,
     ) -> str | None:
         runtime = ChatRuntime(self.current_model_entry)
-        visible_text = ""
-        thinking_text = ""
-        thinking_streaming = False
-        blocked_bash_notices: list[str] = []
-
-        def on_text_update(text: str) -> None:
-            nonlocal visible_text, thinking_streaming
-            if thinking_output is not None and thinking_streaming and text != visible_text:
-                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
-                thinking_streaming = False
-            visible_text = text
-            _ = self.call_from_thread(self._update_response_output, response, visible_text)
-
-        def on_thinking_update(text: str) -> None:
-            nonlocal thinking_text, thinking_streaming
-            if thinking_output is None:
-                return
-            thinking_text = text
-            if not thinking_streaming:
-                _ = self.call_from_thread(self._start_thinking_output, thinking_output)
-                thinking_streaming = True
-            _ = self.call_from_thread(self._update_thinking_output, thinking_output, thinking_text)
-
-        def on_tool_event(event: RuntimeToolEvent) -> None:
-            if not blocked_bash_notices:
-                notice = self._blocked_bash_clipboard_notice(event)
-                if notice is not None:
-                    blocked_bash_notices.append(notice)
-            self._handle_runtime_tool_event(event)
+        stream_state = _RuntimeStreamState(response, thinking_output)
 
         try:
             runtime_response = await runtime.run_stream(
@@ -1751,49 +1812,69 @@ class MotherApp(App[None]):
                 tools=tools,
                 model_settings=self._reasoning_options(),
                 tool_call_limit=self._tool_call_limit(),
-                on_text_update=on_text_update,
-                on_thinking_update=on_thinking_update if thinking_output is not None else None,
-                on_tool_event=on_tool_event,
+                on_text_update=partial(self._runtime_on_text_update, stream_state),
+                on_thinking_update=(
+                    partial(self._runtime_on_thinking_update, stream_state)
+                    if thinking_output is not None
+                    else None
+                ),
+                on_tool_event=partial(self._runtime_on_tool_event, stream_state),
             )
         except UserInterruptedError as exc:
-            if thinking_streaming:
-                assert thinking_output is not None
-                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
-            interrupted_text = self._format_interrupted_output(visible_text or exc.partial_output)
+            self._finish_runtime_thinking_if_needed(stream_state)
+            interrupted_text = self._format_interrupted_output(
+                stream_state.visible_text or exc.partial_output
+            )
             self._show_error(response, interrupted_text)
             self._record_session_event("turn_interrupted", {"agent_mode": self.agent_mode})
             return None
         except RuntimePartialRunError as exc:
-            if thinking_streaming:
-                assert thinking_output is not None
-                _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+            self._finish_runtime_thinking_if_needed(stream_state)
             self.conversation_state.message_history = list(exc.partial_messages)
             self._show_error(response, f"**Error:** {exc.cause}")
+            logger.exception(
+                "Runtime request preserved partial history after failure for model %s",
+                self.current_model_entry.id,
+            )
             return None
         except Exception as exc:
+            self._finish_runtime_thinking_if_needed(stream_state)
             self._show_error(response, f"**Error:** {exc}")
+            logger.exception(
+                "Runtime request failed for model %s (tools=%s attachments=%d)",
+                self.current_model_entry.id,
+                [tool.name for tool in tools],
+                len(attachments),
+            )
             return None
 
-        if thinking_streaming:
-            assert thinking_output is not None
-            _ = self.call_from_thread(self._finish_thinking_output, thinking_output)
+        self._finish_runtime_thinking_if_needed(stream_state)
 
         final_text = runtime_response.text
-        if blocked_bash_notices:
-            final_text = self._append_notice_if_missing(final_text, blocked_bash_notices[0])
+        if stream_state.blocked_bash_notice is not None:
+            final_text = self._append_notice_if_missing(
+                final_text, stream_state.blocked_bash_notice
+            )
 
-        if final_text != visible_text or id(response) in self._response_waiting_animations:
-            visible_text = final_text
-            _ = self.call_from_thread(self._update_response_output, response, visible_text)
+        if (
+            final_text != stream_state.visible_text
+            or id(response) in self._response_waiting_animations
+        ):
+            stream_state.visible_text = final_text
+            _ = self.call_from_thread(
+                self._update_response_output,
+                response,
+                stream_state.visible_text,
+            )
 
         _ = self.call_from_thread(response.stop_stream)
         self.conversation_state.message_history = list(runtime_response.all_messages)
-        response.reset_state(visible_text)
+        response.reset_state(stream_state.visible_text)
         self._record_session_event("turn_usage", runtime_response.usage.to_event_details())
         _ = self.call_from_thread(self._apply_turn_usage, runtime_response.usage)
         if tools and not runtime_response.agent_mode_used:
             _ = self.call_from_thread(self._disable_agent_mode_unsupported)
-        return visible_text
+        return stream_state.visible_text
 
     async def _run_council_request(
         self,
@@ -1841,6 +1922,11 @@ class MotherApp(App[None]):
             return None
         except Exception as exc:
             self._show_error(response, f"**Error:** {exc}")
+            logger.exception(
+                "Council request failed (judge=%s members=%s)",
+                council_judge.id,
+                [entry.id for entry in council_members],
+            )
             self._record_session_event(
                 "council_failed",
                 {
@@ -1889,13 +1975,15 @@ class MotherApp(App[None]):
         """Get the response in a thread, maintaining conversation history."""
         _ = self.call_from_thread(self._start_response_waiting_animation, response)
 
+        prompt_text = self._expand_prompt_fetch_directives(prompt, user_text)
+
         tools = self._get_enabled_tools()
         tool_names = self._tool_names(tools)
         system = self._build_system_prompt(tools)
         attachment_paths = [str(path) for path in attachments or []]
         self._record_prompt_context(
             user_text=user_text,
-            prompt_text=prompt,
+            prompt_text=prompt_text,
             system_prompt=system,
             tool_names=tool_names,
             attachment_paths=attachment_paths,
@@ -1908,7 +1996,7 @@ class MotherApp(App[None]):
             asyncio.set_event_loop(loop)
             task = loop.create_task(
                 self._run_runtime_request(
-                    prompt,
+                    prompt_text,
                     response,
                     system,
                     tools,

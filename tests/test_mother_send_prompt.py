@@ -30,6 +30,7 @@ from mother.council import (
 )
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
+from mother.prompt_expansion import PromptExpansionResult
 from mother.runtime import RuntimePartialRunError, RuntimeResponse, RuntimeToolEvent
 from mother.stats import TurnUsage
 from mother.tools.bash_capture import BashResult
@@ -255,6 +256,23 @@ def _make_app(
     )
     app.agent_mode = agent_mode
     return app
+
+
+def test_expand_prompt_fetch_directives_preserves_pending_shell_context() -> None:
+    app = _make_app()
+    user_text = "summarize [[fetch https://example.com/docs]]"
+    prompt = "Shell command: git status\n\nOutput: clean\n\n" + user_text
+
+    with patch(
+        "mother.mother.expand_prompt_fetch_directives",
+        return_value=PromptExpansionResult(prompt_text="expanded prompt"),
+    ):
+        prompt_text = app._expand_prompt_fetch_directives(  # pyright: ignore[reportPrivateUsage]
+            prompt,
+            user_text,
+        )
+
+    assert prompt_text == "Shell command: git status\n\nOutput: clean\n\nexpanded prompt"
 
 
 def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
@@ -570,6 +588,7 @@ def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
 
     with (
         patch("mother.mother.ChatRuntime", return_value=_FailingRuntime()),
+        patch("mother.mother.logger.exception") as log_exception,
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -587,6 +606,7 @@ def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
     assert response.updated_texts == ["**Error:** boom"]
     assert response.stop_stream_calls == 1
     assert response.reset_texts == ["**Error:** boom"]
+    log_exception.assert_called_once()
 
 
 def test_run_runtime_request_preserves_partial_output_when_interrupted() -> None:
@@ -629,6 +649,7 @@ def test_run_runtime_request_preserves_partial_history_on_failure() -> None:
 
     with (
         patch("mother.mother.ChatRuntime", return_value=_PartialHistoryRuntime(partial_messages)),
+        patch("mother.mother.logger.exception") as log_exception,
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -647,6 +668,7 @@ def test_run_runtime_request_preserves_partial_history_on_failure() -> None:
     assert response.updated_texts == ["**Error:** boom"]
     assert response.stop_stream_calls == 1
     assert response.reset_texts == ["**Error:** boom"]
+    log_exception.assert_called_once()
 
 
 def test_run_council_request_appends_only_synthesized_turn_to_main_context() -> None:
@@ -740,6 +762,59 @@ def test_run_council_request_appends_only_synthesized_turn_to_main_context() -> 
     assert request_part.content == "Need a launch plan"
     assert isinstance(response_part, TextPart)
     assert response_part.content == "Final council answer"
+
+
+def test_run_council_request_logs_failures_with_context() -> None:
+    app = _make_app()
+    response = _FakeResponse()
+
+    class _FailingCouncilRunner:
+        def __init__(self, **_: object) -> None:
+            pass
+
+        async def run(
+            self,
+            *,
+            user_question: str,
+            conversation_context: str = "",
+            supplemental_context: str = "",
+        ) -> CouncilResult:
+            _ = user_question
+            _ = conversation_context
+            _ = supplemental_context
+            raise RuntimeError("judge boom")
+
+    with (
+        patch("mother.mother.CouncilRunner", _FailingCouncilRunner),
+        patch("mother.mother.logger.exception") as log_exception,
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+    ):
+        full_text = asyncio.run(
+            app._run_council_request(  # pyright: ignore[reportPrivateUsage]
+                user_question="Need a launch plan",
+                response=cast(Response, cast(object, response)),
+                conversation_context="Context",
+                supplemental_context="Shell command: git status",
+                council_members=(
+                    ModelEntry(
+                        id="gpt-5",
+                        name="gpt-5",
+                        api_type="openai-responses",
+                    ),
+                ),
+                council_judge=ModelEntry(
+                    id="judge",
+                    name="judge",
+                    api_type="anthropic",
+                ),
+            )
+        )
+
+    assert full_text is None
+    assert response.updated_texts == ["**Error:** judge boom"]
+    assert response.stop_stream_calls == 1
+    assert response.reset_texts == ["**Error:** judge boom"]
+    log_exception.assert_called_once()
 
 
 def test_run_council_request_updates_waiting_message_from_progress_callbacks() -> None:

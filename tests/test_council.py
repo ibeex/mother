@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 from typing import override
+from unittest.mock import patch
 
 import mother.council as council_module
 from mother.council import (
@@ -171,6 +172,37 @@ def test_council_runner_reports_progress_and_preserves_member_order() -> None:
         "Council stage 2/3 · running peer review · 3/3 complete",
         "Council stage 3/3 · finalizing answer",
     ]
+
+
+def test_council_query_model_logs_failures_with_context() -> None:
+    runner = CouncilRunner(
+        members=(),
+        judge=ModelEntry(id="judge", name="judge", api_type="anthropic"),
+        base_system_prompt="You are helpful.",
+        reasoning_effort="high",
+        openai_reasoning_summary="auto",
+        cwd=Path("/tmp"),
+    )
+    model = ModelEntry(id="gpt-5", name="gpt-5", api_type="openai-responses")
+
+    class _FailingRuntime:
+        async def run_stream(self, **_: object) -> object:
+            raise RuntimeError("boom")
+
+    with (
+        patch("mother.council.ChatRuntime", return_value=_FailingRuntime()),
+        patch("mother.council.logger.exception") as log_exception,
+    ):
+        result = asyncio.run(
+            runner._query_model(  # pyright: ignore[reportPrivateUsage]
+                model,
+                prompt_text="Question",
+                system_prompt="System",
+            )
+        )
+
+    assert result is None
+    log_exception.assert_called_once()
 
 
 def test_council_result_trace_sections_include_stage_details_and_model_mapping() -> None:

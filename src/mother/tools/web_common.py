@@ -8,6 +8,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol, cast
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 
 DEFAULT_TIMEOUT = 30.0
@@ -27,6 +28,23 @@ class ReadableResponse(Protocol):
 class ResponseContext(Protocol):
     def __enter__(self) -> ReadableResponse: ...
     def __exit__(self, exc_type: object, exc: object, tb: object) -> bool | None: ...
+
+
+class FetchResultLike(Protocol):
+    @property
+    def url(self) -> str: ...
+
+    @property
+    def mode(self) -> str: ...
+
+    @property
+    def content(self) -> str: ...
+
+    @property
+    def status(self) -> int | None: ...
+
+    @property
+    def content_type(self) -> str | None: ...
 
 
 def get_jina_api_key(pass_path: str = DEFAULT_PASS_PATH) -> str:
@@ -130,3 +148,34 @@ def parse_headers_json(headers_json: str) -> dict[str, str]:
             raise ValueError("Invalid headers_json: header values must be strings.")
         headers[raw_key] = raw_value
     return headers
+
+
+def format_fetch_error(exc: Exception) -> str:
+    """Return a readable error message for HTTP fetch failures."""
+    if isinstance(exc, HTTPError):
+        detail = exc.read().decode("utf-8", errors="replace").strip()
+        if detail:
+            return f"Error: HTTP {exc.code} - {exc.reason}\n{detail}"
+        return f"Error: HTTP {exc.code} - {exc.reason}"
+    if isinstance(exc, URLError):
+        return f"Error: {exc.reason}"
+    return f"Error: {exc}"
+
+
+def fetch_result_metadata_lines(
+    result: FetchResultLike,
+    *,
+    url_first: bool = False,
+) -> tuple[str, ...]:
+    """Return normalized metadata lines shared by fetch formatting callers."""
+    fields = [
+        ("Mode", result.mode),
+        ("URL", result.url),
+    ]
+    if url_first:
+        fields = [fields[1], fields[0]]
+    if result.status is not None:
+        fields.append(("Status", str(result.status)))
+    if result.content_type is not None:
+        fields.append(("Content-Type", result.content_type))
+    return tuple(f"{label}: {value}" for label, value in fields)
