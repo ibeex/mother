@@ -200,3 +200,17 @@ class SettingsController:
             self.callbacks.notify("Agent mode disabled", title="Agent mode")
             return
         self.action_set_agent_profile("standard")
+
+    def disable_agent_mode_unsupported(self) -> None:
+        """Disable agent mode after a runtime reports that tools are unsupported."""
+        session = self.callbacks.app_session
+        _ = self.set_agent_mode(enabled=False)
+        session.record_session_event(
+            "agent_mode_disabled_unsupported",
+            {"model": session.config.model, "profile": session.agent_profile},
+        )
+        self.callbacks.notify(
+            f"{session.config.model} does not support tools — agent mode disabled",
+            title="Agent mode",
+            severity="warning",
+        )

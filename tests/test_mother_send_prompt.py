@@ -646,7 +646,10 @@ def test_run_runtime_request_preserves_partial_history_on_failure() -> None:
     ]
 
     with (
-        patch("mother.runtime_coordinator.ChatRuntime", return_value=_PartialHistoryRuntime(partial_messages)),
+        patch(
+            "mother.runtime_coordinator.ChatRuntime",
+            return_value=_PartialHistoryRuntime(partial_messages),
+        ),
         patch("mother.runtime_coordinator.logger.exception") as log_exception,
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):

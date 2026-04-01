@@ -174,7 +174,9 @@ class RuntimeCoordinator:
 
     def _show_error(self, response: Response, error_text: str) -> None:
         """Display an error in the response widget and reset its state."""
-        _ = self.callbacks.call_from_thread(self.callbacks.update_response_output, response, error_text)
+        _ = self.callbacks.call_from_thread(
+            self.callbacks.update_response_output, response, error_text
+        )
         _ = self.callbacks.call_from_thread(response.stop_stream)
         response.reset_state(error_text)
 
@@ -335,7 +337,9 @@ class RuntimeCoordinator:
 
         final_text = result.final_text
         if final_text or self.callbacks.runtime_presentation.has_waiting_animation(response):
-            _ = self.callbacks.call_from_thread(self.callbacks.update_response_output, response, final_text)
+            _ = self.callbacks.call_from_thread(
+                self.callbacks.update_response_output, response, final_text
+            )
         _ = self.callbacks.call_from_thread(self.callbacks.show_council_trace, result)
         _ = self.callbacks.call_from_thread(response.stop_stream)
         response.reset_state(final_text)

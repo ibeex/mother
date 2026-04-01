@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+from collections.abc import Coroutine
 from pathlib import Path, PurePath
 from time import monotonic
 from typing import ClassVar, cast, override
@@ -12,35 +12,43 @@ from pydantic_ai import Tool
 from textual import events, on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import BindingType
-from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, OptionList, Static, TextArea
 from textual.worker import Worker, WorkerState
 
 from mother.agent_modes import AgentProfile
+from mother.app_chrome import (
+    StatusLineState,
+    build_status_line_state,
+    subtitle_text,
+    update_status_line,
+)
+from mother.app_interaction import decide_interrupt_escape
 from mother.app_session import AppSession, CouncilModelResolutionError
+from mother.app_shell import build_main_pane, build_status_line
+from mother.app_wiring import (
+    build_runtime_coordinator_callbacks,
+    build_settings_controller_callbacks,
+    build_submission_controller_callbacks,
+)
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import MotherConfig, apply_cli_overrides, load_config
 from mother.conversation import ConversationState
 from mother.council import CouncilResult
 from mother.history import PromptHistory
-from mother.model_picker import (
-    AgentModeProvider,
-    ModelPickerScreen,
-    ModelProvider,
-    ModelSwitchConfirmScreen,
-)
+from mother.model_picker import AgentModeProvider, ModelPickerScreen, ModelProvider
 from mother.models import ModelEntry, resolve_model_entry
 from mother.prompt_controller import PromptController, PromptControllerHost
 from mother.runtime import RuntimeToolEvent
-from mother.runtime_coordinator import RuntimeCoordinator, RuntimeCoordinatorCallbacks
+from mother.runtime_coordinator import RuntimeCoordinator
 from mother.runtime_presentation import RuntimePresentationController, RuntimePresentationHost
+from mother.runtime_tool_events import handle_runtime_tool_event
 from mother.session import SessionManager, format_markdown_export
-from mother.settings_controller import SettingsController, SettingsControllerCallbacks
+from mother.session_save import save_session_markdown
+from mother.settings_controller import SettingsController
 from mother.shell_controller import ShellCommandController, ShellControllerHost
-from mother.slash_commands import SLASH_COMMANDS
 from mother.stats import TurnUsage
-from mother.submission_controller import SubmissionController, SubmissionControllerCallbacks
+from mother.submission_controller import SubmissionController
 from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.widgets import (
@@ -53,8 +61,20 @@ from mother.widgets import (
     SlashComplete,
     StatusLine,
     ThinkingOutput,
-    TurnLabel,
-    WelcomeBanner,
+)
+
+PromptNavigateEvent = (
+    PromptTextArea.SlashNavigate
+    | PromptTextArea.SlashArgumentNavigate
+    | PromptTextArea.HistorySearchNavigate
+)
+PromptPopupEvent = (
+    PromptTextArea.SlashAccept
+    | PromptTextArea.SlashDismiss
+    | PromptTextArea.SlashArgumentAccept
+    | PromptTextArea.SlashArgumentDismiss
+    | PromptTextArea.HistorySearchAccept
+    | PromptTextArea.HistorySearchDismiss
 )
 
 CSS_DIR = Path(__file__).resolve().parent / "css"
@@ -63,6 +83,7 @@ APP_CSS_PATHS: list[str | PurePath] = [
     CSS_DIR / "output.tcss",
     CSS_DIR / "input.tcss",
 ]
+
 
 class MotherApp(App[None]):
     """Simple app for chatting with an LLM via a conversation."""
@@ -115,156 +136,22 @@ class MotherApp(App[None]):
             cast(PromptControllerHost, cast(object, self)),
             prompt_history=self.prompt_history,
         )
-
-        def call_from_thread(callback: object, *args: object) -> object:
-            caller = cast(Callable[..., object], self.call_from_thread)
-            return caller(callback, *args)
-
-        def notify(*args: object, **kwargs: object) -> None:
-            notifier = cast(Callable[..., None], self.notify)
-            notifier(*args, **kwargs)
-
-        def query_one(selector: object, expect_type: object | None = None) -> object:
-            query = cast(Callable[..., object], self.query_one)
-            if expect_type is None:
-                return query(selector)
-            return query(selector, expect_type)
-
-        def run_worker(
-            work: object,
-            *,
-            name: str,
-            group: str,
-            exit_on_error: bool,
-        ) -> object:
-            runner = cast(Callable[..., object], self.run_worker)
-            return runner(work, name=name, group=group, exit_on_error=exit_on_error)
-
-        def send_prompt(
-            prompt: str,
-            user_text: str,
-            response: Response,
-            thinking_output: ThinkingOutput | None = None,
-            attachments: list[Path] | None = None,
-        ) -> object:
-            return self.send_prompt(
-                prompt,
-                user_text,
-                response,
-                thinking_output,
-                attachments,
-            )
-
-        def send_council(
-            *,
-            user_question: str,
-            response: Response,
-            conversation_context: str,
-            supplemental_context: str,
-            council_members: tuple[ModelEntry, ...],
-            council_judge: ModelEntry,
-        ) -> object:
-            return self.send_council(
-                user_question=user_question,
-                response=response,
-                conversation_context=conversation_context,
-                supplemental_context=supplemental_context,
-                council_members=council_members,
-                council_judge=council_judge,
-            )
-
-        def push_model_switch_confirm(
-            model_id: str,
-            callback: Callable[[bool | None], None],
-        ) -> object:
-            return self.push_screen(ModelSwitchConfirmScreen(model_id), callback)
-
         self.auto_scroll_enabled: bool = True
         self.runtime_presentation: RuntimePresentationController = RuntimePresentationController(
             cast(RuntimePresentationHost, cast(object, self)),
             waiting_messages=self.RESPONSE_WAITING_MESSAGES,
         )
         self.runtime_coordinator: RuntimeCoordinator = RuntimeCoordinator(
-            RuntimeCoordinatorCallbacks(
-                app_session=self.app_session,
-                runtime_presentation=self.runtime_presentation,
-                call_from_thread=call_from_thread,
-                update_response_output=lambda response, text: self._update_response_output(
-                    response,
-                    text,
-                ),
-                start_response_waiting_animation=lambda response, message=None: self._start_response_waiting_animation(
-                    response,
-                    message,
-                ),
-                set_response_waiting_message=lambda response, message: self._set_response_waiting_message(
-                    response,
-                    message,
-                ),
-                start_thinking_output=lambda thinking_output: self._start_thinking_output(
-                    thinking_output,
-                ),
-                update_thinking_output=lambda thinking_output, text: self._update_thinking_output(
-                    thinking_output,
-                    text,
-                ),
-                finish_thinking_output=lambda thinking_output: self._finish_thinking_output(
-                    thinking_output,
-                ),
-                show_council_trace=lambda result: self._show_council_trace(result),
-                handle_runtime_tool_event=lambda event: self._handle_runtime_tool_event(event),
-                apply_turn_usage=lambda usage: self._apply_turn_usage(usage),
-                disable_agent_mode_unsupported=lambda: self._disable_agent_mode_unsupported(),
-            )
+            build_runtime_coordinator_callbacks(self)
         )
         self.shell_controller: ShellCommandController = ShellCommandController(
             cast(ShellControllerHost, cast(object, self))
         )
         self.settings_controller: SettingsController = SettingsController(
-            SettingsControllerCallbacks(
-                app_session=self.app_session,
-                notify=notify,
-                update_subtitle=lambda: self._update_subtitle(),
-                update_statusline=lambda: self._update_statusline(),
-                conversation_has_history=lambda: self._conversation_has_history(),
-                push_model_switch_confirm=push_model_switch_confirm,
-            )
+            build_settings_controller_callbacks(self)
         )
         self.submission_controller: SubmissionController = SubmissionController(
-            SubmissionControllerCallbacks(
-                app_session=self.app_session,
-                prompt_history=self.prompt_history,
-                current_model_entry=lambda: self.current_model_entry,
-                prompt_input=lambda: self.prompt_input,
-                notify=notify,
-                query_one=query_one,
-                should_follow_chat_updates=lambda: self._should_follow_chat_updates(),
-                scroll_chat_to_end=lambda *, force=False: self._scroll_chat_to_end(force=force),
-                set_active_turn=lambda turn: setattr(self, "_active_turn", turn),
-                set_active_prompt_worker=lambda worker: setattr(
-                    self,
-                    "_active_prompt_worker",
-                    cast(Worker[None] | None, worker),
-                ),
-                set_active_shell_worker=lambda worker: self.shell_controller.set_active_worker(worker),
-                action_save_session=lambda: self.action_save_session(),
-                action_quit_app=lambda: self.action_quit_app(),
-                action_toggle_agent_mode=lambda: self.action_toggle_agent_mode(),
-                action_set_agent_profile=lambda profile: self.action_set_agent_profile(profile),
-                action_show_models=lambda: self.action_show_models(),
-                action_switch_model=lambda model_id: self.action_switch_model(model_id),
-                resolve_slash_argument_query=lambda command, query: self._resolve_slash_argument_query(
-                    command,
-                    query,
-                ),
-                resolve_council_models=lambda: self._resolve_council_models(),
-                show_reasoning_status=lambda: self.settings_controller.show_reasoning_status(),
-                set_reasoning_effort=lambda effort: self.settings_controller.set_reasoning_effort(effort),
-                run_user_command=lambda cmd: self.shell_controller.run_user_command(cmd),
-                run_worker=run_worker,
-                send_prompt=send_prompt,
-                send_council=send_council,
-            )
+            build_submission_controller_callbacks(self)
         )
         self._last_interrupt_escape_at: float | None = None
         self._active_prompt_worker: Worker[None] | None = None
@@ -301,6 +188,14 @@ class MotherApp(App[None]):
     def _active_turn(self, value: ConversationTurn | None) -> None:
         self.runtime_presentation.active_turn = value
 
+    def set_active_turn(self, turn: ConversationTurn | None) -> None:
+        """Public adapter used by submission wiring to set the active chat turn."""
+        self._active_turn = turn
+
+    def set_active_prompt_worker(self, worker: Worker[None] | None) -> None:
+        """Public adapter used by submission wiring to track the active prompt worker."""
+        self._active_prompt_worker = worker
+
     @property
     def session_manager(self) -> SessionManager | None:
         return self.app_session.session_manager
@@ -328,46 +223,8 @@ class MotherApp(App[None]):
     @override
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="main-pane"):
-            with VerticalScroll(id="chat-view"):
-                yield WelcomeBanner()
-            with Vertical(id="prompt-area"):
-                slash_complete = SlashComplete(SLASH_COMMANDS)
-                slash_complete.display = False
-                yield slash_complete
-                slash_argument_complete = SlashArgumentComplete()
-                slash_argument_complete.display = False
-                yield slash_argument_complete
-                prompt_history_help = Static(
-                    "History search · ↑↓ navigate · Enter accept · Esc cancel",
-                    id="prompt-history-help",
-                )
-                prompt_history_help.display = False
-                yield prompt_history_help
-                prompt_history_complete = PromptHistoryComplete()
-                prompt_history_complete.display = False
-                yield prompt_history_complete
-                prompt_council_help = Static(
-                    "Council multiline mode · Enter newline · Ctrl+Enter submit",
-                    id="prompt-council-help",
-                )
-                prompt_council_help.display = False
-                yield prompt_council_help
-                with Horizontal(id="prompt-row"):
-                    yield TurnLabel(">", classes="turn-gutter input-gutter")
-                    yield PromptTextArea(id="prompt-input")
-        yield StatusLine(
-            self.config.model,
-            self.agent_mode,
-            self.app_session.last_context_tokens,
-            self.auto_scroll_enabled,
-            self._status_reasoning_effort(),
-            self.app_session.last_response_time_seconds,
-            self.app_session.session_input_tokens,
-            self.app_session.session_output_tokens,
-            self.app_session.session_cached_tokens,
-            agent_label=self._status_agent_label(),
-        )
+        yield build_main_pane()
+        yield build_status_line(self._status_line_state())
         yield Footer()
 
     def on_mount(self) -> None:
@@ -433,10 +290,6 @@ class MotherApp(App[None]):
         """Open fuzzy prompt-history search for the current input or an empty query."""
         self.prompt_controller.action_prompt_history_search()
 
-    def _conversation_has_history(self) -> bool:
-        """Return whether the active conversation already contains model-visible history."""
-        return self.app_session.has_history
-
     def action_show_models(self) -> None:
         """Open the model picker."""
 
@@ -453,10 +306,6 @@ class MotherApp(App[None]):
     def action_switch_model(self, model_id: str) -> None:
         """Switch to a different LLM model, asking first if that will clear context."""
         self.settings_controller.action_switch_model(model_id)
-
-    def _status_agent_label(self) -> str:
-        """Return the compact status-line label for the current agent state."""
-        return self.app_session.status_agent_label()
 
     def action_set_agent_profile(self, profile: AgentProfile) -> None:
         """Enable agent mode with a specific profile."""
@@ -498,17 +347,23 @@ class MotherApp(App[None]):
 
     def _update_subtitle(self) -> None:
         """Update subtitle to show model and the active runtime mode."""
-        if not self.agent_mode:
-            sub_title = self.config.model
-        elif self.agent_profile == "deep_research":
-            sub_title = f"{self.config.model} [RESEARCH]"
-        else:
-            sub_title = f"{self.config.model} [AGENT]"
+        sub_title = subtitle_text(
+            model_name=self.config.model,
+            agent_mode=self.agent_mode,
+            agent_profile=self.agent_profile,
+        )
         self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
 
     def _status_reasoning_effort(self) -> str | None:
         """Return the visible reasoning setting for reasoning-capable models."""
         return self.app_session.status_reasoning_effort()
+
+    def _status_line_state(self) -> StatusLineState:
+        """Return the current normalized status-line values for the app chrome."""
+        return build_status_line_state(
+            self.app_session,
+            auto_scroll_enabled=self.auto_scroll_enabled,
+        )
 
     def _update_statusline(self) -> None:
         """Update the single-line status bar above the footer."""
@@ -516,32 +371,12 @@ class MotherApp(App[None]):
             status_line = self.query_one(StatusLine)
         except (NoMatches, ScreenStackError):
             return
-        status_line.set_status(
-            model_name=self.config.model,
-            agent_mode=self.agent_mode,
-            context_tokens=self.app_session.last_context_tokens,
-            auto_scroll_enabled=self.auto_scroll_enabled,
-            reasoning_effort=self._status_reasoning_effort(),
-            last_response_time_seconds=self.app_session.last_response_time_seconds,
-            input_tokens=self.app_session.session_input_tokens,
-            output_tokens=self.app_session.session_output_tokens,
-            cached_tokens=self.app_session.session_cached_tokens,
-            agent_label=self._status_agent_label(),
-        )
-
-    def _remember_last_response_time(self, duration_seconds: float) -> None:
-        """Store the most recent successful model-response duration and refresh the status line."""
-        self.app_session.last_response_time_seconds = max(0.0, duration_seconds)
-        self._update_statusline()
+        update_status_line(status_line, self._status_line_state())
 
     def _apply_turn_usage(self, usage: TurnUsage) -> None:
         """Accumulate normalized turn statistics and refresh the status line."""
         self.app_session.apply_turn_usage(usage)
         self._update_statusline()
-
-    def _refresh_context_size(self) -> None:
-        """Refresh the status line for the latest normalized usage state."""
-        _ = self.call_from_thread(self._update_statusline)
 
     def capture_clipboard_image(self) -> str | None:
         """Save a clipboard image to a temp file and register it as a pending attachment."""
@@ -568,28 +403,19 @@ class MotherApp(App[None]):
 
     def action_save_session(self) -> None:
         """Export the current session to markdown, overwriting the same file for this session."""
-        if self.session_manager is None:
-            self.notify("Session saving is unavailable.", title="Session", severity="warning")
-            return
-
-        try:
-            output_path = self.session_manager.save_as_markdown()
-        except RuntimeError as exc:
-            self.notify(str(exc), title="Session", severity="warning")
-            return
-        except Exception as exc:
-            self.notify(f"Failed to save session: {exc}", title="Session", severity="error")
-            return
-
-        self.notify(f"Saved to {output_path}", title="Session")
-
-        notice = format_markdown_export(output_path)
-        if notice is None:
-            return
-        if notice.severity is None:
-            self.notify(notice.message, title="Session")
-            return
-        self.notify(notice.message, title="Session", severity=notice.severity)
+        result = save_session_markdown(
+            self.session_manager,
+            format_export=format_markdown_export,
+        )
+        for notification in result.notifications:
+            if notification.severity is None:
+                self.notify(notification.message, title="Session")
+                continue
+            self.notify(
+                notification.message,
+                title="Session",
+                severity=notification.severity,
+            )
 
     def action_quit_app(self) -> None:
         """Close the application immediately."""
@@ -603,79 +429,63 @@ class MotherApp(App[None]):
         self.prompt_controller.handle_text_changed(event.text_area.text)
 
     @on(PromptTextArea.SlashNavigate)
-    def on_prompt_text_area_slash_navigate(self, event: PromptTextArea.SlashNavigate) -> None:
-        """Move the slash-command highlight while the prompt retains focus."""
-        self.prompt_controller.navigate_slash(event.direction)
-
     @on(PromptTextArea.SlashArgumentNavigate)
-    def on_prompt_text_area_slash_argument_navigate(
-        self,
-        event: PromptTextArea.SlashArgumentNavigate,
-    ) -> None:
-        """Move the inline slash-argument highlight while the prompt retains focus."""
-        self.prompt_controller.navigate_slash_argument(event.direction)
-
     @on(PromptTextArea.HistorySearchNavigate)
-    def on_prompt_text_area_history_search_navigate(
-        self,
-        event: PromptTextArea.HistorySearchNavigate,
-    ) -> None:
-        """Move the prompt-history fuzzy-search highlight while the prompt retains focus."""
+    def on_prompt_text_area_navigate(self, event: PromptNavigateEvent) -> None:
+        """Route prompt-navigation events to the appropriate popup controller."""
+        if isinstance(event, PromptTextArea.SlashNavigate):
+            self.prompt_controller.navigate_slash(event.direction)
+            return
+        if isinstance(event, PromptTextArea.SlashArgumentNavigate):
+            self.prompt_controller.navigate_slash_argument(event.direction)
+            return
         self.prompt_controller.navigate_history_search(event.direction)
 
     @on(PromptTextArea.SlashAccept)
-    def on_prompt_text_area_slash_accept(self, event: PromptTextArea.SlashAccept) -> None:
-        """Insert the currently highlighted slash command into the prompt."""
-        if event.text_area.slash_complete_active:
-            self.prompt_controller.apply_slash_completion()
-
     @on(PromptTextArea.SlashDismiss)
-    def on_prompt_text_area_slash_dismiss(self, event: PromptTextArea.SlashDismiss) -> None:
-        """Dismiss slash-command autocomplete without changing prompt text."""
-        if event.text_area.slash_complete_active:
-            self.prompt_controller.hide_slash_complete()
-
     @on(PromptTextArea.SlashArgumentAccept)
-    def on_prompt_text_area_slash_argument_accept(
-        self,
-        event: PromptTextArea.SlashArgumentAccept,
-    ) -> None:
-        """Insert the currently highlighted slash-argument completion into the prompt."""
-        if event.text_area.slash_argument_complete_active:
-            self.prompt_controller.apply_slash_argument_completion()
-
     @on(PromptTextArea.SlashArgumentDismiss)
-    def on_prompt_text_area_slash_argument_dismiss(
-        self,
-        event: PromptTextArea.SlashArgumentDismiss,
-    ) -> None:
-        """Dismiss inline slash-argument autocomplete without changing prompt text."""
-        if event.text_area.slash_argument_complete_active:
+    @on(PromptTextArea.HistorySearchAccept)
+    @on(PromptTextArea.HistorySearchDismiss)
+    def on_prompt_text_area_popup_event(self, event: PromptPopupEvent) -> None:
+        """Route prompt popup accept/dismiss events to the appropriate controller action."""
+        text_area = event.text_area
+        if isinstance(event, PromptTextArea.SlashAccept) and text_area.slash_complete_active:
+            self.prompt_controller.apply_slash_completion()
+            return
+        if isinstance(event, PromptTextArea.SlashDismiss) and text_area.slash_complete_active:
+            self.prompt_controller.hide_slash_complete()
+            return
+        if (
+            isinstance(event, PromptTextArea.SlashArgumentAccept)
+            and text_area.slash_argument_complete_active
+        ):
+            self.prompt_controller.apply_slash_argument_completion()
+            return
+        if (
+            isinstance(event, PromptTextArea.SlashArgumentDismiss)
+            and text_area.slash_argument_complete_active
+        ):
             self.prompt_controller.hide_slash_argument_complete()
+            return
+        if (
+            isinstance(event, PromptTextArea.HistorySearchAccept)
+            and text_area.history_search_active
+        ):
+            self.prompt_controller.accept_prompt_history_search()
+            return
+        if (
+            isinstance(event, PromptTextArea.HistorySearchDismiss)
+            and text_area.history_search_active
+        ):
+            self.prompt_controller.dismiss_prompt_history_search()
+            return
 
     @on(PromptTextArea.SlashSubmit)
     async def on_prompt_text_area_slash_submit(self, event: PromptTextArea.SlashSubmit) -> None:
         """Submit built-in slash commands with Enter instead of inserting a newline."""
         if event.text_area is self.prompt_input:
             await self.action_submit()
-
-    @on(PromptTextArea.HistorySearchAccept)
-    def on_prompt_text_area_history_search_accept(
-        self,
-        event: PromptTextArea.HistorySearchAccept,
-    ) -> None:
-        """Insert the currently highlighted prompt-history search result into the prompt."""
-        if event.text_area.history_search_active:
-            self.prompt_controller.accept_prompt_history_search()
-
-    @on(PromptTextArea.HistorySearchDismiss)
-    def on_prompt_text_area_history_search_dismiss(
-        self,
-        event: PromptTextArea.HistorySearchDismiss,
-    ) -> None:
-        """Dismiss prompt-history fuzzy search and restore the prior draft."""
-        if event.text_area.history_search_active:
-            self.prompt_controller.dismiss_prompt_history_search()
 
     @on(OptionList.OptionSelected)
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
@@ -706,17 +516,20 @@ class MotherApp(App[None]):
 
     def handle_interrupt_escape(self) -> bool:
         """Handle Escape presses used to interrupt the active request."""
-        if not self._has_interruptible_work():
-            self._reset_interrupt_escape()
+        decision = decide_interrupt_escape(
+            has_interruptible_work=self._has_interruptible_work(),
+            now=monotonic(),
+            previous_escape_at=self._last_interrupt_escape_at,
+            double_escape_window_seconds=self.DOUBLE_ESCAPE_WINDOW_SECONDS,
+        )
+        self._last_interrupt_escape_at = decision.next_escape_at
+        if not decision.handled:
             return False
-        now = monotonic()
-        previous = self._last_interrupt_escape_at
-        self._last_interrupt_escape_at = now
-        if previous is None or (now - previous) > self.DOUBLE_ESCAPE_WINDOW_SECONDS:
+        if decision.should_notify:
             self.notify("Press Esc again quickly to interrupt", title="Interrupt")
             return True
-        self._reset_interrupt_escape()
-        self._interrupt_active_request()
+        if decision.should_interrupt:
+            self._interrupt_active_request()
         return True
 
     def _interrupt_active_request(self) -> None:
@@ -729,11 +542,8 @@ class MotherApp(App[None]):
         """Mount inspectable council stage traces within the active conversation turn."""
         self.runtime_presentation.show_council_trace(result)
 
-    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        """Re-enable input when the active worker finishes."""
-        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
-            return
-        worker = cast(Worker[None], event.worker)
+    def _finish_worker(self, worker: Worker[None]) -> None:
+        """Clear tracked worker state and restore prompt interactivity after completion."""
         if worker is self._active_prompt_worker:
             self._active_prompt_worker = None
             self._active_turn = None
@@ -742,6 +552,12 @@ class MotherApp(App[None]):
         text_area = self.prompt_input
         text_area.read_only = False
         _ = text_area.focus()
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        """Re-enable input when the active worker finishes."""
+        if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            return
+        self._finish_worker(cast(Worker[None], event.worker))
 
     def _should_follow_chat_updates(self) -> bool:
         """Return whether the next chat update should keep following new output."""
@@ -793,35 +609,12 @@ class MotherApp(App[None]):
 
     def _handle_runtime_tool_event(self, event: RuntimeToolEvent) -> None:
         """Mirror runtime tool events into the TUI and session log."""
-        if event.phase == "started":
-            if self.session_manager is not None:
-                self.session_manager.record_tool_call(
-                    tool_name=event.tool_name,
-                    tool_call_id=event.tool_call_id,
-                    arguments=event.arguments,
-                )
-            _ = self.call_from_thread(
-                self.runtime_presentation.show_tool_started,
-                event.tool_name,
-                event.tool_call_id,
-                event.arguments,
-            )
-            return
-
-        if self.session_manager is not None:
-            self.session_manager.record_tool_result(
-                tool_name=event.tool_name,
-                tool_call_id=event.tool_call_id,
-                arguments=event.arguments,
-                output=event.output or "",
-                is_error=event.is_error,
-            )
-        _ = self.call_from_thread(
-            self.runtime_presentation.show_tool_finished,
-            event.tool_name,
-            event.tool_call_id,
-            event.arguments,
-            event.output or "",
+        handle_runtime_tool_event(
+            event=event,
+            session_manager=self.session_manager,
+            call_from_thread=self.call_from_thread,
+            show_tool_started=self.runtime_presentation.show_tool_started,
+            show_tool_finished=self.runtime_presentation.show_tool_finished,
         )
 
     async def _run_runtime_request(
@@ -904,17 +697,7 @@ class MotherApp(App[None]):
 
     def _disable_agent_mode_unsupported(self) -> None:
         """Disable agent mode and notify user that the model doesn't support tools."""
-        _ = self.settings_controller.set_agent_mode(enabled=False)
-        self.app_session.record_session_event(
-            "agent_mode_disabled_unsupported",
-            {"model": self.config.model, "profile": self.agent_profile},
-        )
-        self.notify(
-            f"{self.config.model} does not support tools — agent mode disabled",
-            title="Agent mode",
-            severity="warning",
-        )
-
+        self.settings_controller.disable_agent_mode_unsupported()
 
 
 @click.command()
