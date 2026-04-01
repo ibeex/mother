@@ -134,7 +134,7 @@ def test_capture_clipboard_image_registers_attachment(tmp_path: Path) -> None:
         result = app.capture_clipboard_image()
 
     assert result == str(image_path)
-    assert app._pending_image_attachments[str(image_path)] == image_path  # pyright: ignore[reportPrivateUsage]
+    assert app.app_session.pending_image_attachments[str(image_path)] == image_path
     notify.assert_called_once_with("Attached image: pasted.png", title="Clipboard")
 
 
@@ -142,14 +142,12 @@ def test_consume_attachments_for_text_only_returns_referenced_paths() -> None:
     app = MotherApp()
     first = Path("/tmp/first.png")
     second = Path("/tmp/second.png")
-    app._pending_image_attachments = {  # pyright: ignore[reportPrivateUsage]
+    app.app_session.pending_image_attachments = {
         str(first): first,
         str(second): second,
     }
 
-    attachments = app._consume_attachments_for_text(  # pyright: ignore[reportPrivateUsage]
-        "Please inspect /tmp/second.png"
-    )
+    attachments = app.app_session.consume_attachments_for_text("Please inspect /tmp/second.png")
 
     assert attachments == [second]
-    assert app._pending_image_attachments == {str(first): first}  # pyright: ignore[reportPrivateUsage]
+    assert app.app_session.pending_image_attachments == {str(first): first}

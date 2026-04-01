@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 from mother import MotherApp, MotherConfig
+from mother.app_session import AppSession
 from mother.models import ModelEntry
 from mother.widgets import ModelComplete, PromptTextArea
 
@@ -527,35 +528,35 @@ def test_shift_g_does_nothing_when_input_is_focused() -> None:
 
 
 def test_send_prompt_no_tools_when_conversational() -> None:
-    app = MotherApp()
-    app.agent_mode = False
-    with patch("mother.mother.get_default_tools") as mock_tools:
+    session = AppSession(MotherConfig())
+    session.agent_mode = False
+    with patch("mother.app_session.get_default_tools") as mock_tools:
         registry = MagicMock()
         registry.is_empty.return_value = True  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
 
-        _ = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
+        _ = session.enabled_tools()
 
         mock_tools.assert_called_with(
             tools_enabled=False,
-            ca_bundle_path=app.config.ca_bundle_path,
+            ca_bundle_path=session.config.ca_bundle_path,
             agent_profile="standard",
         )
 
 
 def test_send_prompt_passes_tools_when_agent() -> None:
-    app = MotherApp()
-    app.agent_mode = True
-    with patch("mother.mother.get_default_tools") as mock_tools:
+    session = AppSession(MotherConfig())
+    session.agent_mode = True
+    with patch("mother.app_session.get_default_tools") as mock_tools:
         registry = MagicMock()
         registry.is_empty.return_value = False  # pyright: ignore[reportAny]
         registry.tools.return_value = [MagicMock()]  # pyright: ignore[reportAny]
         mock_tools.return_value = registry
 
-        _ = app._get_enabled_tools()  # pyright: ignore[reportPrivateUsage]
+        _ = session.enabled_tools()
 
         mock_tools.assert_called_with(
             tools_enabled=True,
-            ca_bundle_path=app.config.ca_bundle_path,
+            ca_bundle_path=session.config.ca_bundle_path,
             agent_profile="standard",
         )

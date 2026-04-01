@@ -21,6 +21,7 @@ from pydantic_ai.messages import (
 from textual.worker import Worker
 
 from mother import MotherApp, MotherConfig
+from mother.app_session import AppSession
 from mother.council import (
     CouncilAggregateRanking,
     CouncilCandidateResponse,
@@ -259,18 +260,15 @@ def _make_app(
 
 
 def test_expand_prompt_fetch_directives_preserves_pending_shell_context() -> None:
-    app = _make_app()
+    session = AppSession(MotherConfig())
     user_text = "summarize [[fetch https://example.com/docs]]"
     prompt = "Shell command: git status\n\nOutput: clean\n\n" + user_text
 
     with patch(
-        "mother.mother.expand_prompt_fetch_directives",
+        "mother.app_session.expand_prompt_fetch_directives",
         return_value=PromptExpansionResult(prompt_text="expanded prompt"),
     ):
-        prompt_text = app._expand_prompt_fetch_directives(  # pyright: ignore[reportPrivateUsage]
-            prompt,
-            user_text,
-        )
+        prompt_text = session.expand_prompt_fetch_directives(prompt, user_text)
 
     assert prompt_text == "Shell command: git status\n\nOutput: clean\n\nexpanded prompt"
 
@@ -303,7 +301,7 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
     )
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "notify"),
         patch.object(app, "_scroll_chat_to_end"),
@@ -327,11 +325,11 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
     assert response.appended_fragments == ["final ", "answer"]
     assert response.stop_stream_calls == 1
     assert response.reset_texts == ["final answer"]
-    assert app._last_context_tokens == 123  # pyright: ignore[reportPrivateUsage]
-    assert app._session_input_tokens == 123  # pyright: ignore[reportPrivateUsage]
-    assert app._session_output_tokens == 45  # pyright: ignore[reportPrivateUsage]
-    assert app._session_cached_tokens == 6  # pyright: ignore[reportPrivateUsage]
-    assert app._last_response_time_seconds == 1.5  # pyright: ignore[reportPrivateUsage]
+    assert app.app_session.last_context_tokens == 123
+    assert app.app_session.session_input_tokens == 123
+    assert app.app_session.session_output_tokens == 45
+    assert app.app_session.session_cached_tokens == 6
+    assert app.app_session.last_response_time_seconds == 1.5
     assert len(app.conversation_state.message_history) == 1
     assert fake_runtime.calls == [
         {
@@ -378,7 +376,7 @@ def test_response_output_replaces_markdown_when_streamed_text_is_rewritten() -> 
 def test_reasoning_options_include_openai_reasoning_summary() -> None:
     app = _make_app(reasoning=True, openai_reasoning_summary="detailed")
 
-    assert app._reasoning_options() == {  # pyright: ignore[reportPrivateUsage]
+    assert app.app_session.reasoning_options() == {
         "openai_reasoning_effort": "high",
         "openai_reasoning_summary": "detailed",
     }
@@ -398,7 +396,7 @@ def test_standard_agent_runtime_request_limits_tool_calls_to_one() -> None:
     )
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         _ = asyncio.run(
@@ -430,7 +428,7 @@ def test_deep_research_runtime_request_allows_multi_step_tool_calls() -> None:
     )
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         _ = asyncio.run(
@@ -461,7 +459,7 @@ def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:
     )
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "notify") as notify,
     ):
@@ -512,7 +510,7 @@ def test_run_runtime_request_appends_clipboard_notice_for_blocked_bash_tool() ->
     )
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "_handle_runtime_tool_event") as handle_tool_event,
     ):
@@ -563,7 +561,7 @@ def test_run_runtime_request_does_not_append_clipboard_notice_when_response_ment
     )
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=fake_runtime),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "_handle_runtime_tool_event"),
     ):
@@ -587,8 +585,8 @@ def test_run_runtime_request_shows_error_when_runtime_fails() -> None:
     response = _FakeResponse()
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=_FailingRuntime()),
-        patch("mother.mother.logger.exception") as log_exception,
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=_FailingRuntime()),
+        patch("mother.runtime_coordinator.logger.exception") as log_exception,
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -614,7 +612,7 @@ def test_run_runtime_request_preserves_partial_output_when_interrupted() -> None
     response = _FakeResponse()
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=_InterruptedRuntime()),
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=_InterruptedRuntime()),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -648,8 +646,8 @@ def test_run_runtime_request_preserves_partial_history_on_failure() -> None:
     ]
 
     with (
-        patch("mother.mother.ChatRuntime", return_value=_PartialHistoryRuntime(partial_messages)),
-        patch("mother.mother.logger.exception") as log_exception,
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=_PartialHistoryRuntime(partial_messages)),
+        patch("mother.runtime_coordinator.logger.exception") as log_exception,
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -675,7 +673,7 @@ def test_run_council_request_appends_only_synthesized_turn_to_main_context() -> 
     app = _make_app()
     response = _FakeResponse()
     app.conversation_state.append_synthetic_turn("Earlier question", "Earlier answer")
-    council_context = app._build_council_context()  # pyright: ignore[reportPrivateUsage]
+    council_context = app.app_session.build_council_context()
     council_result = CouncilResult(
         final_text="Final council answer",
         judge_model_id="opus",
@@ -706,7 +704,7 @@ def test_run_council_request_appends_only_synthesized_turn_to_main_context() -> 
     fake_runner = _FakeCouncilRunner(council_result)
 
     with (
-        patch("mother.mother.CouncilRunner", return_value=fake_runner),
+        patch("mother.runtime_coordinator.CouncilRunner", return_value=fake_runner),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -785,8 +783,8 @@ def test_run_council_request_logs_failures_with_context() -> None:
             raise RuntimeError("judge boom")
 
     with (
-        patch("mother.mother.CouncilRunner", _FailingCouncilRunner),
-        patch("mother.mother.logger.exception") as log_exception,
+        patch("mother.runtime_coordinator.CouncilRunner", _FailingCouncilRunner),
+        patch("mother.runtime_coordinator.logger.exception") as log_exception,
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
     ):
         full_text = asyncio.run(
@@ -856,7 +854,7 @@ def test_run_council_request_updates_waiting_message_from_progress_callbacks() -
             return council_result
 
     with (
-        patch("mother.mother.CouncilRunner", _ProgressRunner),
+        patch("mother.runtime_coordinator.CouncilRunner", _ProgressRunner),
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "_set_response_waiting_message") as set_waiting_message,
         patch.object(app, "_show_council_trace"),
@@ -917,7 +915,7 @@ def test_double_escape_interrupts_direct_shell_command() -> None:
     async def run() -> None:
         app = _make_app()
 
-        with patch("mother.mother.execute_bash", side_effect=slow_execute_bash):
+        with patch.object(app, "execute_shell_command", side_effect=slow_execute_bash):
             async with app.run_test() as pilot:
                 text_area = app.query_one(PromptTextArea)
                 text_area.load_text("!sleep 30")
