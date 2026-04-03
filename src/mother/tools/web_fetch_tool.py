@@ -9,6 +9,7 @@ from typing import Literal, cast
 from urllib.error import HTTPError
 from urllib.parse import urlparse
 
+from mother.tools.cleaners import clean_fetched_body
 from mother.tools.web_common import (
     DEFAULT_PASS_PATH,
     DEFAULT_TIMEOUT,
@@ -145,6 +146,11 @@ def _read_response_content(response: ReadableResponse) -> str:
     return body_text or "(empty response body)"
 
 
+def _preprocess_fetched_body(url: str, body: str) -> str:
+    cleaned_body = clean_fetched_body(url, body).strip()
+    return cleaned_body or "(empty response body)"
+
+
 def _should_retry_raw_with_honest_user_agent(exc: HTTPError) -> bool:
     if exc.code != _CLOUDFLARE_FORBIDDEN:
         return False
@@ -183,7 +189,7 @@ def _run_raw_request(
 
     with response_context as response:
         content_type = _header_value(response.headers, "Content-Type") or "unknown"
-        body_text = _read_response_content(response)
+        body_text = _preprocess_fetched_body(url, _read_response_content(response))
         return FetchResult(
             url=url,
             mode="raw",
@@ -210,7 +216,7 @@ def _run_jina_request(
     request = _build_jina_reader_request(url, api_key)
     response_context = _open_request(request, timeout, ca_bundle_path)
     with response_context as response:
-        return _read_response_content(response)
+        return _preprocess_fetched_body(url, _read_response_content(response))
 
 
 def fetch_url(
@@ -271,7 +277,7 @@ def fetch_url(
     return FetchResult(
         url=normalized_url,
         mode="jina",
-        content=content or "(empty response body)",
+        content=content,
     )
 
 

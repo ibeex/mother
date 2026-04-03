@@ -124,6 +124,42 @@ def test_web_fetch_tool_auto_mode_uses_jina_for_remote_pages():
     assert _get_header(captured_requests[0], "Authorization") is None
 
 
+def test_web_fetch_tool_cleans_hacker_news_item_content():
+    hacker_news_body = b"\n".join(
+        [
+            b"Hacker News",
+            b"Interesting thing (example.com)",
+            b"123 points by pg 2 hours ago | hide | 45 comments",
+            b"",
+            b"alice 1 hour ago | next [1]",
+            b"Great post.",
+            b"",
+            b"reply",
+        ]
+    )
+
+    def _fake_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        _ = request
+        _ = timeout
+        assert context is not None
+        return _FakeResponse(hacker_news_body)
+
+    with patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_fake_urlopen):
+        tool = make_web_fetch_tool()
+        output = tool("https://news.ycombinator.com/item?id=123", mode="jina")
+
+    assert "Hacker News discussion" in output
+    assert "Title: Interesting thing" in output
+    assert "Site: example.com" in output
+    assert "Points: 123 points" in output
+    assert "Comments: 45 comments" in output
+    assert "1. alice — 1 hour ago" in output
+    assert "Great post." in output
+    assert "reply" not in output
+
+
 def test_web_fetch_tool_retries_jina_with_api_key_after_rate_limit():
     captured_requests: list[Request] = []
     rate_limit_error = HTTPError(
