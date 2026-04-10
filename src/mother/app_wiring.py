@@ -150,7 +150,7 @@ def build_settings_controller_callbacks(app: MotherAppWiringHost) -> SettingsCon
         _ = _call_app_method(app, "_update_statusline")
 
     def conversation_has_history() -> bool:
-        return app.app_session.has_history
+        return cast(bool, _call_app_method(app, "_conversation_has_history"))
 
     def push_model_switch_confirm(
         model_id: str,

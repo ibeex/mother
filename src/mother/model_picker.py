@@ -9,9 +9,9 @@ from typing import ClassVar, Protocol, cast, override
 from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.command import Hit, Provider
-from textual.containers import Container, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label, OptionList
+from textual.widgets import Button, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 from mother.config import MotherConfig
@@ -97,10 +97,7 @@ class ModelSwitchConfirmScreen(ModalScreen[bool]):
         _CSS_DIR / "model_picker.tcss"
     )
 
-    BINDINGS: ClassVar[list[BindingType]] = [
-        ("escape", "cancel", "Cancel"),
-        ("enter", "confirm_selection", "Select"),
-    ]
+    BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
 
     def __init__(self, target_model: str) -> None:
         super().__init__()
@@ -108,39 +105,28 @@ class ModelSwitchConfirmScreen(ModalScreen[bool]):
 
     @override
     def compose(self) -> ComposeResult:
-        with Container(id="model-switch-confirm"):
-            with Vertical():
-                yield Label(f"Switch to {self.target_model}?", id="model-switch-confirm-title")
-                yield Label(
-                    "This starts a fresh context. The new model won't know earlier messages.",
-                    id="model-switch-confirm-message",
-                )
-                yield OptionList(
-                    Option("Cancel", id="cancel"),
-                    Option("Switch model", id="confirm"),
-                    id="model-switch-confirm-options",
-                )
+        yield Vertical(
+            Label(f"Switch to {self.target_model}?", id="model-switch-confirm-title"),
+            Label(
+                "This starts a fresh context. The new model won't know earlier messages.",
+                id="model-switch-confirm-message",
+            ),
+            Horizontal(
+                Button("Cancel", id="cancel"),
+                Button("Switch model", id="confirm", variant="primary"),
+                id="model-switch-confirm-actions",
+            ),
+            id="model-switch-confirm",
+        )
 
     def on_mount(self) -> None:
-        option_list = self.query_one(OptionList)
-        option_list.highlighted = 0
-        _ = option_list.focus()
+        _ = self.query_one("#confirm", Button).focus()
 
     def action_cancel(self) -> None:
         _ = self.dismiss(False)
 
-    def action_confirm_selection(self) -> None:
-        option_list = self.query_one(OptionList)
-        if option_list.highlighted is None:
-            _ = self.dismiss(False)
-            return
-        option = option_list.get_option_at_index(option_list.highlighted)
-        _ = self.dismiss(option.id == "confirm")
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id != "model-switch-confirm-options":
-            return
-        _ = self.dismiss(event.option.id == "confirm")
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        _ = self.dismiss(event.button.id == "confirm")
 
 
 class ModelPickerScreen(ModalScreen[str | None]):

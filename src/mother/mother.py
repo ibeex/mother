@@ -290,6 +290,22 @@ class MotherApp(App[None]):
         """Open fuzzy prompt-history search for the current input or an empty query."""
         self.prompt_controller.action_prompt_history_search()
 
+    def _conversation_has_visible_turns(self) -> bool:
+        """Return whether the chat pane currently shows any conversation turns."""
+        try:
+            chat_view = self.query_one("#chat-view")
+        except (NoMatches, ScreenStackError):
+            return False
+        return any(isinstance(child, ConversationTurn) for child in chat_view.children)
+
+    def _conversation_has_history(self) -> bool:
+        """Return whether switching models would discard visible or stored chat context."""
+        return (
+            self.app_session.has_history
+            or self._active_turn is not None
+            or self._conversation_has_visible_turns()
+        )
+
     def action_show_models(self) -> None:
         """Open the model picker."""
 

@@ -1,4 +1,5 @@
-ModelPickerScreen {
+ModelPickerScreen,
+ModelSwitchConfirmScreen {
     align: center middle;
     background: $background 60%;
 }
@@ -24,12 +25,20 @@ ModelPickerScreen {
     margin-bottom: 1;
 }
 
-#model-options,
-#model-switch-confirm-options {
+#model-options {
     height: 1fr;
 }
 
 #model-switch-confirm-title {
     text-style: bold;
     margin-bottom: 1;
+}
+
+#model-switch-confirm-actions {
+    height: auto;
+    margin-top: 1;
+}
+
+#confirm {
+    margin-left: 1;
 }
