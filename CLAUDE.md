@@ -8,7 +8,7 @@ Python 3.12+ · uv · ruff · basedpyright · pytest
 
 ## Project Structure
 
-- `src/package_module/` - Main package code
+- `src/mother/` - Main package code
 - `tests/` - Test files
 - `devtools/` - Development utilities (lint.py)
 
