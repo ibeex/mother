@@ -2,8 +2,6 @@
 
 import json
 
-MAX_OUTPUT_PREVIEW_LINES = 5
-
 
 def _format_section(title: str, body: str) -> str:
     """Format a titled plain-text section."""
@@ -60,20 +58,12 @@ def format_tool_arguments(arguments: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def format_tool_output_preview(output: str, max_lines: int = MAX_OUTPUT_PREVIEW_LINES) -> str:
-    """Render only the first ``max_lines`` of tool output."""
+def format_tool_output(output: str) -> str:
+    """Render full tool output, normalizing empty results for display."""
     trimmed_output = output.rstrip()
     if not trimmed_output:
         return "(no output)"
-
-    lines = trimmed_output.splitlines()
-    if len(lines) <= max_lines:
-        return "\n".join(lines)
-
-    remaining = len(lines) - max_lines
-    preview_lines = lines[:max_lines]
-    preview_lines.append(f"... ({remaining} more lines)")
-    return "\n".join(preview_lines)
+    return trimmed_output
 
 
 def format_tool_event(
@@ -91,7 +81,7 @@ def format_tool_event(
         lines.extend(["", rendered_arguments])
 
     if output is not None:
-        preview_output = format_tool_output_preview(output)
-        lines.extend(["", _format_section("Output", preview_output)])
+        rendered_output = format_tool_output(output)
+        lines.extend(["", _format_section("Output", rendered_output)])
 
     return "\n".join(lines)

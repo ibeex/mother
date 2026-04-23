@@ -20,7 +20,7 @@ def test_thinking_output_wraps_and_shows_full_text_while_streaming_then_collapse
     assert "line 0" in widget.text
     assert "line 9" in widget.text
     assert "line 10" not in widget.text
-    assert "Press Ctrl+O for rest." in widget.text
+    assert "Press Ctrl+o for rest." in widget.text
 
     widget.action_toggle_expanded()
 

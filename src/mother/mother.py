@@ -11,7 +11,7 @@ import click
 from pydantic_ai import Tool
 from textual import events, on, work
 from textual.app import App, ComposeResult, ScreenStackError
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, OptionList, Static, TextArea
 from textual.worker import Worker, WorkerState
@@ -53,6 +53,7 @@ from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.widgets import (
     ConversationTurn,
+    CopyableOutput,
     ModelComplete,
     PromptHistoryComplete,
     PromptTextArea,
@@ -105,7 +106,7 @@ class MotherApp(App[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("ctrl+enter", "submit", "Send"),
-        ("ctrl+o", "toggle_thinking_widget", "Thoughts"),
+        Binding("ctrl+o", "toggle_thinking_widget", "Expand", priority=True),
         ("ctrl+g", "toggle_auto_scroll", "Autoscroll"),
         ("end", "scroll_to_bottom", "Bottom"),
         ("shift+g", "scroll_to_bottom_from_chat", "Bottom"),
@@ -332,15 +333,17 @@ class MotherApp(App[None]):
         self.settings_controller.action_toggle_agent_mode()
 
     def action_toggle_thinking_widget(self) -> None:
-        """Expand or collapse the latest visible thinking widget."""
+        """Expand focused output, or fall back to the latest expandable output widget."""
         focused = self.focused
-        if isinstance(focused, ThinkingOutput) and focused.has_content():
+        if isinstance(focused, CopyableOutput) and focused.can_toggle_expanded():
             focused.action_toggle_expanded()
             return
 
-        thinking_widgets = [widget for widget in self.query(ThinkingOutput) if widget.has_content()]
-        if thinking_widgets:
-            thinking_widgets[-1].action_toggle_expanded()
+        output_widgets = [
+            widget for widget in self.query(CopyableOutput) if widget.can_toggle_expanded()
+        ]
+        if output_widgets:
+            output_widgets[-1].action_toggle_expanded()
 
     def action_toggle_auto_scroll(self) -> None:
         """Toggle whether new chat output should keep the view pinned to the bottom."""

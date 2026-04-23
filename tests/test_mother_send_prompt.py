@@ -945,3 +945,47 @@ def test_double_escape_interrupts_direct_shell_command() -> None:
                 assert "_Interrupted by user._" in shell_output.text
 
     asyncio.run(run())
+
+
+def test_ctrl_o_expands_shell_output_even_when_prompt_has_focus() -> None:
+    raw_output = "\n".join(f"line {index}" for index in range(15))
+    full_display = f"Command:\necho test\n\nOutput:\n{raw_output}"
+
+    async def fake_execute_bash(_: str) -> BashResult:
+        return BashResult(output=raw_output, exit_code=0)
+
+    async def run() -> None:
+        app = _make_app()
+
+        with patch.object(app, "execute_shell_command", side_effect=fake_execute_bash):
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("!echo test")
+                await pilot.pause()
+
+                submission_task = asyncio.create_task(app.action_submit())
+                shell_output: ShellOutput | None = None
+                for _ in range(20):
+                    await pilot.pause()
+                    try:
+                        shell_output = app.query_one(ShellOutput)
+                    except Exception:
+                        continue
+                    if (
+                        text_area.read_only is False
+                        and "Press Ctrl+o to expand." in shell_output.text
+                    ):
+                        break
+
+                await submission_task
+                assert shell_output is not None
+                assert app.focused is text_area
+                assert "Press Ctrl+o to expand." in shell_output.text
+
+                await pilot.press("ctrl+o")
+                await pilot.pause()
+
+                assert app.focused is text_area
+                assert shell_output.text == full_display
+
+    asyncio.run(run())

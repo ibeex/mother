@@ -573,6 +573,7 @@ class CopyableOutput(TextArea):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("c", "copy_output", "Copy"),
+        ("ctrl+o", "toggle_expanded", "Expand"),
     ]
     can_focus: bool = True
 
@@ -588,23 +589,75 @@ class CopyableOutput(TextArea):
         # Inline style (highest priority) — overrides TextArea's DEFAULT_CSS border.
         self.styles.border = ("none", "transparent")
         self._raw: str = text
-        self._sync_height(text)
+        self._expanded: bool = False
+        self._refresh_rendered_text()
 
     def _chrome_height(self) -> int:
         """Return extra lines used by borders and padding."""
         return 0
 
+    def _content_lines(self) -> list[str]:
+        """Return the raw output split into logical lines."""
+        return self._raw.splitlines()
+
+    def _is_collapsible(self) -> bool:
+        """Return whether the widget should collapse long output into a preview."""
+        return len(self._content_lines()) > self.MAX_VISIBLE_LINES
+
+    def _preview_notice(self, hidden_lines: int) -> str:
+        """Return the inline notice shown for collapsed long output."""
+        notice = f"… {hidden_lines} more lines hidden in UI. Press Ctrl+o to expand."
+        if "[Showing lines " in self._raw:
+            notice += " Output was also truncated."
+        return notice
+
+    def _preview_text(self) -> str:
+        """Return the collapsed preview text for long output."""
+        lines = self._content_lines()
+        if len(lines) <= self.MAX_VISIBLE_LINES:
+            return self._raw
+        preview_lines = lines[: self.MAX_VISIBLE_LINES - 1]
+        hidden_lines = len(lines) - len(preview_lines)
+        return "\n".join([*preview_lines, self._preview_notice(hidden_lines)])
+
+    def _render_text(self) -> str:
+        """Return the currently visible text for the widget."""
+        if self._expanded or not self._is_collapsible():
+            return self._raw
+        return self._preview_text()
+
     def _sync_height(self, text: str) -> None:
         """Size the widget to fit short content without making long output huge."""
         content_lines = max(1, text.count("\n") + 1)
-        visible_lines = min(max(content_lines, self.MIN_VISIBLE_LINES), self.MAX_VISIBLE_LINES)
+        if self._expanded:
+            visible_lines = max(content_lines, self.MIN_VISIBLE_LINES)
+        else:
+            visible_lines = min(max(content_lines, self.MIN_VISIBLE_LINES), self.MAX_VISIBLE_LINES)
         self.styles.height = visible_lines + self._chrome_height()
+
+    def _refresh_rendered_text(self) -> None:
+        """Refresh rendered text and widget height from the current raw value/state."""
+        rendered = self._render_text()
+        self.text: str = rendered
+        self._sync_height(rendered)
 
     def set_text(self, text: str) -> None:
         """Update the rendered text while keeping a copyable raw value."""
         self._raw = text
-        self.text: str = text
-        self._sync_height(text)
+        if not self._is_collapsible():
+            self._expanded = False
+        self._refresh_rendered_text()
+
+    def can_toggle_expanded(self) -> bool:
+        """Return whether this widget currently has a meaningful expand/collapse state."""
+        return self._is_collapsible()
+
+    def action_toggle_expanded(self) -> None:
+        """Toggle whether long output is collapsed to a short preview."""
+        if not self.can_toggle_expanded():
+            return
+        self._expanded = not self._expanded
+        self._refresh_rendered_text()
 
     def action_copy_output(self) -> None:
         text = self.selected_text or self._raw
@@ -621,10 +674,6 @@ class ThinkingOutput(CopyableOutput):
 
     PREVIEW_LINES: ClassVar[int] = 10
     BORDER_TITLE: ClassVar[str] = "Mother · thinking"
-    BINDINGS: ClassVar[list[BindingType]] = [
-        *CopyableOutput.BINDINGS,
-        ("ctrl+o", "toggle_expanded", "Rest"),
-    ]
 
     def __init__(self, text: str = "") -> None:
         self._expanded: bool = False
@@ -648,22 +697,25 @@ class ThinkingOutput(CopyableOutput):
         self._expanded = False
         self._refresh_rendered_text()
 
+    @override
     def _preview_text(self) -> str:
         lines = self._raw.splitlines()
         if len(lines) <= self.PREVIEW_LINES:
             return self._raw
         preview = "\n".join(lines[: self.PREVIEW_LINES])
         remaining = len(lines) - self.PREVIEW_LINES
-        return f"{preview}\n… {remaining} more lines. Press Ctrl+O for rest."
+        return f"{preview}\n… {remaining} more lines. Press Ctrl+o for rest."
 
+    @override
     def _render_text(self) -> str:
         if self._streaming or self._expanded:
             return self._raw
         return self._preview_text()
 
+    @override
     def _refresh_rendered_text(self) -> None:
         rendered = self._render_text()
-        self.text = rendered
+        self.text: str = rendered
         self._sync_height(rendered)
         if self._streaming and rendered:
             lines = rendered.split("\n")
@@ -684,13 +736,19 @@ class ThinkingOutput(CopyableOutput):
             parent.display = visible
         self._refresh_rendered_text()
 
+    @override
+    def can_toggle_expanded(self) -> bool:
+        """Return whether the thinking widget can switch between preview and full text."""
+        return (
+            not self._streaming
+            and self.has_content()
+            and len(self._raw.splitlines()) > self.PREVIEW_LINES
+        )
+
+    @override
     def action_toggle_expanded(self) -> None:
         """Toggle between the preview and the full structured reasoning text."""
-        if (
-            self._streaming
-            or not self.has_content()
-            or len(self._raw.splitlines()) <= self.PREVIEW_LINES
-        ):
+        if not self.can_toggle_expanded():
             return
         self._expanded = not self._expanded
         self._refresh_rendered_text()
