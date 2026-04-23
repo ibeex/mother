@@ -205,6 +205,17 @@ class ChatRuntime:
             "tool" in message and ("unsupported" in message or "not support" in message)
         )
 
+    def _effective_model_settings(
+        self,
+        *,
+        model_settings: dict[str, object],
+        wrapped_tools: list[Tool[None]],
+    ) -> dict[str, object]:
+        effective_settings = dict(model_settings)
+        if wrapped_tools and self.model_entry.api_type in {"openai-chat", "openai-responses"}:
+            effective_settings["parallel_tool_calls"] = False
+        return effective_settings
+
     @staticmethod
     def _preserve_partial_messages(
         messages: list[ModelMessage], error: Exception
@@ -280,6 +291,10 @@ class ChatRuntime:
             instructions=system_prompt,
         )
         usage_limits = UsageLimits(tool_calls_limit=tool_call_limit) if wrapped_tools else None
+        effective_model_settings = self._effective_model_settings(
+            model_settings=model_settings,
+            wrapped_tools=wrapped_tools,
+        )
         started_at = perf_counter()
 
         captured_messages: list[ModelMessage] = []
@@ -292,7 +307,7 @@ class ChatRuntime:
                 async for event in agent.run_stream_events(
                     user_prompt,
                     message_history=message_history,
-                    model_settings=cast(ModelSettings, cast(object, model_settings)),
+                    model_settings=cast(ModelSettings, cast(object, effective_model_settings)),
                     usage_limits=usage_limits,
                 ):
                     if isinstance(event, AgentRunResultEvent):

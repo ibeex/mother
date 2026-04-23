@@ -141,6 +141,67 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
     ]
 
 
+def test_run_stream_disables_parallel_tool_calls_for_openai_tool_runs() -> None:
+    entry = ModelEntry(
+        id="local_3",
+        name="local_3",
+        api_type="openai-responses",
+        supports_reasoning=True,
+        supports_tools=True,
+    )
+    final_response = ModelResponse(parts=[TextPart(content="done")])
+    usage = RunUsage(input_tokens=3, output_tokens=2)
+    result = AgentRunResult(
+        "done",
+        _state=GraphAgentState(
+            message_history=[cast(ModelMessage, final_response)],
+            usage=usage,
+        ),
+    )
+
+    async def sample_tool() -> str:
+        return "ok"
+
+    _FakeAgent.events = (AgentRunResultEvent(result=result),)
+    _FakeAgent.event_batches = []
+    _FakeAgent.init_calls = []
+    _FakeAgent.run_calls = []
+    model_settings: dict[str, object] = {
+        "openai_reasoning_effort": "high",
+        "parallel_tool_calls": True,
+    }
+
+    runtime = ChatRuntime(entry)
+
+    with (
+        patch("mother.runtime.Agent", _FakeAgent),
+        patch("mother.runtime.create_pydantic_model", return_value=object()),
+    ):
+        _ = asyncio.run(
+            runtime.run_stream(
+                prompt_text="hello",
+                system_prompt="system",
+                message_history=[],
+                attachments=[],
+                tools=[Tool(sample_tool, name="bash")],
+                model_settings=model_settings,
+            )
+        )
+
+    assert _FakeAgent.run_calls == [
+        {
+            "user_prompt": _FakeAgent.run_calls[0]["user_prompt"],
+            "message_history": [],
+            "model_settings": {
+                "openai_reasoning_effort": "high",
+                "parallel_tool_calls": False,
+            },
+            "usage_limits": _FakeAgent.run_calls[0]["usage_limits"],
+        }
+    ]
+    assert model_settings == {"openai_reasoning_effort": "high", "parallel_tool_calls": True}
+
+
 def test_preserve_partial_messages_keeps_completed_tool_results() -> None:
     request = ModelRequest(parts=[UserPromptPart("read the readme")])
     first_response = ModelResponse(
