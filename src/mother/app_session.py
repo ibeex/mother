@@ -17,6 +17,7 @@ from mother.agent_modes import (
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig
 from mother.conversation import ConversationState
+from mother.conversation_handoff import portable_history
 from mother.models import ModelEntry, find_model_entry, resolve_model_entry
 from mother.prompt_expansion import expand_prompt_fetch_directives
 from mother.reasoning import (
@@ -66,10 +67,12 @@ class AppSession:
         return self.conversation_state.has_history
 
     def switch_model(self, model_id: str) -> None:
-        """Update model selection and clear conversation-scoped runtime state."""
+        """Update model selection while preserving portable conversation context."""
         self.config = replace(self.config, model=model_id, tools_enabled=self.agent_mode)
         self.current_model_entry = resolve_model_entry(model_id, self.config.models)
-        self.conversation_state = ConversationState()
+        self.conversation_state.message_history = portable_history(
+            self.conversation_state.message_history
+        )
         self.last_context_tokens = None
         self.last_response_time_seconds = None
 

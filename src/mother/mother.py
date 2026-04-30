@@ -300,7 +300,7 @@ class MotherApp(App[None]):
         return any(isinstance(child, ConversationTurn) for child in chat_view.children)
 
     def _conversation_has_history(self) -> bool:
-        """Return whether switching models would discard visible or stored chat context."""
+        """Return whether any visible or stored chat context exists."""
         return (
             self.app_session.has_history
             or self._active_turn is not None
@@ -321,8 +321,12 @@ class MotherApp(App[None]):
         return self.prompt_controller.resolve_slash_argument_query(command, query)
 
     def action_switch_model(self, model_id: str) -> None:
-        """Switch to a different LLM model, asking first if that will clear context."""
+        """Switch to a different LLM model while preserving context."""
         self.settings_controller.action_switch_model(model_id)
+
+    def is_runtime_busy(self) -> bool:
+        """Return whether a model response is currently in progress."""
+        return self._active_prompt_worker is not None or self._active_turn is not None
 
     def action_set_agent_profile(self, profile: AgentProfile) -> None:
         """Enable agent mode with a specific profile."""

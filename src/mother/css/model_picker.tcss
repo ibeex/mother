@@ -1,44 +1,20 @@
-ModelPickerScreen,
-ModelSwitchConfirmScreen {
+ModelPickerScreen {
     align: center middle;
     background: $background 60%;
 }
 
-#model-picker,
-#model-switch-confirm {
+#model-picker {
     width: 72;
     border: round $primary;
     background: $surface;
     padding: 1;
-}
-
-#model-picker {
     height: 24;
 }
 
-#model-switch-confirm {
-    height: auto;
-}
-
-#model-query,
-#model-switch-confirm-message {
+#model-query {
     margin-bottom: 1;
 }
 
 #model-options {
     height: 1fr;
-}
-
-#model-switch-confirm-title {
-    text-style: bold;
-    margin-bottom: 1;
-}
-
-#model-switch-confirm-actions {
-    height: auto;
-    margin-top: 1;
-}
-
-#confirm {
-    margin-left: 1;
 }

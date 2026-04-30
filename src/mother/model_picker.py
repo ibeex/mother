@@ -9,9 +9,9 @@ from typing import ClassVar, Protocol, cast, override
 from textual.app import ComposeResult
 from textual.binding import BindingType
 from textual.command import Hit, Provider
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, OptionList
+from textual.widgets import Input, OptionList
 from textual.widgets.option_list import Option
 
 from mother.config import MotherConfig
@@ -88,45 +88,6 @@ class ModelProvider(Provider):
                 app.action_show_models,
                 help=f"Browse and switch models (current: {app.config.model})",
             )
-
-
-class ModelSwitchConfirmScreen(ModalScreen[bool]):
-    """Modal screen asking the user to confirm a context-resetting model switch."""
-
-    CSS_PATH: ClassVar[str | PurePath | list[str | PurePath] | None] = (
-        _CSS_DIR / "model_picker.tcss"
-    )
-
-    BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
-
-    def __init__(self, target_model: str) -> None:
-        super().__init__()
-        self.target_model: str = target_model
-
-    @override
-    def compose(self) -> ComposeResult:
-        yield Vertical(
-            Label(f"Switch to {self.target_model}?", id="model-switch-confirm-title"),
-            Label(
-                "This starts a fresh context. The new model won't know earlier messages.",
-                id="model-switch-confirm-message",
-            ),
-            Horizontal(
-                Button("Cancel", id="cancel"),
-                Button("Switch model", id="confirm", variant="primary"),
-                id="model-switch-confirm-actions",
-            ),
-            id="model-switch-confirm",
-        )
-
-    def on_mount(self) -> None:
-        _ = self.query_one("#confirm", Button).focus()
-
-    def action_cancel(self) -> None:
-        _ = self.dismiss(False)
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        _ = self.dismiss(event.button.id == "confirm")
 
 
 class ModelPickerScreen(ModalScreen[str | None]):

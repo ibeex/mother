@@ -25,8 +25,7 @@ class SettingsControllerCallbacks:
     notify: Callable[..., None]
     update_subtitle: Callable[[], None]
     update_statusline: Callable[[], None]
-    conversation_has_history: Callable[[], bool]
-    push_model_switch_confirm: Callable[[str, Callable[[bool | None], None]], object]
+    is_runtime_busy: Callable[[], bool]
 
 
 class SettingsController:
@@ -132,27 +131,30 @@ class SettingsController:
         session.switch_model(model_id)
         session.record_session_event(
             "model_change",
-            {"from": previous_model, "model": model_id},
+            {
+                "from": previous_model,
+                "model": model_id,
+                "context_preserved": True,
+                "history_format": "portable_text",
+            },
         )
         self.callbacks.update_subtitle()
         self.callbacks.update_statusline()
         self.callbacks.notify(f"Switched to {model_id}", title="Model changed")
 
     def action_switch_model(self, model_id: str) -> None:
-        """Switch to a different model, asking first if that will clear context."""
+        """Switch to a different model while keeping portable conversation context."""
         session = self.callbacks.app_session
         if model_id == session.config.model:
             return
-
-        if not self.callbacks.conversation_has_history():
-            self.apply_model_switch(model_id)
+        if self.callbacks.is_runtime_busy():
+            self.callbacks.notify(
+                "Wait for the current response to finish before switching models.",
+                title="Model switch",
+                severity="warning",
+            )
             return
-
-        def on_confirm(confirmed: bool | None) -> None:
-            if confirmed:
-                self.apply_model_switch(model_id)
-
-        _ = self.callbacks.push_model_switch_confirm(model_id, on_confirm)
+        self.apply_model_switch(model_id)
 
     def set_agent_mode(
         self,

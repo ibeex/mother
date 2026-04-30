@@ -10,7 +10,6 @@ from mother.agent_modes import AgentProfile
 from mother.app_session import AppSession
 from mother.council import CouncilResult
 from mother.history import PromptHistory
-from mother.model_picker import ModelSwitchConfirmScreen
 from mother.models import ModelEntry
 from mother.runtime import RuntimeToolEvent
 from mother.runtime_coordinator import RuntimeCoordinatorCallbacks
@@ -149,27 +148,15 @@ def build_settings_controller_callbacks(app: MotherAppWiringHost) -> SettingsCon
     def update_statusline() -> None:
         _ = _call_app_method(app, "_update_statusline")
 
-    def conversation_has_history() -> bool:
-        return cast(bool, _call_app_method(app, "_conversation_has_history"))
-
-    def push_model_switch_confirm(
-        model_id: str,
-        callback: Callable[[bool | None], None],
-    ) -> object:
-        return _call_app_method(
-            app,
-            "push_screen",
-            ModelSwitchConfirmScreen(model_id),
-            callback,
-        )
+    def is_runtime_busy() -> bool:
+        return cast(bool, _call_app_method(app, "is_runtime_busy"))
 
     return SettingsControllerCallbacks(
         app_session=app.app_session,
         notify=notify,
         update_subtitle=update_subtitle,
         update_statusline=update_statusline,
-        conversation_has_history=conversation_has_history,
-        push_model_switch_confirm=push_model_switch_confirm,
+        is_runtime_busy=is_runtime_busy,
     )
 
 

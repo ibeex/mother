@@ -295,9 +295,7 @@ class ChatRuntime:
 
     @staticmethod
     def _has_retryable_tool_result(message: ModelRequest) -> bool:
-        return any(
-            isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts
-        )
+        return any(isinstance(part, ToolReturnPart | RetryPromptPart) for part in message.parts)
 
     @staticmethod
     def _has_tool_return(message: ModelRequest) -> bool:
