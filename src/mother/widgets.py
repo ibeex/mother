@@ -1,5 +1,6 @@
 """Reusable TUI widget classes for Mother."""
 
+import re
 from dataclasses import dataclass
 from itertools import pairwise
 from typing import ClassVar, Protocol, cast, final, override
@@ -754,6 +755,32 @@ class ThinkingOutput(CopyableOutput):
         self._refresh_rendered_text()
 
 
+_FENCED_BLOCK_OPEN_RE = re.compile(r" {0,3}([`~]{3,})(.*)")
+
+
+def _ends_inside_fenced_block(markdown: str) -> bool:
+    """Return whether the markdown currently ends inside an open fenced code block."""
+    active_fence_char: str | None = None
+    active_fence_length = 0
+
+    for line in markdown.splitlines():
+        if active_fence_char is None:
+            match = _FENCED_BLOCK_OPEN_RE.fullmatch(line)
+            if match is None:
+                continue
+            fence = match.group(1)
+            active_fence_char = fence[0]
+            active_fence_length = len(fence)
+            continue
+
+        closing_pattern = rf" {{0,3}}{re.escape(active_fence_char)}{{{active_fence_length},}}[ \t]*"
+        if re.fullmatch(closing_pattern, line):
+            active_fence_char = None
+            active_fence_length = 0
+
+    return active_fence_char is not None
+
+
 class CopyableMarkdown(Markdown):
     """Markdown widget with focus and block-level copy support."""
 
@@ -786,7 +813,14 @@ class CopyableMarkdown(Markdown):
         """Append a streamed markdown fragment without reparsing the full response."""
         if not fragment:
             return
+        previous_raw = self._raw
         self._raw += fragment
+        if _ends_inside_fenced_block(previous_raw) or _ends_inside_fenced_block(self._raw):
+            # Textual's incremental Markdown.append can lose fenced code contents
+            # when a fence opens in one fragment and continues in later fragments.
+            await self.stop_stream()
+            await self.update(self._raw)
+            return
         await self.stream.write(fragment)
 
     async def replace_markdown(self, markdown: str) -> None:
