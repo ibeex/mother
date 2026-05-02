@@ -7,7 +7,7 @@ from pathlib import Path
 from queue import Queue
 from threading import Thread
 from typing import cast, final
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from pydantic_ai import Tool
 from pydantic_ai.messages import (
@@ -481,6 +481,54 @@ def test_run_runtime_request_disables_agent_mode_after_tool_fallback() -> None:
         title="Agent mode",
         severity="warning",
     )
+
+
+def test_run_runtime_request_keeps_agent_mode_after_tool_limit_recovery() -> None:
+    app = _make_app(agent_mode=True)
+    response = _FakeResponse()
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="recovered response",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+            tool_limit_recovery_used=True,
+        ),
+        [("recovered response", "")],
+    )
+
+    with (
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "notify") as notify,
+        patch.object(app.app_session, "record_session_event") as record_session_event,
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text == "recovered response"
+    assert app.agent_mode is True
+    notify.assert_not_called()
+    assert call(
+        "tool_limit_recovery",
+        {
+            "strategy": "text_only",
+            "model": "test-model",
+            "mode": "agent",
+            "profile": "standard",
+            "tool_call_limit": 1,
+            "tool_calls_started": 0,
+            "tool_calls_finished": 0,
+        },
+    ) in record_session_event.call_args_list
 
 
 def test_run_runtime_request_appends_clipboard_notice_for_blocked_bash_tool() -> None:

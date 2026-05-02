@@ -156,6 +156,36 @@ def test_turn_usage_event_renders_compact_summary_without_json(tmp_path: Path):
     assert "model_id" not in markdown
 
 
+def test_tool_limit_recovery_event_renders_compact_summary_without_json(tmp_path: Path) -> None:
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions",
+        markdown_dir=tmp_path / "markdown",
+    )
+    manager.record_event(
+        "tool_limit_recovery",
+        {
+            "strategy": "text_only",
+            "model": "gpt-5-mini",
+            "mode": "agent",
+            "profile": "standard",
+            "tool_call_limit": 1,
+            "tool_calls_started": 1,
+            "tool_calls_finished": 1,
+        },
+    )
+
+    output_path = manager.save_as_markdown()
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert "### Event · `tool_limit_recovery`" in markdown
+    assert "- Recovery: `text only` after reaching tool-call limit `1`" in markdown
+    assert "- Model: `gpt-5-mini`" in markdown
+    assert "- Mode: `agent`" in markdown
+    assert "- Profile: `standard`" in markdown
+    assert "- Tool calls: started `1`, finished `1`" in markdown
+    assert "```json" not in markdown
+
+
 def test_council_completed_event_renders_full_trace_sections(tmp_path: Path) -> None:
     manager = SessionManager.create(
         sessions_dir=tmp_path / "sessions",

@@ -1,6 +1,7 @@
 """Tests for the pydantic-ai runtime adapter."""
 
 import asyncio
+from pathlib import Path
 from typing import cast, final
 from unittest.mock import patch
 
@@ -26,7 +27,8 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 
 from mother.models import ModelEntry
-from mother.runtime import ChatRuntime
+from mother.runtime import ChatRuntime, RuntimeResponse
+from mother.stats import TurnUsage
 
 
 @final
@@ -318,6 +320,7 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
         )
 
     assert runtime_response.text == final_text
+    assert runtime_response.agent_mode_used is True
     assert runtime_response.tool_limit_recovery_used is True
     assert len(_FakeAgent.init_calls) == 2
     assert len(cast(list[object], _FakeAgent.init_calls[0]["tools"])) == 1
@@ -326,6 +329,61 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
     assert _FakeAgent.run_calls[1]["user_prompt"] == (
         "Reply to the user in plain text only using the completed tool result. Do not call tools."
     )
+
+
+def test_run_stream_preserves_agent_mode_for_tool_limit_recovery() -> None:
+    entry = ModelEntry(
+        id="local_3",
+        name="local_3",
+        api_type="openai-chat",
+        supports_reasoning=True,
+    )
+
+    async def sample_tool() -> str:
+        return "ok"
+
+    runtime = ChatRuntime(entry)
+    recovery_response = RuntimeResponse(
+        text="Recovered answer",
+        all_messages=[cast(ModelMessage, object())],
+        usage=TurnUsage(model_id="local_3", provider="openai-chat"),
+        agent_mode_used=False,
+        tool_limit_recovery_used=True,
+    )
+
+    with (
+        patch("mother.runtime.Agent", _FakeAgent),
+        patch("mother.runtime.create_pydantic_model", return_value=object()),
+        patch.object(ChatRuntime, "_build_user_prompt", return_value="hello"),
+        patch.object(
+            ChatRuntime,
+            "_collect_stream_result",
+            side_effect=UsageLimitExceeded("tool limit reached"),
+        ),
+        patch.object(ChatRuntime, "_maybe_retry_without_tools", return_value=None),
+        patch.object(ChatRuntime, "_preserve_partial_messages", return_value=[]),
+        patch.object(
+            ChatRuntime,
+            "_maybe_retry_text_only_after_tool_limit",
+            return_value=recovery_response,
+        ),
+    ):
+        runtime_response = asyncio.run(
+            runtime.run_stream(
+                prompt_text="hello",
+                system_prompt="system",
+                message_history=[],
+                attachments=[Path("/tmp/example.png")],
+                tools=[Tool(sample_tool, name="bash")],
+                model_settings={},
+                tool_call_limit=1,
+                allow_tool_fallback=False,
+            )
+        )
+
+    assert runtime_response.agent_mode_used is True
+    assert runtime_response.tool_limit_recovery_used is True
+    assert runtime_response.usage.image_count == 1
 
 
 def test_tool_arguments_omit_function_defaults() -> None:

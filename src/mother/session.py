@@ -886,6 +886,49 @@ class SessionManager:
         lines.extend(["", "---", ""])
         return lines
 
+    def _render_tool_limit_recovery_event(self, entry: EventEntry) -> list[str]:
+        details = entry["details"]
+        lines = [
+            "### Event · `tool_limit_recovery`",
+            "",
+            f"- Time: `{entry['ts']}`",
+        ]
+
+        strategy = details.get("strategy")
+        tool_call_limit = details.get("tool_call_limit")
+        if isinstance(strategy, str) and strategy:
+            strategy_label = strategy.replace("_", " ")
+            if isinstance(tool_call_limit, int):
+                lines.append(
+                    f"- Recovery: `{strategy_label}` after reaching tool-call limit `{tool_call_limit}`"
+                )
+            else:
+                lines.append(f"- Recovery: `{strategy_label}`")
+        elif isinstance(tool_call_limit, int):
+            lines.append(f"- Tool-call limit: `{tool_call_limit}`")
+
+        model = details.get("model")
+        if isinstance(model, str) and model:
+            lines.append(f"- Model: `{model}`")
+
+        mode = details.get("mode")
+        if isinstance(mode, str) and mode:
+            lines.append(f"- Mode: `{mode}`")
+
+        profile = details.get("profile")
+        if isinstance(profile, str) and profile:
+            lines.append(f"- Profile: `{profile}`")
+
+        started = details.get("tool_calls_started")
+        finished = details.get("tool_calls_finished")
+        if isinstance(started, int) or isinstance(finished, int):
+            started_value = started if isinstance(started, int) else 0
+            finished_value = finished if isinstance(finished, int) else 0
+            lines.append(f"- Tool calls: started `{started_value}`, finished `{finished_value}`")
+
+        lines.extend(["", "---", ""])
+        return lines
+
     def _render_event_entry(self, entry: EventEntry) -> list[str]:
         if entry["name"] == "turn_usage":
             lines = [
@@ -904,6 +947,9 @@ class SessionManager:
 
         if entry["name"] == "council_completed":
             return self._render_council_completed_event(entry)
+
+        if entry["name"] == "tool_limit_recovery":
+            return self._render_tool_limit_recovery_event(entry)
 
         lines = [
             f"### Event · `{entry['name']}`",

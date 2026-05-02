@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import mimetypes
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import wraps
 from inspect import Parameter, isawaitable, signature
 from pathlib import Path
@@ -484,6 +484,28 @@ class ChatRuntime:
             agent_mode_used=agent_mode_used,
         )
 
+    @staticmethod
+    def _finalize_recovery_response(
+        response: RuntimeResponse,
+        *,
+        attachments: list[Path],
+        started_at: float,
+        tool_state: _ToolState,
+        agent_mode_used: bool | None = None,
+    ) -> RuntimeResponse:
+        return replace(
+            response,
+            usage=replace(
+                response.usage,
+                image_count=len(attachments),
+                duration_seconds=perf_counter() - started_at,
+                tool_calls_started=tool_state.started,
+                tool_calls_finished=tool_state.finished,
+                tool_call_errors=tool_state.errors,
+            ),
+            agent_mode_used=response.agent_mode_used if agent_mode_used is None else agent_mode_used,
+        )
+
     async def _rerun_without_tools(
         self,
         *,
@@ -655,7 +677,12 @@ class ChatRuntime:
                 on_tool_event=on_tool_event,
             )
             if fallback_response is not None:
-                return fallback_response
+                return self._finalize_recovery_response(
+                    fallback_response,
+                    attachments=attachments,
+                    started_at=started_at,
+                    tool_state=tool_state,
+                )
 
             partial_messages = self._preserve_partial_messages(
                 captured_messages_ref.messages,
@@ -673,7 +700,13 @@ class ChatRuntime:
                 on_tool_event=on_tool_event,
             )
             if recovery_response is not None:
-                return recovery_response
+                return self._finalize_recovery_response(
+                    recovery_response,
+                    attachments=attachments,
+                    started_at=started_at,
+                    tool_state=tool_state,
+                    agent_mode_used=bool(wrapped_tools),
+                )
 
             if partial_messages is not None:
                 raise RuntimePartialRunError(exc, partial_messages) from exc

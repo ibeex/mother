@@ -263,6 +263,19 @@ class RuntimeCoordinator:
         _ = self.callbacks.call_from_thread(response.stop_stream)
         session.conversation_state.message_history = list(runtime_response.all_messages)
         response.reset_state(stream_state.visible_text)
+        if runtime_response.tool_limit_recovery_used:
+            session.record_session_event(
+                "tool_limit_recovery",
+                {
+                    "strategy": "text_only",
+                    "model": model_entry.id,
+                    "mode": session.runtime_mode(),
+                    "profile": session.agent_profile,
+                    "tool_call_limit": session.tool_call_limit(),
+                    "tool_calls_started": runtime_response.usage.tool_calls_started,
+                    "tool_calls_finished": runtime_response.usage.tool_calls_finished,
+                },
+            )
         session.record_session_event("turn_usage", runtime_response.usage.to_event_details())
         _ = self.callbacks.call_from_thread(self.callbacks.apply_turn_usage, runtime_response.usage)
         if tools and not runtime_response.agent_mode_used:
