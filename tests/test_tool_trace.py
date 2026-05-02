@@ -1,6 +1,11 @@
 """Tests for visible tool execution trace formatting."""
 
-from mother.tool_trace import format_tool_arguments, format_tool_event, format_tool_output
+from mother.tool_trace import (
+    format_tool_arguments,
+    format_tool_event,
+    format_tool_limit_recovery,
+    format_tool_output,
+)
 
 
 def test_format_tool_arguments_renders_shell_command_as_plain_text():
@@ -44,6 +49,15 @@ def test_format_tool_event_renders_finished_output():
     assert "Status: finished" in text
     assert "Output:" in text
     assert "/tmp" in text
+
+
+def test_format_tool_limit_recovery_renders_visible_summary():
+    text = format_tool_limit_recovery(tool_call_limit=1, mode="agent", profile="standard")
+    assert "Recovery: tool-call limit reached" in text
+    assert "Mode: agent" in text
+    assert "Profile: standard" in text
+    assert "Tool-call limit: 1" in text
+    assert "text-only reply" in text
 
 
 def test_format_tool_output_preserves_full_output():

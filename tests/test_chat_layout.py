@@ -115,3 +115,24 @@ def test_council_trace_is_nested_within_turn() -> None:
             assert "response-section" in turn.children[-1].classes
 
     asyncio.run(run())
+
+
+def test_tool_limit_recovery_trace_is_nested_within_turn() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            chat = app.query_one("#chat-view", VerticalScroll)
+            turn = ConversationTurn(prompt_text="prompt", response_text="reply")
+            await chat.mount(turn)
+            await pilot.pause()
+
+            app._active_turn = turn  # pyright: ignore[reportPrivateUsage]
+            app.runtime_presentation.show_tool_limit_recovery(1, "agent", "standard")
+            await pilot.pause()
+
+            assert turn.tool_trace_stack.display is True
+            assert len(turn.tool_trace_stack.children) == 1
+            assert "response-section" in turn.children[-1].classes
+
+    asyncio.run(run())

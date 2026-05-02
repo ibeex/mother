@@ -27,7 +27,7 @@ from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
 
 from mother.models import ModelEntry
-from mother.runtime import ChatRuntime, RuntimeResponse
+from mother.runtime import ChatRuntime, RuntimeRecoveryEvent, RuntimeResponse
 from mother.stats import TurnUsage
 
 
@@ -300,6 +300,7 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
     _FakeAgent.run_calls = []
 
     runtime = ChatRuntime(entry)
+    recovery_events: list[RuntimeRecoveryEvent] = []
 
     with (
         patch("mother.runtime.Agent", _FakeAgent),
@@ -316,18 +317,25 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
                 model_settings={},
                 tool_call_limit=1,
                 allow_tool_fallback=False,
+                on_recovery_event=recovery_events.append,
             )
         )
 
     assert runtime_response.text == final_text
     assert runtime_response.agent_mode_used is True
     assert runtime_response.tool_limit_recovery_used is True
+    assert recovery_events == [RuntimeRecoveryEvent(kind="tool_limit_text_only", tool_call_limit=1)]
     assert len(_FakeAgent.init_calls) == 2
     assert len(cast(list[object], _FakeAgent.init_calls[0]["tools"])) == 1
     assert len(cast(list[object], _FakeAgent.init_calls[1]["tools"])) == 0
     assert _FakeAgent.run_calls[1]["message_history"] == preserved_messages
     assert _FakeAgent.run_calls[1]["user_prompt"] == (
-        "Reply to the user in plain text only using the completed tool result. Do not call tools."
+        "You already used the only allowed tool call for this turn and attempted another tool call. "
+        "Write the final reply to the user's previous request in plain text using only the "
+        "completed tool result already in the conversation. Do not call tools. Do not say you "
+        "will inspect, look further, or continue later. If the completed tool result is not enough "
+        "to fully answer, state exactly what you learned, explain what is still missing, and ask "
+        "whether the user wants to continue in another turn."
     )
 
 

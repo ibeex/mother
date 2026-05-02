@@ -11,7 +11,7 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 
 from mother.council import CouncilResult
-from mother.tool_trace import format_tool_event
+from mother.tool_trace import format_tool_event, format_tool_limit_recovery
 from mother.widgets import (
     ConversationTurn,
     CouncilOutput,
@@ -132,6 +132,24 @@ class RuntimePresentationController:
             widget = ToolOutput()
             self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
+        if self.host.should_follow_chat_updates():
+            self.host.scroll_chat_to_end(force=True)
+
+    def show_tool_limit_recovery(
+        self,
+        tool_call_limit: int | None,
+        mode: str,
+        profile: str,
+    ) -> None:
+        """Mount a visible trace section when a turn falls back to text-only recovery."""
+        widget = ToolOutput(
+            format_tool_limit_recovery(
+                tool_call_limit=tool_call_limit,
+                mode=mode,
+                profile=profile,
+            )
+        )
+        self._mount_trace_section(OutputSection("Recovery", "recovery-title", widget))
         if self.host.should_follow_chat_updates():
             self.host.scroll_chat_to_end(force=True)
 

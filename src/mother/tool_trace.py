@@ -66,6 +66,31 @@ def format_tool_output(output: str) -> str:
     return trimmed_output
 
 
+def format_tool_limit_recovery(
+    *,
+    tool_call_limit: int | None,
+    mode: str,
+    profile: str,
+) -> str:
+    """Render a visible trace entry for text-only recovery after a tool-limit hit."""
+    profile_label = profile.replace("_", " ")
+    lines = [
+        "Recovery: tool-call limit reached",
+        f"Mode: {mode}",
+        f"Profile: {profile_label}",
+    ]
+    if tool_call_limit is not None:
+        lines.append(f"Tool-call limit: {tool_call_limit}")
+    lines.extend(
+        [
+            "",
+            "Status: finishing this turn with a text-only reply using completed tool results",
+            "Next step: ask me to continue in another turn if you want the next inspection step",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def format_tool_event(
     tool_name: str,
     arguments: dict[str, object],

@@ -37,7 +37,12 @@ from mother.models import ModelEntry, create_pydantic_model
 from mother.stats import TurnUsage
 
 _TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT = (
-    "Reply to the user in plain text only using the completed tool result. Do not call tools."
+    "You already used the only allowed tool call for this turn and attempted another tool call. "
+    "Write the final reply to the user's previous request in plain text using only the "
+    "completed tool result already in the conversation. Do not call tools. Do not say you "
+    "will inspect, look further, or continue later. If the completed tool result is not enough "
+    "to fully answer, state exactly what you learned, explain what is still missing, and ask "
+    "whether the user wants to continue in another turn."
 )
 
 
@@ -49,6 +54,12 @@ class RuntimeToolEvent:
     arguments: dict[str, object]
     output: str | None = None
     is_error: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRecoveryEvent:
+    kind: Literal["tool_limit_text_only"]
+    tool_call_limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -574,6 +585,7 @@ class ChatRuntime:
         on_text_update: Callable[[str], None] | None,
         on_thinking_update: Callable[[str], None] | None,
         on_tool_event: Callable[[RuntimeToolEvent], None] | None,
+        on_recovery_event: Callable[[RuntimeRecoveryEvent], None] | None,
     ) -> RuntimeResponse | None:
         if not self._should_retry_text_only_after_tool_limit(
             error,
@@ -584,6 +596,13 @@ class ChatRuntime:
             return None
 
         assert partial_messages is not None
+        if on_recovery_event is not None:
+            on_recovery_event(
+                RuntimeRecoveryEvent(
+                    kind="tool_limit_text_only",
+                    tool_call_limit=tool_call_limit,
+                )
+            )
         recovery_response = await self._rerun_without_tools(
             prompt_text=_TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT,
             system_prompt=system_prompt,
@@ -616,6 +635,7 @@ class ChatRuntime:
         on_text_update: Callable[[str], None] | None = None,
         on_thinking_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
+        on_recovery_event: Callable[[RuntimeRecoveryEvent], None] | None = None,
     ) -> RuntimeResponse:
         tool_state = _ToolState()
         wrapped_tools = [
@@ -698,6 +718,7 @@ class ChatRuntime:
                 on_text_update=on_text_update,
                 on_thinking_update=on_thinking_update,
                 on_tool_event=on_tool_event,
+                on_recovery_event=on_recovery_event,
             )
             if recovery_response is not None:
                 return self._finalize_recovery_response(

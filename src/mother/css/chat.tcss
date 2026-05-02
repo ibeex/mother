@@ -92,6 +92,10 @@ TurnLabel {
     color: $secondary;
 }
 
+.recovery-title {
+    color: $warning;
+}
+
 .council-title {
     color: $warning;
 }

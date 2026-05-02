@@ -32,7 +32,12 @@ from mother.council import (
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
 from mother.prompt_expansion import PromptExpansionResult
-from mother.runtime import RuntimePartialRunError, RuntimeResponse, RuntimeToolEvent
+from mother.runtime import (
+    RuntimePartialRunError,
+    RuntimeRecoveryEvent,
+    RuntimeResponse,
+    RuntimeToolEvent,
+)
 from mother.stats import TurnUsage
 from mother.tools.bash_capture import BashResult
 from mother.widgets import PromptTextArea, Response, ShellOutput, ThinkingOutput
@@ -108,10 +113,12 @@ class _FakeRuntime:
         response: RuntimeResponse,
         updates: list[tuple[str, str]],
         tool_events: list[RuntimeToolEvent] | None = None,
+        recovery_events: list[RuntimeRecoveryEvent] | None = None,
     ) -> None:
         self.response = response
         self.updates = updates
         self.tool_events = tool_events or []
+        self.recovery_events = recovery_events or []
         self.calls: list[dict[str, object]] = []
 
     async def run_stream(
@@ -128,6 +135,7 @@ class _FakeRuntime:
         on_text_update: Callable[[str], None] | None = None,
         on_thinking_update: Callable[[str], None] | None = None,
         on_tool_event: Callable[[RuntimeToolEvent], None] | None = None,
+        on_recovery_event: Callable[[RuntimeRecoveryEvent], None] | None = None,
     ) -> RuntimeResponse:
         self.calls.append(
             {
@@ -140,6 +148,7 @@ class _FakeRuntime:
                 "tool_call_limit": tool_call_limit,
                 "allow_tool_fallback": allow_tool_fallback,
                 "has_tool_callback": on_tool_event is not None,
+                "has_recovery_callback": on_recovery_event is not None,
             }
         )
         latest_text = ""
@@ -147,6 +156,9 @@ class _FakeRuntime:
         for event in self.tool_events:
             if on_tool_event is not None:
                 on_tool_event(event)
+        for event in self.recovery_events:
+            if on_recovery_event is not None:
+                on_recovery_event(event)
         for text, thinking in self.updates:
             if on_thinking_update is not None and thinking != latest_thinking:
                 latest_thinking = thinking
@@ -342,6 +354,7 @@ def test_run_runtime_request_streams_thinking_and_updates_usage() -> None:
             "tool_call_limit": None,
             "allow_tool_fallback": True,
             "has_tool_callback": True,
+            "has_recovery_callback": True,
         }
     ]
     message_history = fake_runtime.calls[0]["message_history"]
@@ -502,6 +515,7 @@ def test_run_runtime_request_keeps_agent_mode_after_tool_limit_recovery() -> Non
         patch.object(app, "call_from_thread", side_effect=_call_from_thread),
         patch.object(app, "notify") as notify,
         patch.object(app.app_session, "record_session_event") as record_session_event,
+        patch.object(app.runtime_presentation, "show_tool_limit_recovery") as show_recovery,
     ):
         full_text = asyncio.run(
             app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
@@ -514,9 +528,14 @@ def test_run_runtime_request_keeps_agent_mode_after_tool_limit_recovery() -> Non
             )
         )
 
-    assert full_text == "recovered response"
+    assert full_text is not None
+    assert full_text.startswith("recovered response")
+    assert "one-tool-per-turn limit" in full_text
+    assert "Ask me to continue" in full_text
+    assert response.reset_texts == [full_text]
     assert app.agent_mode is True
     notify.assert_not_called()
+    show_recovery.assert_called_once_with(1, "agent", "standard")
     assert call(
         "tool_limit_recovery",
         {
@@ -529,6 +548,84 @@ def test_run_runtime_request_keeps_agent_mode_after_tool_limit_recovery() -> Non
             "tool_calls_finished": 0,
         },
     ) in record_session_event.call_args_list
+
+
+def test_run_runtime_request_updates_waiting_message_when_tool_limit_recovery_starts() -> None:
+    app = _make_app(agent_mode=True)
+    response = _FakeResponse()
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text="recovered response",
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+            tool_limit_recovery_used=True,
+        ),
+        [("recovered response", "")],
+        recovery_events=[RuntimeRecoveryEvent(kind="tool_limit_text_only", tool_call_limit=1)],
+    )
+
+    with (
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app, "_set_response_waiting_message") as set_waiting_message,
+        patch.object(app.runtime_presentation, "show_tool_limit_recovery") as show_recovery,
+    ):
+        _ = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    set_waiting_message.assert_called_with(
+        cast(Response, cast(object, response)),
+        "Recovering after tool-call limit · finishing without more tools",
+    )
+    show_recovery.assert_called_once_with(1, "agent", "standard")
+
+
+def test_run_runtime_request_does_not_duplicate_tool_limit_recovery_notice() -> None:
+    app = _make_app(agent_mode=True)
+    response = _FakeResponse()
+    response_text = (
+        "I only completed one inspection step. Standard agent mode hit the one-tool-per-turn "
+        "limit, so ask me to continue if you want the next step."
+    )
+    fake_runtime = _FakeRuntime(
+        RuntimeResponse(
+            text=response_text,
+            all_messages=[cast(ModelMessage, object())],
+            usage=TurnUsage(model_id="test-model", provider="openai-responses"),
+            agent_mode_used=True,
+            tool_limit_recovery_used=True,
+        ),
+        [(response_text, "")],
+    )
+
+    with (
+        patch("mother.runtime_coordinator.ChatRuntime", return_value=fake_runtime),
+        patch.object(app, "call_from_thread", side_effect=_call_from_thread),
+        patch.object(app.runtime_presentation, "show_tool_limit_recovery") as show_recovery,
+    ):
+        full_text = asyncio.run(
+            app._run_runtime_request(  # pyright: ignore[reportPrivateUsage]
+                "hello",
+                cast(Response, cast(object, response)),
+                "system",
+                tools=[Tool(lambda: "ok")],
+                attachments=[],
+                thinking_output=None,
+            )
+        )
+
+    assert full_text == response_text
+    assert response.reset_texts == [response_text]
+    show_recovery.assert_called_once_with(1, "agent", "standard")
 
 
 def test_run_runtime_request_appends_clipboard_notice_for_blocked_bash_tool() -> None:

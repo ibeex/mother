@@ -16,7 +16,12 @@ from mother.app_session import AppSession
 from mother.council import CouncilProgressUpdate, CouncilResult, CouncilRunner
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
-from mother.runtime import ChatRuntime, RuntimePartialRunError, RuntimeToolEvent
+from mother.runtime import (
+    ChatRuntime,
+    RuntimePartialRunError,
+    RuntimeRecoveryEvent,
+    RuntimeToolEvent,
+)
 from mother.runtime_presentation import RuntimePresentationController
 from mother.stats import TurnUsage
 from mother.widgets import Response, ThinkingOutput
@@ -54,6 +59,7 @@ class _RuntimeStreamState:
     thinking_text: str = ""
     thinking_streaming: bool = False
     blocked_bash_notice: str | None = None
+    tool_limit_recovery_announced: bool = False
 
 
 class RuntimeCoordinator:
@@ -100,6 +106,32 @@ class RuntimeCoordinator:
         stripped = text.rstrip()
         if "clipboard" in stripped.casefold():
             return stripped
+        if not stripped:
+            return notice
+        return f"{stripped}\n\n{notice}"
+
+    @staticmethod
+    def _tool_limit_recovery_waiting_message() -> str:
+        """Return the animated waiting-line message shown during text-only recovery."""
+        return "Recovering after tool-call limit · finishing without more tools"
+
+    @staticmethod
+    def _tool_limit_recovery_notice() -> str:
+        """Return a visible note for standard agent-mode text-only recovery."""
+        return (
+            "_Note: standard agent mode hit the one-tool-per-turn limit, so this reply was "
+            "finished without additional tool calls. Ask me to continue if you want the next "
+            "inspection step._"
+        )
+
+    @classmethod
+    def _append_tool_limit_recovery_notice_if_missing(cls, text: str) -> str:
+        """Append a visible recovery note unless the response already says so."""
+        stripped = text.rstrip()
+        lowered = stripped.casefold()
+        if "one-tool-per-turn" in lowered or "tool-call limit" in lowered:
+            return stripped
+        notice = cls._tool_limit_recovery_notice()
         if not stripped:
             return notice
         return f"{stripped}\n\n{notice}"
@@ -162,6 +194,42 @@ class RuntimeCoordinator:
             stream_state.blocked_bash_notice = self._blocked_bash_clipboard_notice(event)
         self.callbacks.handle_runtime_tool_event(event)
 
+    def _announce_tool_limit_recovery(
+        self,
+        stream_state: _RuntimeStreamState,
+        *,
+        tool_call_limit: int | None,
+    ) -> None:
+        """Show visible in-turn UI state when standard agent mode recovers text-only."""
+        if stream_state.tool_limit_recovery_announced:
+            return
+        stream_state.tool_limit_recovery_announced = True
+        session = self.callbacks.app_session
+        _ = self.callbacks.call_from_thread(
+            self.callbacks.set_response_waiting_message,
+            stream_state.response,
+            self._tool_limit_recovery_waiting_message(),
+        )
+        _ = self.callbacks.call_from_thread(
+            self.callbacks.runtime_presentation.show_tool_limit_recovery,
+            tool_call_limit,
+            session.runtime_mode(),
+            session.agent_profile,
+        )
+
+    def _runtime_on_recovery_event(
+        self,
+        stream_state: _RuntimeStreamState,
+        event: RuntimeRecoveryEvent,
+    ) -> None:
+        """Handle recovery events emitted while a runtime request is running."""
+        if event.kind != "tool_limit_text_only":
+            return
+        self._announce_tool_limit_recovery(
+            stream_state,
+            tool_call_limit=event.tool_call_limit,
+        )
+
     def _finish_runtime_thinking_if_needed(self, stream_state: _RuntimeStreamState) -> None:
         """Finalize any in-progress thinking widget stream."""
         if not stream_state.thinking_streaming or stream_state.thinking_output is None:
@@ -211,6 +279,7 @@ class RuntimeCoordinator:
                     else None
                 ),
                 on_tool_event=partial(self._runtime_on_tool_event, stream_state),
+                on_recovery_event=partial(self._runtime_on_recovery_event, stream_state),
             )
         except UserInterruptedError as exc:
             self._finish_runtime_thinking_if_needed(stream_state)
@@ -242,7 +311,15 @@ class RuntimeCoordinator:
 
         self._finish_runtime_thinking_if_needed(stream_state)
 
+        if runtime_response.tool_limit_recovery_used:
+            self._announce_tool_limit_recovery(
+                stream_state,
+                tool_call_limit=session.tool_call_limit(),
+            )
+
         final_text = runtime_response.text
+        if runtime_response.tool_limit_recovery_used:
+            final_text = self._append_tool_limit_recovery_notice_if_missing(final_text)
         if stream_state.blocked_bash_notice is not None:
             final_text = self._append_notice_if_missing(
                 final_text,
