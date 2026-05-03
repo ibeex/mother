@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 
-Mother is a local terminal chat interface for LLMs.
+Mother is a slow agent for the terminal: a local chat interface for LLMs that works with you one step at a time.
 
 It supports three modes:
 
@@ -85,7 +85,7 @@ mother --init-config
 mother --print-config-path
 ```
 
-That creates `~/.config/mother/config.toml` on first run if it does not already exist.
+This creates `~/.config/mother/config.toml` if it does not already exist.
 
 If you prefer, you can also copy the example files from this repo:
 
@@ -137,8 +137,7 @@ Example files are included in this repository under:
 mother
 ```
 
-If no config exists yet, Mother also creates the starter config automatically when it
-first loads.
+If you skip `--init-config`, Mother will still create a starter config automatically on first launch.
 
 ## Clipboard images
 
@@ -333,4 +332,4 @@ For how to install uv and Python, see [installation.md](installation.md).
 
 For development workflows, see [development.md](development.md).
 
-For instructions on publishing to PyPI, see [publishing.md](publishing.md).
+For release and publishing notes, see [publishing.md](publishing.md).
