@@ -70,7 +70,7 @@ Install Mother from a local checkout:
 uv tool install --editable .
 ```
 
-Or install it directly from GitHub once this repo is published:
+Or install it directly from GitHub:
 
 ```bash
 uv tool install --from git+https://github.com/ibeex/mother.git mother
