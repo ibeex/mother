@@ -6,7 +6,7 @@ explicitly.
 
 Usage:
     uv run python devtools/bash_guard_eval.py
-    uv run python devtools/bash_guard_eval.py --model local_1 --seed 7 --limit 12
+    uv run python devtools/bash_guard_eval.py --model bash_checker --seed 7 --limit 12
     uv run python devtools/bash_guard_eval.py --only Fatal --fail-on-mismatch
 """
 

@@ -116,6 +116,18 @@ supports_reasoning = true
 supports_images = true
 ```
 
+`api_type` is important: it tells Mother which provider protocol to use for that model.
+If `api_type` is wrong, the model may fail even when `name` and `base_url` are correct.
+
+Valid values are:
+
+- `openai-responses`: for OpenAI Responses-compatible models/endpoints
+- `openai-chat`: for OpenAI Chat Completions-compatible models/endpoints, common with local OpenAI-style servers
+- `anthropic`: for Anthropic-compatible models/endpoints
+
+This also affects feature wiring such as reasoning/tool behavior, so make sure every
+configured model, including `bash_checker`, uses the correct `api_type`.
+
 Example `~/.config/mother/keys.json`:
 
 ```json
@@ -130,6 +142,28 @@ Example files are included in this repository under:
 
 - `examples/config.toml.example`
 - `examples/keys.example.json`
+
+### Bash guard model
+
+If you enable `tools_enabled = true` and want to use the local `bash` tool in agent mode,
+add a separate model entry with id `bash_checker`.
+
+Mother uses that model id for the bash safety classifier before any shell command is executed.
+The underlying provider/model can be anything you configure, but the id must be `bash_checker`.
+If no `bash_checker` model is configured, bash tool calls will be blocked fail-closed.
+
+Example:
+
+```toml
+[[models]]
+id = "bash_checker"
+name = "your-bash-checker-model"
+api_type = "openai-chat"
+base_url = "http://localhost:1234/v1"
+supports_tools = false
+supports_reasoning = false
+supports_images = false
+```
 
 ### Run
 
@@ -234,7 +268,7 @@ Notes:
 
 Standard agent tools:
 
-- `bash`: run local shell commands, guarded by the bash safety classifier
+- `bash`: run local shell commands, guarded by the bash safety classifier that uses the configured `bash_checker` model id
 - `web_search`: search the public web using Jina Search
 - `web_fetch`: fetch a known URL using either raw HTTP or Jina reader mode
 

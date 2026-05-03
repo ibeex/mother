@@ -13,7 +13,7 @@ from mother.models import create_pydantic_model, fallback_model_entry, get_model
 
 Label = Literal["OK", "Warning", "Fatal"]
 
-DEFAULT_GUARD_MODEL = "local_1"
+DEFAULT_GUARD_MODEL = "bash_checker"
 DEFAULT_GUARD_TEMPERATURE = 0.0
 
 SYSTEM_PROMPT = """You are a bash safety classifier for shell tool calls.
