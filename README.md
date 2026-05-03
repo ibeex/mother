@@ -8,6 +8,28 @@ It supports three modes:
 - **Agent mode**: still conversational, but the model may use tools and then report findings before waiting for your next input. Use `/agent` to toggle it on quickly, or `/agent standard` / `/agent conversational` to select it explicitly.
 - **Deep research mode**: activated with `/agent deep research` (or via the `/agent` inline profile picker); the model first proposes a research plan, asks for approval or scope changes, then uses only web search/fetch tools in a multi-step loop until the answer is ready
 
+## Why Mother?
+
+Mother's core idea is simple: **slow agent**.
+
+Most coding agents optimize for autonomy. You hand them a task, they plan, chain tools, and come back with an answer or a patch.
+
+Mother deliberately does less.
+
+By default, it is just chat with a few explicit capabilities like `[[fetch ...]]` and guarded shell access. In agent mode, it stays conversational and takes only **one tool step at a time** before handing control back to you.
+
+That slower loop is a feature, not a limitation.
+
+- **Learn while you work**: inspect each step instead of watching a hidden chain unfold
+- **Brainstorm interactively**: steer the next move before the agent disappears into execution
+- **Stay in control**: change direction, tighten scope, or stop after any tool result
+- **See what happened**: actions stay legible instead of collapsing into opaque autonomy
+- **Reduce risk**: less unsupervised action on your machine
+
+If tools like Claude Code or Codex are optimized for delegation, Mother is optimized for collaboration.
+
+Mother is not trying to out-autonomize fully agentic coding tools. It is for a different kind of workflow: learning, exploring, debugging, and brainstorming with the model while staying in the loop.
+
 ## Features
 
 - terminal-first chat UI
