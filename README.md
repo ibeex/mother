@@ -333,3 +333,11 @@ For how to install uv and Python, see [installation.md](installation.md).
 For development workflows, see [development.md](development.md).
 
 For release and publishing notes, see [publishing.md](publishing.md).
+
+## Thanks
+
+Inspirations for Mother include:
+
+- [Textual's `examples/mother.py`](https://github.com/Textualize/textual/blob/main/examples/mother.py)
+- [`pi-mono`](https://github.com/badlogic/pi-mono)
+- [`llm`](https://github.com/simonw/llm)
