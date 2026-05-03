@@ -1,5 +1,9 @@
 # mother
 
+[![CI](https://github.com/ibeex/mother/actions/workflows/ci.yml/badge.svg)](https://github.com/ibeex/mother/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
+
 Mother is a local terminal chat interface for LLMs.
 
 It supports three modes:

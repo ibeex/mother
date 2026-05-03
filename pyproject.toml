@@ -11,7 +11,7 @@ Repository = "https://github.com/ibeex/mother"
 
 [project]
 name = "mother"
-description = "llm TUI"
+description = "Local terminal chat interface for LLMs"
 authors = [
     { name="ibeex" },
 ]
