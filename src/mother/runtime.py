@@ -514,7 +514,9 @@ class ChatRuntime:
                 tool_calls_finished=tool_state.finished,
                 tool_call_errors=tool_state.errors,
             ),
-            agent_mode_used=response.agent_mode_used if agent_mode_used is None else agent_mode_used,
+            agent_mode_used=response.agent_mode_used
+            if agent_mode_used is None
+            else agent_mode_used,
         )
 
     async def _rerun_without_tools(

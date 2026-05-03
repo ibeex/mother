@@ -1,71 +1,51 @@
-## Publishing Releases
+## Publishing and releases
 
-This is how to publish a Python package to [**PyPI**](https://pypi.org/) from GitHub
-Actions, when using the
-[**simple-modern-uv**](https://github.com/jlevy/simple-modern-uv) template.
+### GitHub release readiness
 
-Thanks to [the dynamic versioning
-plugin](https://github.com/ninoseki/uv-dynamic-versioning/) and the
-[`publish.yml` workflow](https://github.com/jlevy/simple-modern-uv/blob/main/template/.github/workflows/publish.yml),
-you can simply create tagged releases (using standard format for the tag name, e.g.
-`v0.1.0`) on GitHub and the tag will trigger a release build, which then uploads it to
-PyPI.
+This repository is ready to be published on GitHub.
 
-### How to Publish the First Time
+Suggested first-time steps:
 
-This part is a little confusing the first time.
-Here is the simplest way to do it.
-For the purposes of this example replace OWNER and PROJECT with the right values.
+1. Push the repository to GitHub.
+2. Confirm the `CI` workflow passes on the default branch.
+3. Add a repository description, topics, and screenshots if you want a nicer project page.
+4. Create GitHub releases with tags like `v0.8.1` when you want to mark versions.
 
-1. **Get a PyPI account** at [pypi.org](https://pypi.org/) and sign in.
+Example:
 
-2. **Pick a name for the project** that isn't already taken.
+```bash
+git tag -a v0.8.1 -m "Release v0.8.1"
+git push origin main --tags
+```
 
-   - Go to `https://pypi.org/project/PROJECT` to see if another project with that name
-     already exits.
+### PyPI status
 
-   - If needed, update your `pyproject.yml` with the correct name.
+PyPI publishing is **not configured yet**.
 
-3. **Authorize** your repository to publish to PyPI:
+Right now `pyproject.toml` intentionally includes this classifier:
 
-   - Go to [the publishing settings page](https://pypi.org/manage/account/publishing/).
+```toml
+"Private :: Do Not Upload"
+```
 
-   - Find "Trusted Publisher Management" and register your GitHub repo as a new
-     "pending" trusted publisher
+That helps avoid accidental uploads.
 
-   - Enter the project name, repo owner, repo name, and `publish.yml` as the workflow
-     name. (You can leave the "environment name" field blank.)
+### If you want to publish to PyPI later
 
-4. **Create a release** on GitHub:
+You will need to:
 
-   - Commit code and make sure it's running correctly.
+1. Remove the `"Private :: Do Not Upload"` classifier from `pyproject.toml`.
+2. Make sure the project name on PyPI is available.
+3. Add a dedicated GitHub Actions publish workflow.
+4. Configure PyPI trusted publishing for `ibeex/mother`.
+5. Build and test distributions before the first upload:
 
-   - Go to your GitHub project page, then click on Actions tab.
+```bash
+uv build
+```
 
-   - Confirm all tests are passing in the last CI workflow.
-     (If you want, you can even publish this template when it's empty as just a stub
-     project, to try all this out.)
+Optional local verification:
 
-   - Go to your GitHub project page, click on Releases.
-
-   - Fill in the tag and the release name.
-     Select to create a new tag, and pick a version.
-     A good option is `v0.1.0`. (It's wise to have it start with a `v`.)
-
-   - Submit to create the release.
-
-5. **Confirm it publishes to PyPI**
-
-   - Watch for the release workflow in the GitHub Actions tab.
-
-   - If it succeeds, you should see it appear at `https://pypi.org/project/PROJECT`.
-
-### How to Publish Subsequent Releases
-
-Just create a new release!
-Everything is the same as the last two steps above.
-
-* * *
-
-*This file was built with
-[simple-modern-uv](https://github.com/jlevy/simple-modern-uv).*
+```bash
+python -m zipfile -l dist/*.whl
+```

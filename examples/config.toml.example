@@ -1,0 +1,23 @@
+# Example Mother configuration
+# Copy to ~/.config/mother/config.toml and adjust values.
+
+model = "gpt-5"
+tools_enabled = true
+reasoning_effort = "medium"
+openai_reasoning_summary = "auto"
+
+[[models]]
+id = "gpt-5"
+name = "gpt-5"
+api_type = "openai-responses"
+api_key_env = "OPENAI_API_KEY"
+supports_tools = true
+supports_reasoning = true
+supports_images = true
+
+# Optional: council setup
+# [council]
+# members = ["gpt-5"]
+# judge = "gpt-5"
+# max_context_turns = 8
+# max_context_chars = 12000

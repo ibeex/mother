@@ -1,6 +1,7 @@
 """Tests for streamed markdown rendering behavior."""
 
 import asyncio
+from typing import override
 
 from textual.app import App, ComposeResult
 from textual.widgets.markdown import MarkdownFence
@@ -9,6 +10,7 @@ from mother.widgets import Response
 
 
 class _MarkdownStreamingApp(App[None]):
+    @override
     def compose(self) -> ComposeResult:
         yield Response("")
 

@@ -1,7 +1,11 @@
 # ---- Project Info and Dependencies ----
 
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project.urls]
-Repository = "https://github.com/changeme/mother"
+Repository = "https://github.com/ibeex/mother"
 # Homepage = "https://..."
 # Documentation = "https://..."
 
@@ -9,7 +13,7 @@ Repository = "https://github.com/changeme/mother"
 name = "mother"
 description = "llm TUI"
 authors = [
-    { name="changeme", email="changeme@example.com" },
+    { name="ibeex" },
 ]
 readme = "README.md"
 license = "MIT"
@@ -68,6 +72,9 @@ package = true
 [project.scripts]
 # Add script entry points here:
 mother = "mother:cli"
+
+[tool.setuptools.package-data]
+mother = ["css/*.tcss", "py.typed"]
 
 
 # ---- Settings ----

@@ -6,15 +6,13 @@ This project is set up to use [uv](https://docs.astral.sh/uv/) to manage Python 
 dependencies. First, be sure you
 [have uv installed](https://docs.astral.sh/uv/getting-started/installation/).
 
-Then [fork the changeme/mother
-repo](https://github.com/changeme/mother/fork) (having your own
-fork will make it easier to contribute) and
-[clone it](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository).
+Then fork this repository (having your own fork will make it easier to contribute)
+and [clone it](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository).
 
 ## Basic Developer Workflows
 
 The `justfile` simply offers shortcuts to `uv` commands for developer convenience.
-(For clarity, GitHub Actions don't use the justfile and just call `uv` directly.)
+(For clarity, the CI workflow doesn't use the justfile and just calls `uv` directly.)
 
 ```shell
 # First, install all dependencies and set up your virtual environment.

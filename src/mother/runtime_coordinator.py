@@ -223,8 +223,6 @@ class RuntimeCoordinator:
         event: RuntimeRecoveryEvent,
     ) -> None:
         """Handle recovery events emitted while a runtime request is running."""
-        if event.kind != "tool_limit_text_only":
-            return
         self._announce_tool_limit_recovery(
             stream_state,
             tool_call_limit=event.tool_call_limit,

@@ -54,6 +54,88 @@ Mother keeps one shared `reasoning_effort` abstraction across providers.
   thinking blocks via provider thinking budgets, and the status line shows values like
   `R medium/thinking`.
 
+## Quick start
+
+### Install
+
+For how to install Python and `uv`, see [installation.md](installation.md).
+
+Install Mother from a local checkout:
+
+```bash
+uv tool install --editable .
+```
+
+Or install it directly from GitHub once this repo is published:
+
+```bash
+uv tool install --from git+https://github.com/ibeex/mother.git mother
+```
+
+### Create your config
+
+Mother can scaffold the config file for you:
+
+```bash
+mother --init-config
+mother --print-config-path
+```
+
+That creates `~/.config/mother/config.toml` on first run if it does not already exist.
+
+If you prefer, you can also copy the example files from this repo:
+
+```bash
+mkdir -p ~/.config/mother
+cp examples/config.toml.example ~/.config/mother/config.toml
+cp examples/keys.example.json ~/.config/mother/keys.json
+```
+
+### Add at least one model
+
+You can keep secrets out of Git by using either environment variables or
+`~/.config/mother/keys.json`.
+
+Example using an environment variable:
+
+```toml
+model = "gpt-5"
+tools_enabled = true
+
+[[models]]
+id = "gpt-5"
+name = "gpt-5"
+api_type = "openai-responses"
+api_key_env = "OPENAI_API_KEY"
+supports_tools = true
+supports_reasoning = true
+supports_images = true
+```
+
+Example `~/.config/mother/keys.json`:
+
+```json
+{
+  "OPENAI_KEY": "paste-your-api-key-here"
+}
+```
+
+Then reference it from `config.toml` with `api_key = "OPENAI_KEY"`.
+
+Example files are included in this repository under:
+
+- `examples/config.toml.example`
+- `examples/keys.example.json`
+
+### Run
+
+```bash
+mother
+```
+
+If no config exists yet, Mother also creates the starter config automatically when it
+first loads.
+
 ## Clipboard images
 
 When the prompt input is focused, `Ctrl+V` still behaves like paste, but Mother now

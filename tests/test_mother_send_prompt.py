@@ -536,18 +536,21 @@ def test_run_runtime_request_keeps_agent_mode_after_tool_limit_recovery() -> Non
     assert app.agent_mode is True
     notify.assert_not_called()
     show_recovery.assert_called_once_with(1, "agent", "standard")
-    assert call(
-        "tool_limit_recovery",
-        {
-            "strategy": "text_only",
-            "model": "test-model",
-            "mode": "agent",
-            "profile": "standard",
-            "tool_call_limit": 1,
-            "tool_calls_started": 0,
-            "tool_calls_finished": 0,
-        },
-    ) in record_session_event.call_args_list
+    assert (
+        call(
+            "tool_limit_recovery",
+            {
+                "strategy": "text_only",
+                "model": "test-model",
+                "mode": "agent",
+                "profile": "standard",
+                "tool_call_limit": 1,
+                "tool_calls_started": 0,
+                "tool_calls_finished": 0,
+            },
+        )
+        in record_session_event.call_args_list
+    )
 
 
 def test_run_runtime_request_updates_waiting_message_when_tool_limit_recovery_starts() -> None:

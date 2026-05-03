@@ -32,7 +32,14 @@ from mother.app_wiring import (
     build_submission_controller_callbacks,
 )
 from mother.clipboard import ClipboardImageError, save_clipboard_image
-from mother.config import MotherConfig, apply_cli_overrides, load_config
+from mother.config import (
+    CONFIG_FILE,
+    LEGACY_CONFIG_FILE,
+    MotherConfig,
+    apply_cli_overrides,
+    load_config,
+    save_default_config,
+)
 from mother.conversation import ConversationState
 from mother.council import CouncilResult
 from mother.history import PromptHistory
@@ -727,8 +734,46 @@ class MotherApp(App[None]):
 @click.option("--model", "-m", default=None, help="LLM model to use.")
 @click.option("--system", "-s", default=None, help="System prompt.")
 @click.option("--save", "save_last", is_flag=True, help="Save the last unsaved session and exit.")
-def cli(model: str | None, system: str | None, save_last: bool) -> None:
+@click.option(
+    "--init-config",
+    is_flag=True,
+    help="Create ~/.config/mother/config.toml if it does not exist, then exit.",
+)
+@click.option(
+    "--print-config-path",
+    is_flag=True,
+    help="Print the config file path Mother will use, then exit.",
+)
+def cli(
+    model: str | None,
+    system: str | None,
+    save_last: bool,
+    init_config: bool,
+    print_config_path: bool,
+) -> None:
     """Launch the Mother TUI chatbot."""
+    if print_config_path:
+        if CONFIG_FILE.exists():
+            click.echo(str(CONFIG_FILE))
+            return
+        if LEGACY_CONFIG_FILE.exists():
+            click.echo(str(LEGACY_CONFIG_FILE))
+            return
+        click.echo(str(CONFIG_FILE))
+        return
+
+    if init_config:
+        if CONFIG_FILE.exists():
+            click.echo(f"Config already exists: {CONFIG_FILE}")
+            return
+        if LEGACY_CONFIG_FILE.exists():
+            click.echo(f"Legacy config already exists: {LEGACY_CONFIG_FILE}")
+            return
+        save_default_config(CONFIG_FILE)
+        click.echo(f"Created config: {CONFIG_FILE}")
+        click.echo('Next: add at least one [[models]] entry and set model = "...".')
+        return
+
     config = load_config()
     config = apply_cli_overrides(config, model, system)
 
@@ -749,20 +794,18 @@ def cli(model: str | None, system: str | None, save_last: bool) -> None:
 
     if not config.models:
         click.echo(
-            'No models configured. Edit ~/.config/mother/config.toml, add at least one [[models]] entry, and set model = "...".'
+            f'No models configured. Edit {CONFIG_FILE}, add at least one [[models]] entry, and set model = "...".'
         )
         return
 
     if not config.model:
-        click.echo('No default model selected. Set model = "..." in ~/.config/mother/config.toml.')
+        click.echo(f'No default model selected. Set model = "..." in {CONFIG_FILE}.')
         return
 
     if resolve_model_entry(config.model, config.models).id != config.model and not any(
         entry.id == config.model for entry in config.models
     ):
-        click.echo(
-            f"Configured default model {config.model!r} was not found in ~/.config/mother/config.toml."
-        )
+        click.echo(f"Configured default model {config.model!r} was not found in {CONFIG_FILE}.")
         return
 
     session_manager = SessionManager.create(
