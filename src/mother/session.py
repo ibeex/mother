@@ -112,10 +112,21 @@ def _normalize_json_value(value: object) -> JsonValue:
     return repr(value)
 
 
-def _render_fenced_block(content: str, language: str = "text") -> str:
+def _render_fenced_block(content: str, language: str | None = "text") -> str:
     """Render a fenced code block for markdown export."""
     trimmed = content.rstrip("\n")
-    return f"```{language}\n{trimmed}\n```"
+    longest_backtick_run = 0
+    current_backtick_run = 0
+    for character in trimmed:
+        if character == "`":
+            current_backtick_run += 1
+            longest_backtick_run = max(longest_backtick_run, current_backtick_run)
+            continue
+        current_backtick_run = 0
+
+    fence = "`" * max(3, longest_backtick_run + 1)
+    language_suffix = language or ""
+    return f"{fence}{language_suffix}\n{trimmed}\n{fence}"
 
 
 def _process_is_alive(pid: int) -> bool:
@@ -775,7 +786,7 @@ class SessionManager:
         status = "error" if result["is_error"] else "ok"
         lines.append(f"- Status: `{status}`")
         lines.extend(["", "**Arguments**", "", _render_fenced_block(arguments_json, "json"), ""])
-        lines.extend(_render_details("Tool output", _render_fenced_block(result["output"])))
+        lines.extend(_render_details("Tool output", _render_fenced_block(result["output"], None)))
         lines.extend(["", "---", ""])
         return lines
 
@@ -793,7 +804,7 @@ class SessionManager:
         if entry["tool_call_id"]:
             lines.append(f"- Call ID: `{entry['tool_call_id']}`")
         lines.extend(["", "**Arguments**", "", _render_fenced_block(arguments_json, "json"), ""])
-        lines.extend(_render_details("Tool output", _render_fenced_block(entry["output"])))
+        lines.extend(_render_details("Tool output", _render_fenced_block(entry["output"], None)))
         lines.extend(["", "---", ""])
         return lines
 

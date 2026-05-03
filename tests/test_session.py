@@ -89,6 +89,39 @@ def test_session_save_writes_markdown_and_keeps_transient_jsonl_for_future_saves
     assert manager.last_file.exists() is True
 
 
+def test_tool_output_with_nested_fences_uses_longer_outer_fence(tmp_path: Path) -> None:
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions",
+        markdown_dir=tmp_path / "markdown",
+    )
+    manager.record_tool_call(
+        tool_name="bash",
+        tool_call_id="call-1",
+        arguments={"command": "cat README.md"},
+    )
+    manager.record_tool_result(
+        tool_name="bash",
+        tool_call_id="call-1",
+        arguments={"command": "cat README.md"},
+        output=(
+            "# Example\n\n"
+            "```text\n[[fetch https://example.com/page]]\n```\n\n"
+            "## Development\n"
+            "Keep going.\n"
+        ),
+    )
+    manager.record_event("model_change", {"from": "gpt-test", "model": "gpt-4o-mini"})
+
+    output_path = manager.save_as_markdown()
+    markdown = output_path.read_text(encoding="utf-8")
+
+    assert "````\n# Example" in markdown
+    assert "````text\n# Example" not in markdown
+    assert "```text\n[[fetch https://example.com/page]]\n```" in markdown
+    assert "\n````\n\n</details>" in markdown
+    assert "</details>\n\n---\n\n### Event · `model_change`" in markdown
+
+
 def test_prompt_context_does_not_repeat_same_system_prompt(tmp_path: Path):
     sessions_dir = tmp_path / "sessions"
     markdown_dir = tmp_path / "markdown"
