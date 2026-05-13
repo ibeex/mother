@@ -111,11 +111,12 @@ class RuntimePresentationController:
         arguments: dict[str, object],
     ) -> None:
         """Mount a widget showing that a tool call has started."""
+        should_follow = self.host.should_follow_chat_updates()
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
         self._tool_outputs[key] = widget
         self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
-        if self.host.should_follow_chat_updates():
+        if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
     def show_tool_finished(
@@ -126,13 +127,14 @@ class RuntimePresentationController:
         output: str,
     ) -> None:
         """Update a tool trace widget when a tool call finishes."""
+        should_follow = self.host.should_follow_chat_updates()
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = self._tool_outputs.pop(key, None)
         if widget is None:
             widget = ToolOutput()
             self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
-        if self.host.should_follow_chat_updates():
+        if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
     def show_tool_limit_recovery(
@@ -142,6 +144,7 @@ class RuntimePresentationController:
         profile: str,
     ) -> None:
         """Mount a visible trace section when a turn falls back to text-only recovery."""
+        should_follow = self.host.should_follow_chat_updates()
         widget = ToolOutput(
             format_tool_limit_recovery(
                 tool_call_limit=tool_call_limit,
@@ -150,7 +153,7 @@ class RuntimePresentationController:
             )
         )
         self._mount_trace_section(OutputSection("Recovery", "recovery-title", widget))
-        if self.host.should_follow_chat_updates():
+        if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
     def show_council_trace(self, result: CouncilResult) -> None:
@@ -159,6 +162,7 @@ class RuntimePresentationController:
         if not sections:
             return
 
+        should_follow = self.host.should_follow_chat_updates()
         try:
             for trace in sections:
                 self._mount_trace_section(
@@ -167,7 +171,7 @@ class RuntimePresentationController:
         except (NoMatches, ScreenStackError):
             return
 
-        if self.host.should_follow_chat_updates():
+        if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
     def waiting_response_positions(self, message: str | None = None) -> tuple[int, ...]:
@@ -211,13 +215,14 @@ class RuntimePresentationController:
         message: str | None = None,
     ) -> None:
         """Begin animating the temporary MU-TH-UR-style waiting line."""
+        should_follow = self.host.should_follow_chat_updates()
         animation = ResponseWaitingAnimation(
             response=response,
             message=message or choice(self.waiting_messages),
         )
         self._response_waiting_animations[id(response)] = animation
         self._render_response_waiting_frame(animation)
-        if self.host.should_follow_chat_updates():
+        if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
     def set_response_waiting_message(self, response: Response, message: str) -> None:
@@ -226,10 +231,11 @@ class RuntimePresentationController:
         if animation is None:
             self.start_response_waiting_animation(response, message)
             return
+        should_follow = self.host.should_follow_chat_updates()
         animation.message = message
         animation.frame_index = 0
         self._render_response_waiting_frame(animation)
-        if self.host.should_follow_chat_updates():
+        if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
     def clear_response_waiting_animation(self, response: Response) -> None:
