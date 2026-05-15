@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import cast, final
 
 from mother.runtime_presentation import RuntimePresentationController
 from mother.widgets import Response
 
 
+@final
 class _FakeChatView:
-    def __init__(self, host: "_FakeHost") -> None:
+    def __init__(self, host: _FakeHost) -> None:
         self.host = host
         self.mounted: list[object] = []
 
@@ -21,6 +22,7 @@ class _FakeChatView:
         self.host.scroll_end_calls.append(animate)
 
 
+@final
 class _FakeHost:
     def __init__(self) -> None:
         self.auto_scroll_enabled = True
@@ -30,6 +32,7 @@ class _FakeHost:
         self.chat_view = _FakeChatView(self)
 
     def query_one(self, selector: object, expect_type: object = None) -> object:
+        _ = selector, expect_type
         return self.chat_view
 
     def should_follow_chat_updates(self) -> bool:
