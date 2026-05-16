@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from pathlib import Path, PurePath
 from time import monotonic
 from typing import ClassVar, cast, override
@@ -31,6 +31,7 @@ from mother.app_wiring import (
     build_settings_controller_callbacks,
     build_submission_controller_callbacks,
 )
+from mother.bash_approval_screen import BashApprovalScreen
 from mother.clipboard import ClipboardImageError, save_clipboard_image
 from mother.config import (
     CONFIG_FILE,
@@ -58,6 +59,7 @@ from mother.stats import TurnUsage
 from mother.submission_controller import SubmissionController
 from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
+from mother.tools.bash_guard import BashGuardDecision
 from mother.widgets import (
     ConversationTurn,
     CopyableOutput,
@@ -322,6 +324,18 @@ class MotherApp(App[None]):
                 self.action_switch_model(model_id)
 
         _ = self.push_screen(ModelPickerScreen(self.config.model), on_model_selected)
+
+    def _show_bash_approval(
+        self,
+        decision: BashGuardDecision,
+        on_decision: Callable[[bool], None],
+    ) -> None:
+        """Show the bash-approval modal and forward the user's decision."""
+
+        def handle_result(approved: bool | None) -> None:
+            on_decision(bool(approved))
+
+        _ = self.push_screen(BashApprovalScreen(decision), handle_result)
 
     def _resolve_slash_argument_query(self, command: str, query: str) -> str | None:
         """Resolve a slash-command argument query to a concrete completion value."""

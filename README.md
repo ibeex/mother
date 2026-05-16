@@ -45,7 +45,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 - explicit `[[fetch https://...]]` prompt expansion in any chat or agent turn
 - agent mode with tool traces
 - deep research mode with plan-first web research loops
-- guarded local `bash` execution
+- guarded local `bash` execution with in-app approval prompts for risky commands
 - web search via Jina Search
 - web fetching for public pages, APIs, and localhost services
 
@@ -151,6 +151,13 @@ add a separate model entry with id `bash_checker`.
 Mother uses that model id for the bash safety classifier before any shell command is executed.
 The underlying provider/model can be anything you configure, but the id must be `bash_checker`.
 If no `bash_checker` model is configured, bash tool calls will be blocked fail-closed.
+
+Behavior summary:
+
+- `OK` commands run immediately
+- `Warning` and `Fatal` commands are shown to you in a confirmation modal before they run
+- if you deny the command, Mother does not execute it and copies the exact command to your clipboard so you can review or run it manually outside Mother
+- if the guard model fails, Mother blocks the command fail-closed instead of asking for approval
 
 Example:
 
@@ -268,7 +275,7 @@ Notes:
 
 Standard agent tools:
 
-- `bash`: run local shell commands, guarded by the bash safety classifier that uses the configured `bash_checker` model id
+- `bash`: run local shell commands, guarded by the bash safety classifier that uses the configured `bash_checker` model id; `Warning` and `Fatal` commands require your explicit approval in the TUI before execution
 - `web_search`: search the public web using Jina Search
 - `web_fetch`: fetch a known URL using either raw HTTP or Jina reader mode
 

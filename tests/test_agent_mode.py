@@ -560,3 +560,23 @@ def test_send_prompt_passes_tools_when_agent() -> None:
             ca_bundle_path=session.config.ca_bundle_path,
             agent_profile="standard",
         )
+
+
+def test_send_prompt_passes_bash_approval_callback_when_requested() -> None:
+    session = AppSession(MotherConfig())
+    session.agent_mode = True
+    request_bash_approval = MagicMock(return_value=True)
+    with patch("mother.app_session.get_default_tools") as mock_tools:
+        registry = MagicMock()
+        registry.is_empty.return_value = False  # pyright: ignore[reportAny]
+        registry.tools.return_value = [MagicMock()]  # pyright: ignore[reportAny]
+        mock_tools.return_value = registry
+
+        _ = session.enabled_tools(request_bash_approval=request_bash_approval)
+
+        mock_tools.assert_called_with(
+            tools_enabled=True,
+            ca_bundle_path=session.config.ca_bundle_path,
+            agent_profile="standard",
+            request_bash_approval=request_bash_approval,
+        )

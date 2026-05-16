@@ -3,7 +3,7 @@
 import asyncio
 from pathlib import Path
 from typing import final
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from mother.interrupts import UserInterruptedError
 from mother.tools import get_default_tools
@@ -90,6 +90,56 @@ def test_bash_tool_warning_blocks_and_copies_to_clipboard():
     assert "!!<command>" in output
 
 
+def test_bash_tool_warning_runs_after_user_approval():
+    decision = BashGuardDecision(
+        command="touch notes.txt",
+        label="Warning",
+        raw_output="LABEL: Warning",
+        canonical_label=True,
+    )
+    ok_result = BashResult(output="done\n", exit_code=0)
+    request_approval = Mock(return_value=True)
+    with (
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
+        patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
+        patch(
+            "mother.tools.bash_tool.execute_bash", new=AsyncMock(return_value=ok_result)
+        ) as mock_exec,
+    ):
+        tool = make_bash_tool(cwd=Path("/tmp"), request_approval=request_approval)
+        output = asyncio.run(tool("touch notes.txt"))
+    request_approval.assert_called_once_with(decision)
+    mock_copy.assert_not_called()
+    mock_exec.assert_called_once_with("touch notes.txt", cwd=Path("/tmp"), timeout=30.0)
+    assert output == "done\n"
+
+
+def test_bash_tool_warning_copies_to_clipboard_after_user_denial():
+    decision = BashGuardDecision(
+        command="touch notes.txt",
+        label="Warning",
+        raw_output="LABEL: Warning",
+        canonical_label=True,
+    )
+    request_approval = Mock(return_value=False)
+    with (
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
+        patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
+        patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
+    ):
+        tool = make_bash_tool(cwd=Path("/tmp"), request_approval=request_approval)
+        output = asyncio.run(tool("touch notes.txt"))
+    request_approval.assert_called_once_with(decision)
+    mock_copy.assert_called_once_with("touch notes.txt")
+    mock_exec.assert_not_called()
+    assert "denied approval" in output
+    assert "copied to the clipboard" in output
+
+
 def test_bash_tool_fatal_blocks_and_copies_to_clipboard():
     decision = BashGuardDecision(
         command="rm -rf /",
@@ -113,6 +163,32 @@ def test_bash_tool_fatal_blocks_and_copies_to_clipboard():
     assert "copied to the clipboard" in output
 
 
+def test_bash_tool_fatal_runs_after_user_approval():
+    decision = BashGuardDecision(
+        command="rm -rf tmpdir",
+        label="Fatal",
+        raw_output="LABEL: Fatal",
+        canonical_label=True,
+    )
+    ok_result = BashResult(output="done\n", exit_code=0)
+    request_approval = Mock(return_value=True)
+    with (
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
+        patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
+        patch(
+            "mother.tools.bash_tool.execute_bash", new=AsyncMock(return_value=ok_result)
+        ) as mock_exec,
+    ):
+        tool = make_bash_tool(cwd=Path("/tmp"), request_approval=request_approval)
+        output = asyncio.run(tool("rm -rf tmpdir"))
+    request_approval.assert_called_once_with(decision)
+    mock_copy.assert_not_called()
+    mock_exec.assert_called_once_with("rm -rf tmpdir", cwd=Path("/tmp"), timeout=30.0)
+    assert output == "done\n"
+
+
 def test_bash_tool_guard_error_fails_closed():
     decision = BashGuardDecision(
         command="ls -al",
@@ -121,6 +197,7 @@ def test_bash_tool_guard_error_fails_closed():
         canonical_label=False,
         error="Could not parse bash guard label from model output.",
     )
+    request_approval = Mock(return_value=True)
     with (
         patch(
             "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
@@ -128,11 +205,37 @@ def test_bash_tool_guard_error_fails_closed():
         patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
         patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
     ):
-        tool = make_bash_tool(cwd=Path("/tmp"))
+        tool = make_bash_tool(cwd=Path("/tmp"), request_approval=request_approval)
         output = asyncio.run(tool("ls -al"))
+    request_approval.assert_not_called()
     mock_copy.assert_called_once_with("ls -al")
     mock_exec.assert_not_called()
     assert "Could not parse bash guard label" in output
+
+
+def test_bash_tool_approval_prompt_failure_fails_closed():
+    decision = BashGuardDecision(
+        command="touch notes.txt",
+        label="Warning",
+        raw_output="LABEL: Warning",
+        canonical_label=True,
+    )
+    with (
+        patch(
+            "mother.tools.bash_tool.classify_command_async", new=AsyncMock(return_value=decision)
+        ),
+        patch("mother.tools.bash_tool.pyperclip.copy") as mock_copy,
+        patch("mother.tools.bash_tool.execute_bash", new=AsyncMock()) as mock_exec,
+    ):
+        tool = make_bash_tool(
+            cwd=Path("/tmp"),
+            request_approval=Mock(side_effect=RuntimeError("screen missing")),
+        )
+        output = asyncio.run(tool("touch notes.txt"))
+    mock_copy.assert_called_once_with("touch notes.txt")
+    mock_exec.assert_not_called()
+    assert "Failed to prompt for bash approval" in output
+    assert "screen missing" in output
 
 
 def test_bash_tool_function_nonzero_exit():

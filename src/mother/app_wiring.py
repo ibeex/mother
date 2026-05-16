@@ -18,6 +18,7 @@ from mother.settings_controller import SettingsController, SettingsControllerCal
 from mother.shell_controller import ShellCommandController
 from mother.stats import TurnUsage
 from mother.submission_controller import SubmissionControllerCallbacks
+from mother.tools.bash_guard import BashGuardDecision
 from mother.user_commands import ShellCommand
 from mother.widgets import ConversationTurn, PromptTextArea, Response, ThinkingOutput
 
@@ -119,6 +120,12 @@ def build_runtime_coordinator_callbacks(app: MotherAppWiringHost) -> RuntimeCoor
     def disable_agent_mode_unsupported() -> None:
         _ = _call_app_method(app, "_disable_agent_mode_unsupported")
 
+    def show_bash_approval(
+        decision: BashGuardDecision,
+        on_decision: Callable[[bool], None],
+    ) -> None:
+        _ = _call_app_method(app, "_show_bash_approval", decision, on_decision)
+
     return RuntimeCoordinatorCallbacks(
         app_session=app.app_session,
         runtime_presentation=app.runtime_presentation,
@@ -133,6 +140,7 @@ def build_runtime_coordinator_callbacks(app: MotherAppWiringHost) -> RuntimeCoor
         handle_runtime_tool_event=handle_runtime_tool_event,
         apply_turn_usage=apply_turn_usage,
         disable_agent_mode_unsupported=disable_agent_mode_unsupported,
+        show_bash_approval=show_bash_approval,
     )
 
 

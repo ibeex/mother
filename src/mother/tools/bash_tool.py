@@ -24,6 +24,7 @@ def _format_blocked_command(
     *,
     clipboard_copied: bool,
     clipboard_status: str,
+    reason: str | None = None,
 ) -> str:
     lines = [
         f"{decision.label}: bash guard blocked this command. It was not executed.",
@@ -35,8 +36,9 @@ def _format_blocked_command(
         "",
         f"Guard model: {decision.model_name}",
     ]
-    if decision.error is not None:
-        lines.append(f"Reason: {decision.error}")
+    effective_reason = reason if reason is not None else decision.error
+    if effective_reason is not None:
+        lines.append(f"Reason: {effective_reason}")
     lines.append(clipboard_status)
     if clipboard_copied:
         lines.append(
@@ -48,7 +50,10 @@ def _format_blocked_command(
     return "\n".join(lines)
 
 
-def make_bash_tool(cwd: Path | None = None) -> Callable[..., Coroutine[object, object, str]]:
+def make_bash_tool(
+    cwd: Path | None = None,
+    request_approval: Callable[[BashGuardDecision], bool] | None = None,
+) -> Callable[..., Coroutine[object, object, str]]:
     """Factory returning a closure suitable for registration as an llm Tool."""
     effective_cwd = cwd if cwd is not None else Path.cwd()
 
@@ -68,12 +73,37 @@ def make_bash_tool(cwd: Path | None = None) -> Callable[..., Coroutine[object, o
         """
         decision = await classify_command_async(command)
         if not decision.should_run:
-            clipboard_copied, clipboard_status = _copy_command_to_clipboard(command)
-            return _format_blocked_command(
-                decision,
-                clipboard_copied=clipboard_copied,
-                clipboard_status=clipboard_status,
+            approval_reason: str | None = None
+            approval_callback = request_approval
+            should_prompt_for_approval = (
+                decision.error is None
+                and decision.label in {"Warning", "Fatal"}
+                and approval_callback is not None
             )
+            if should_prompt_for_approval and approval_callback is not None:
+                try:
+                    if approval_callback(decision):
+                        decision = BashGuardDecision(
+                            command=decision.command,
+                            label="OK",
+                            raw_output=decision.raw_output,
+                            canonical_label=decision.canonical_label,
+                            error=None,
+                            model_name=decision.model_name,
+                        )
+                    else:
+                        approval_reason = "The user denied approval to run this command in Mother."
+                except Exception as exc:
+                    approval_reason = f"Failed to prompt for bash approval: {exc}"
+
+            if not decision.should_run:
+                clipboard_copied, clipboard_status = _copy_command_to_clipboard(command)
+                return _format_blocked_command(
+                    decision,
+                    clipboard_copied=clipboard_copied,
+                    clipboard_status=clipboard_status,
+                    reason=approval_reason,
+                )
 
         try:
             result = await execute_bash(command, cwd=effective_cwd, timeout=timeout)

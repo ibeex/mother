@@ -1,0 +1,44 @@
+BashApprovalScreen {
+    align: center middle;
+}
+
+#bash-approval-modal {
+    width: 88;
+    max-width: 100%;
+    max-height: 90%;
+    background: $surface;
+    border: round $warning;
+    padding: 1 2;
+}
+
+#bash-approval-dialog {
+    width: 100%;
+    height: auto;
+}
+
+#bash-approval-title {
+    text-style: bold;
+    color: $warning;
+    margin-bottom: 1;
+}
+
+.bash-approval-label {
+    text-style: bold;
+}
+
+#bash-approval-command {
+    background: $panel;
+    border: round $warning;
+    padding: 1;
+    margin: 1 0;
+}
+
+#bash-approval-model,
+#bash-approval-reason {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+#bash-approval-help {
+    margin-top: 2;
+}

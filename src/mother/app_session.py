@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from mother.session import SessionManager
 from mother.stats import SessionUsage, TurnUsage
 from mother.system_prompt import build_system_prompt
 from mother.tools import get_default_tools
+from mother.tools.bash_guard import BashGuardDecision
 
 
 class CouncilModelResolutionError(ValueError):
@@ -244,13 +246,25 @@ class AppSession:
             model_name=self.config.model,
         )
 
-    def enabled_tools(self) -> list[Tool[None]]:
+    def enabled_tools(
+        self,
+        *,
+        request_bash_approval: Callable[[BashGuardDecision], bool] | None = None,
+    ) -> list[Tool[None]]:
         """Return the active tool definitions, if any are enabled and available."""
-        tool_registry = get_default_tools(
-            tools_enabled=self.agent_mode,
-            ca_bundle_path=self.config.ca_bundle_path,
-            agent_profile=self.agent_profile,
-        )
+        if request_bash_approval is None:
+            tool_registry = get_default_tools(
+                tools_enabled=self.agent_mode,
+                ca_bundle_path=self.config.ca_bundle_path,
+                agent_profile=self.agent_profile,
+            )
+        else:
+            tool_registry = get_default_tools(
+                tools_enabled=self.agent_mode,
+                ca_bundle_path=self.config.ca_bundle_path,
+                agent_profile=self.agent_profile,
+                request_bash_approval=request_bash_approval,
+            )
         if tool_registry.is_empty():
             return []
         return tool_registry.tools()

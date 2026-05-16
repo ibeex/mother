@@ -8,6 +8,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
+from queue import Queue
 from typing import TypeVar, cast
 
 from pydantic_ai import Tool
@@ -24,6 +25,7 @@ from mother.runtime import (
 )
 from mother.runtime_presentation import RuntimePresentationController
 from mother.stats import TurnUsage
+from mother.tools.bash_guard import BashGuardDecision
 from mother.widgets import Response, ThinkingOutput
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,7 @@ class RuntimeCoordinatorCallbacks:
     handle_runtime_tool_event: Callable[[RuntimeToolEvent], None]
     apply_turn_usage: Callable[[TurnUsage], None]
     disable_agent_mode_unsupported: Callable[[], None]
+    show_bash_approval: Callable[[BashGuardDecision, Callable[[bool], None]], None]
 
 
 @dataclass(slots=True)
@@ -470,7 +473,21 @@ class RuntimeCoordinator:
         )
 
         prompt_text = session.expand_prompt_fetch_directives(prompt, user_text)
-        tools = session.enabled_tools()
+
+        def request_bash_approval(decision: BashGuardDecision) -> bool:
+            approval_queue: Queue[bool] = Queue(maxsize=1)
+
+            def on_decision(approved: bool) -> None:
+                approval_queue.put(approved)
+
+            _ = self.callbacks.call_from_thread(
+                self.callbacks.show_bash_approval,
+                decision,
+                on_decision,
+            )
+            return approval_queue.get()
+
+        tools = session.enabled_tools(request_bash_approval=request_bash_approval)
         tool_names = session.tool_names(tools)
         system = session.build_system_prompt(tools)
         attachment_paths = [str(path) for path in resolved_attachments]
