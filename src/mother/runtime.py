@@ -30,7 +30,7 @@ from pydantic_ai.messages import (
     UserContent,
 )
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.usage import RunUsage, UsageLimits
 
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry, create_pydantic_model
@@ -479,11 +479,12 @@ class ChatRuntime:
             on_text_update=on_text_update,
             on_thinking_update=on_thinking_update,
         )
+        run_usage = cast(RunUsage | None, final_result.result.usage())  # pyright: ignore[reportAny]
         return RuntimeResponse(
             text=final_text,
             all_messages=list(final_result.result.all_messages()),
             usage=TurnUsage.from_run_usage(
-                final_result.result.usage(),
+                run_usage,
                 provider=self.model_entry.api_type,
                 model_id=self.model_entry.id,
                 image_count=len(attachments),
