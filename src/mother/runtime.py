@@ -479,7 +479,7 @@ class ChatRuntime:
             on_text_update=on_text_update,
             on_thinking_update=on_thinking_update,
         )
-        run_usage = cast(RunUsage | None, final_result.result.usage())  # pyright: ignore[reportAny]
+        run_usage = cast(RunUsage | None, final_result.result.usage)
         return RuntimeResponse(
             text=final_text,
             all_messages=list(final_result.result.all_messages()),

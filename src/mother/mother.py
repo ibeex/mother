@@ -60,6 +60,7 @@ from mother.submission_controller import SubmissionController
 from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.tools.bash_guard import BashGuardDecision
+from mother.update_check import UpdateCheckResult, check_for_updates
 from mother.widgets import (
     ConversationTurn,
     CopyableOutput,
@@ -244,6 +245,40 @@ class MotherApp(App[None]):
         _ = self.set_interval(0.12, self._tick_response_waiting_animations)
         self._update_subtitle()
         self._update_statusline()
+        _ = self._check_for_updates()
+
+    @work(thread=True)
+    def _check_for_updates(self) -> None:
+        """Check GitHub releases without slowing down TUI startup."""
+        result = check_for_updates()
+        if result is None:
+            return
+        self.call_from_thread(self._show_update_check_result, result)
+
+    def _show_update_check_result(self, result: UpdateCheckResult) -> None:
+        """Display update/changelog notices from the background update check."""
+        if result.changelog_markdown:
+            self._show_startup_notice(
+                "Mother updated",
+                f"Updated to {result.current_version}.\n\n{result.changelog_markdown}",
+            )
+        if result.update_available and result.latest is not None:
+            self.notify(
+                f"Run `{result.upgrade_command}` to upgrade.",
+                title=f"Mother {result.latest.version} is available",
+                timeout=12,
+            )
+
+    def _show_startup_notice(self, title: str, body: str) -> None:
+        """Append a startup notice to the chat pane."""
+        try:
+            chat_view = self.query_one("#chat-view")
+        except (NoMatches, ScreenStackError):
+            self.notify(body, title=title, timeout=12)
+            return
+        text = f"# {title}\n\n{body}"
+        _ = chat_view.mount(ConversationTurn(response_text=text))
+        self._scroll_chat_to_end(force=True)
 
     def on_key(self, event: events.Key) -> None:
         """Handle global Escape interruption even when focus isn't in the prompt."""
