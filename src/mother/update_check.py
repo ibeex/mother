@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import html
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
@@ -16,6 +19,7 @@ from mother.config import CONFIG_DIR
 
 GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/ibeex/mother/releases/latest"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/ibeex/mother/releases?per_page=20"
+GITHUB_RELEASES_ATOM_URL = "https://github.com/ibeex/mother/releases.atom"
 STATE_FILE = CONFIG_DIR / "state.json"
 PACKAGE_NAME = "mother"
 
@@ -79,21 +83,25 @@ def check_for_updates() -> UpdateCheckResult | None:
 
 
 def _fetch_latest_release() -> ReleaseInfo:
-    data = _get_json(GITHUB_LATEST_RELEASE_URL)
-    if not isinstance(data, dict):
-        raise ValueError("GitHub latest release response was not an object")
-    return _release_from_json(cast(dict[str, object], data))
+    try:
+        data = _get_json(GITHUB_LATEST_RELEASE_URL)
+        if not isinstance(data, dict):
+            raise ValueError("GitHub latest release response was not an object")
+        return _release_from_json(cast(dict[str, object], data))
+    except urllib.error.HTTPError as exc:
+        releases = _fetch_atom_releases()
+        if not releases:
+            raise ValueError("GitHub releases Atom feed was empty") from exc
+        return releases[0]
 
 
 def _fetch_upgrade_changelog(previous: str, current: str) -> str | None:
-    data = _get_json(GITHUB_RELEASES_URL)
-    if not isinstance(data, list):
-        return None
+    try:
+        releases = _fetch_api_releases()
+    except urllib.error.HTTPError:
+        releases = _fetch_atom_releases()
     sections: list[str] = []
-    for raw_item in cast(list[object], data):
-        if not isinstance(raw_item, dict):
-            continue
-        release = _release_from_json(cast(dict[str, object], raw_item))
+    for release in releases:
         if (
             _compare_versions(release.version, previous) > 0
             and _compare_versions(release.version, current) <= 0
@@ -103,18 +111,53 @@ def _fetch_upgrade_changelog(previous: str, current: str) -> str | None:
     return "\n\n".join(sections) if sections else None
 
 
+def _fetch_api_releases() -> list[ReleaseInfo]:
+    data = _get_json(GITHUB_RELEASES_URL)
+    if not isinstance(data, list):
+        return []
+    releases: list[ReleaseInfo] = []
+    for raw_item in cast(list[object], data):
+        if isinstance(raw_item, dict):
+            releases.append(_release_from_json(cast(dict[str, object], raw_item)))
+    return releases
+
+
+def _fetch_atom_releases() -> list[ReleaseInfo]:
+    root = ET.fromstring(_get_text(GITHUB_RELEASES_ATOM_URL))
+    namespace = {"atom": "http://www.w3.org/2005/Atom"}
+    releases: list[ReleaseInfo] = []
+    for entry in root.findall("atom:entry", namespace):
+        entry_id = entry.findtext("atom:id", default="", namespaces=namespace)
+        raw_version = entry_id.rsplit("/", maxsplit=1)[-1]
+        if not raw_version:
+            continue
+        title = entry.findtext("atom:title", default=raw_version, namespaces=namespace)
+        content = entry.findtext("atom:content", default="", namespaces=namespace)
+        link = entry.find("atom:link[@rel='alternate']", namespace)
+        url = link.get("href", "") if link is not None else ""
+        releases.append(
+            ReleaseInfo(
+                version=raw_version.removeprefix("v"),
+                title=title,
+                url=url,
+                body=_html_to_text(content),
+            )
+        )
+    return releases
+
+
 def _get_json(url: str) -> object:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "mother-update-check",
-        },
-    )
+    return cast(object, json.loads(_get_text(url, accept="application/vnd.github+json")))
+
+
+def _get_text(url: str, *, accept: str | None = None) -> str:
+    headers = {"User-Agent": "mother-update-check"}
+    if accept is not None:
+        headers["Accept"] = accept
+    request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=5) as response:  # pyright: ignore[reportAny]
         payload = response.read()  # pyright: ignore[reportAny]
-    text = cast(bytes, payload).decode("utf-8")
-    return cast(object, json.loads(text))
+    return cast(bytes, payload).decode("utf-8")
 
 
 def _release_from_json(data: dict[str, object]) -> ReleaseInfo:
@@ -131,6 +174,15 @@ def _release_from_json(data: dict[str, object]) -> ReleaseInfo:
         url=url if isinstance(url, str) else "",
         body=body if isinstance(body, str) else "",
     )
+
+
+def _html_to_text(value: str) -> str:
+    text = re.sub(r"</(?:p|div|li|h[1-6])>", "\n", value)
+    text = re.sub(r"<li>", "- ", text)
+    text = re.sub(r"<br\s*/?>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    lines = [line.strip() for line in html.unescape(text).splitlines()]
+    return "\n".join(line for line in lines if line)
 
 
 def _read_state() -> dict[str, object]:

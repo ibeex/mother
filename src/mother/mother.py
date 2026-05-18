@@ -633,10 +633,13 @@ class MotherApp(App[None]):
         _ = text_area.focus()
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
-        """Re-enable input when the active worker finishes."""
+        """Re-enable input when an interactive prompt/shell worker finishes."""
         if event.state not in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             return
-        self._finish_worker(cast(Worker[None], event.worker))
+        worker = cast(Worker[None], event.worker)
+        if worker.name == "_check_for_updates":
+            return
+        self._finish_worker(worker)
 
     def _should_follow_chat_updates(self) -> bool:
         """Return whether the next chat update should keep following new output."""
