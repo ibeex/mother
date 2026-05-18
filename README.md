@@ -138,6 +138,35 @@ Example `~/.config/mother/keys.json`:
 
 Then reference it from `config.toml` with `api_key = "OPENAI_KEY"`.
 
+#### OpenRouter free router
+
+If you want to use OpenRouter's free routed endpoint, configure it as an OpenAI-compatible
+chat model, for example:
+
+```toml
+ca_bundle_path = "/etc/ssl/certs/ib_cert.pem" # optional, useful on SSL-inspecting networks
+
+[[models]]
+id = "openrouter"
+name = "openrouter/free"
+api_type = "openai-chat"
+base_url = "https://openrouter.ai/api/v1"
+api_key = "OPEN_ROUTER_KEY"
+supports_tools = true
+supports_reasoning = true
+supports_images = true
+response_model_name = true
+```
+
+Notes:
+
+- `response_model_name = true` is a per-model option that tells Mother to show the
+  provider-returned concrete model name in the subtitle/status line when available.
+  This is useful with routed endpoints like `openrouter/free`.
+- if your network uses SSL inspection or a custom root CA, set `ca_bundle_path` so
+  Mother can use that CA bundle for model API connections as well as web tools.
+- the actual free model selected by OpenRouter can vary from response to response.
+
 Example files are included in this repository under:
 
 - `examples/config.toml.example`

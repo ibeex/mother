@@ -49,7 +49,7 @@ model = ""
 # Enable agent mode (allows LLM to run shell commands via the bash tool)
 # tools_enabled = false
 
-# Optional CA bundle path for web_search and web_fetch.
+# Optional CA bundle path for model providers, web_search, and web_fetch.
 # Leave empty to use only Python/system certificates.
 # Set this when your network uses SSL inspection with a custom root CA.
 # ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"
@@ -89,6 +89,7 @@ model = ""
 # supports_tools = true
 # supports_reasoning = true
 # supports_images = true
+# response_model_name = false
 """
 
 

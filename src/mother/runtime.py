@@ -131,8 +131,9 @@ class RuntimePartialRunError(Exception):
 class ChatRuntime:
     """Thin adapter around pydantic-ai streaming APIs."""
 
-    def __init__(self, model_entry: ModelEntry) -> None:
+    def __init__(self, model_entry: ModelEntry, *, ca_bundle_path: str = "") -> None:
         self.model_entry: ModelEntry = model_entry
+        self.ca_bundle_path: str = ca_bundle_path
 
     @staticmethod
     def _guess_media_type(path: Path) -> str:
@@ -492,6 +493,7 @@ class ChatRuntime:
                 tool_calls_started=tool_state.started,
                 tool_calls_finished=tool_state.finished,
                 tool_call_errors=tool_state.errors,
+                response_model_name=final_response.model_name,
             ),
             agent_mode_used=agent_mode_used,
         )
@@ -647,7 +649,7 @@ class ChatRuntime:
         ]
         user_prompt = self._build_user_prompt(prompt_text, attachments)
         agent = Agent(
-            create_pydantic_model(self.model_entry),
+            create_pydantic_model(self.model_entry, self.ca_bundle_path),
             tools=wrapped_tools,
             instructions=system_prompt,
         )

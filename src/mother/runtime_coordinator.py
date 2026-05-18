@@ -261,7 +261,7 @@ class RuntimeCoordinator:
         """Run one chat runtime request and coordinate streamed UI/state updates."""
         session = self.callbacks.app_session
         model_entry = session.current_model_entry
-        runtime = ChatRuntime(model_entry)
+        runtime = ChatRuntime(model_entry, ca_bundle_path=session.config.ca_bundle_path)
         stream_state = _RuntimeStreamState(response, thinking_output)
 
         try:
@@ -387,6 +387,7 @@ class RuntimeCoordinator:
             base_system_prompt=config.system_prompt,
             reasoning_effort=config.reasoning_effort,
             openai_reasoning_summary=config.openai_reasoning_summary,
+            ca_bundle_path=config.ca_bundle_path,
             cwd=Path.cwd(),
             on_progress=on_progress,
         )

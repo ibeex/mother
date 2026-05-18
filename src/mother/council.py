@@ -341,6 +341,7 @@ class CouncilRunner:
     base_system_prompt: str
     reasoning_effort: str
     openai_reasoning_summary: str
+    ca_bundle_path: str
     cwd: Path
     on_progress: Callable[[CouncilProgressUpdate], None] | None
 
@@ -352,6 +353,7 @@ class CouncilRunner:
         base_system_prompt: str,
         reasoning_effort: str,
         openai_reasoning_summary: str,
+        ca_bundle_path: str = "",
         cwd: Path | None = None,
         on_progress: Callable[[CouncilProgressUpdate], None] | None = None,
     ) -> None:
@@ -360,6 +362,7 @@ class CouncilRunner:
         self.base_system_prompt = base_system_prompt
         self.reasoning_effort = reasoning_effort
         self.openai_reasoning_summary = openai_reasoning_summary
+        self.ca_bundle_path = ca_bundle_path
         self.cwd = cwd or Path.cwd()
         self.on_progress = on_progress
 
@@ -535,7 +538,7 @@ class CouncilRunner:
         prompt_text: str,
         system_prompt: str,
     ) -> _CouncilModelReply | None:
-        runtime = ChatRuntime(model)
+        runtime = ChatRuntime(model, ca_bundle_path=self.ca_bundle_path)
         try:
             response = await runtime.run_stream(
                 prompt_text=prompt_text,

@@ -46,7 +46,7 @@ def build_status_line_state(
 ) -> StatusLineState:
     """Collect the visible status-line state for the current app session."""
     return StatusLineState(
-        model_name=session.config.model,
+        model_name=session.display_model_name(),
         agent_mode=session.agent_mode,
         context_tokens=session.last_context_tokens,
         auto_scroll_enabled=auto_scroll_enabled,

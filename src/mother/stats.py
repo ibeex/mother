@@ -29,6 +29,7 @@ class TurnUsage:
     duration_seconds: float | None = None
     provider: str = ""
     model_id: str = ""
+    response_model_name: str | None = None
 
     def to_event_details(self) -> dict[str, object]:
         return asdict(self)
@@ -45,6 +46,7 @@ class TurnUsage:
         tool_calls_started: int,
         tool_calls_finished: int,
         tool_call_errors: int,
+        response_model_name: str | None = None,
     ) -> TurnUsage:
         if usage is None or not usage.has_values():
             return cls(
@@ -55,6 +57,7 @@ class TurnUsage:
                 duration_seconds=duration_seconds,
                 provider=provider,
                 model_id=model_id,
+                response_model_name=response_model_name,
             )
 
         total_tokens = usage.total_tokens
@@ -71,6 +74,7 @@ class TurnUsage:
             duration_seconds=duration_seconds,
             provider=provider,
             model_id=model_id,
+            response_model_name=response_model_name,
         )
 
 

@@ -427,7 +427,7 @@ class MotherApp(App[None]):
     def _update_subtitle(self) -> None:
         """Update subtitle to show model and the active runtime mode."""
         sub_title = subtitle_text(
-            model_name=self.config.model,
+            model_name=self.app_session.display_model_name(),
             agent_mode=self.agent_mode,
             agent_profile=self.agent_profile,
         )

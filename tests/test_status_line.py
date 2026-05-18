@@ -2,6 +2,7 @@
 
 from mother import MotherApp, MotherConfig
 from mother.models import ModelEntry
+from mother.stats import TurnUsage
 from mother.widgets import StatusLine
 
 
@@ -46,6 +47,50 @@ def test_subtitle_shows_research_indicator() -> None:
     app.config = MotherConfig(model="test-model")
     app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
     assert "[RESEARCH]" in app.sub_title
+
+
+def test_subtitle_uses_response_model_name_when_enabled() -> None:
+    app = MotherApp(
+        config=MotherConfig(
+            model="openrouter",
+            models=[
+                ModelEntry(
+                    id="openrouter",
+                    name="openrouter/free",
+                    api_type="openai-chat",
+                    response_model_name=True,
+                )
+            ],
+        )
+    )
+    app.app_session.current_model_entry = app.config.models[0]
+    app.app_session.apply_turn_usage(
+        TurnUsage(model_id="openrouter", response_model_name="openrouter/actual-free-model")
+    )
+    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
+    assert app.sub_title == "openrouter/actual-free-model"
+
+
+def test_statusline_uses_response_model_name_when_enabled() -> None:
+    app = MotherApp(
+        config=MotherConfig(
+            model="openrouter",
+            models=[
+                ModelEntry(
+                    id="openrouter",
+                    name="openrouter/free",
+                    api_type="openai-chat",
+                    response_model_name=True,
+                )
+            ],
+        )
+    )
+    app.app_session.current_model_entry = app.config.models[0]
+    app.app_session.apply_turn_usage(
+        TurnUsage(model_id="openrouter", response_model_name="openrouter/actual-free-model")
+    )
+    state = app._status_line_state()  # pyright: ignore[reportPrivateUsage]
+    assert state.model_name == "openrouter/actual-free-model"
 
 
 def test_config_tools_enabled_sets_initial_mode() -> None:

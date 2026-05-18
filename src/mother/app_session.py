@@ -62,6 +62,7 @@ class AppSession:
         self.session_output_tokens: int | None = None
         self.session_cached_tokens: int | None = None
         self.last_response_time_seconds: float | None = None
+        self.last_response_model_name: str | None = None
 
     @property
     def has_history(self) -> bool:
@@ -77,6 +78,7 @@ class AppSession:
         )
         self.last_context_tokens = None
         self.last_response_time_seconds = None
+        self.last_response_model_name = None
 
     def runtime_mode(self) -> RuntimeMode:
         """Return the effective runtime mode for prompts and tool limits."""
@@ -111,6 +113,12 @@ class AppSession:
             return f"{label}/thinking"
         return label
 
+    def display_model_name(self) -> str:
+        """Return the configured or provider-returned model name for UI display."""
+        if self.current_model_entry.response_model_name and self.last_response_model_name:
+            return self.last_response_model_name
+        return self.config.model
+
     def apply_turn_usage(self, usage: TurnUsage) -> None:
         """Accumulate normalized turn statistics for status rendering."""
         self.last_turn_usage = usage
@@ -120,6 +128,7 @@ class AppSession:
         self.session_input_tokens = self.session_usage.request_tokens
         self.session_output_tokens = self.session_usage.response_tokens
         self.session_cached_tokens = self.session_usage.cache_read_tokens
+        self.last_response_model_name = usage.response_model_name
 
     def drain_pending_context_text(self) -> str:
         """Return queued shell context and clear the pending list."""

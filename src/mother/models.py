@@ -10,6 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import Literal, cast
 
+import httpx
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -30,6 +31,7 @@ class ModelEntry:
     supports_tools: bool = False
     supports_reasoning: bool = False
     supports_images: bool = False
+    response_model_name: bool = False
 
 
 _DEFAULT_MODEL_ENTRIES: tuple[ModelEntry, ...] = ()
@@ -113,6 +115,7 @@ def load_model_entries(toml_data: dict[str, object]) -> list[ModelEntry]:
                 supports_tools=_optional_bool(raw_entry, "supports_tools"),
                 supports_reasoning=_optional_bool(raw_entry, "supports_reasoning"),
                 supports_images=_optional_bool(raw_entry, "supports_images"),
+                response_model_name=_optional_bool(raw_entry, "response_model_name"),
             )
         )
     return entries
@@ -149,19 +152,26 @@ def resolve_api_key(entry: ModelEntry) -> str:
 
 
 @cache
-def create_pydantic_model(entry: ModelEntry) -> PydanticModel:
+def create_pydantic_model(entry: ModelEntry, ca_bundle_path: str = "") -> PydanticModel:
     """Create and cache a pydantic-ai model instance for a registry entry."""
     api_key = resolve_api_key(entry) or None
     base_url = entry.base_url or None
+    http_client: httpx.AsyncClient | None = None
+
+    normalized_ca_bundle_path = ca_bundle_path.strip()
+    if normalized_ca_bundle_path:
+        from mother.tools.web_common import build_ssl_context
+
+        http_client = httpx.AsyncClient(verify=build_ssl_context(normalized_ca_bundle_path))
 
     if entry.api_type == "openai-responses":
-        provider = OpenAIProvider(base_url=base_url, api_key=api_key)
+        provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)
         return OpenAIResponsesModel(entry.name, provider=provider)
     if entry.api_type == "openai-chat":
-        provider = OpenAIProvider(base_url=base_url, api_key=api_key)
+        provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)
         return OpenAIChatModel(entry.name, provider=provider)
 
-    provider = AnthropicProvider(base_url=base_url, api_key=api_key)
+    provider = AnthropicProvider(base_url=base_url, api_key=api_key, http_client=http_client)
     return AnthropicModel(entry.name, provider=provider)
 
 
