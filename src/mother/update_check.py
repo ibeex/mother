@@ -67,9 +67,17 @@ def check_for_updates() -> UpdateCheckResult | None:
         latest = _fetch_latest_release()
         state = _read_state()
         previous = cast(str | None, state.get("last_seen_version"))
+        notified = cast(str | None, state.get("latest_notified_version"))
+        last_changelog = cast(str | None, state.get("last_changelog_version"))
+        upgraded_from_seen = previous is not None and _compare_versions(current, previous) > 0
+        upgraded_from_notified = notified is not None and _compare_versions(current, notified) >= 0
         changelog = None
-        if previous and _compare_versions(current, previous) > 0:
+        if last_changelog != current and (upgraded_from_seen or upgraded_from_notified):
             changelog = _fetch_upgrade_changelog(previous, current)
+            if changelog:
+                state["last_changelog_version"] = current
+        if _compare_versions(latest.version, current) > 0:
+            state["latest_notified_version"] = latest.version
         state["last_seen_version"] = current
         _write_state(state)
         return UpdateCheckResult(
@@ -95,17 +103,15 @@ def _fetch_latest_release() -> ReleaseInfo:
         return releases[0]
 
 
-def _fetch_upgrade_changelog(previous: str, current: str) -> str | None:
+def _fetch_upgrade_changelog(previous: str | None, current: str) -> str | None:
     try:
         releases = _fetch_api_releases()
     except urllib.error.HTTPError:
         releases = _fetch_atom_releases()
     sections: list[str] = []
     for release in releases:
-        if (
-            _compare_versions(release.version, previous) > 0
-            and _compare_versions(release.version, current) <= 0
-        ):
+        after_previous = previous is None or _compare_versions(release.version, previous) > 0
+        if after_previous and _compare_versions(release.version, current) <= 0:
             body = release.body.strip() or "No release notes provided."
             sections.append(f"## {release.title}\n\n{body}")
     return "\n\n".join(sections) if sections else None
