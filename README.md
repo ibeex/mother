@@ -249,13 +249,15 @@ Notes:
 
 ## Sessions
 
-Each app launch starts a new transient JSONL session under `~/.mother/sessions`.
+Each app launch starts a new JSONL session under a Pi-style per-working-directory folder in `~/.mother/sessions`, for example `~/.mother/sessions/--Users-you-project--/`.
 
 - `/save` or `Ctrl+S` exports the current session to markdown
-- `mother --save` recovers the last unsaved session and exits
+- `mother --save` recovers the last unsaved session for the current working directory and exits
+- `mother --cleanup-sessions 30d` deletes inactive JSONL session logs older than 30 days; hours are supported too, for example `12h`
 - after each markdown export, Mother tries `uv run rumdl fmt --disable MD013 <file>` for cleaner formatting
 - if `uv` is not installed, the session is still saved and Mother shows a tip about installing `uv` for better formatting
-- if you quit without saving, the next launch silently deletes that last unsaved JSONL file
+- session JSONL files are retained until explicitly cleaned up
+- legacy root-level session logs are migrated into per-directory folders when their `cwd` is known; logs without a known `cwd` are removed
 - markdown exports include a session summary, prompt context, system prompts, tool calls, tool outputs, and key session events
 
 Markdown exports default to `~/Debian/Documents/mother` when that directory exists,

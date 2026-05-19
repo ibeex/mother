@@ -51,7 +51,7 @@ from mother.runtime import RuntimeToolEvent
 from mother.runtime_coordinator import RuntimeCoordinator
 from mother.runtime_presentation import RuntimePresentationController, RuntimePresentationHost
 from mother.runtime_tool_events import handle_runtime_tool_event
-from mother.session import SessionManager, format_markdown_export
+from mother.session import SessionManager, format_markdown_export, parse_session_cleanup_age
 from mother.session_save import save_session_markdown
 from mother.settings_controller import SettingsController
 from mother.shell_controller import ShellCommandController, ShellControllerHost
@@ -787,6 +787,14 @@ class MotherApp(App[None]):
 @click.option("--system", "-s", default=None, help="System prompt.")
 @click.option("--save", "save_last", is_flag=True, help="Save the last unsaved session and exit.")
 @click.option(
+    "--cleanup-sessions",
+    "--session-cleanup",
+    "session_cleanup_age",
+    metavar="AGE",
+    default=None,
+    help="Delete inactive session logs older than AGE and exit (examples: 30d, 12h).",
+)
+@click.option(
     "--init-config",
     is_flag=True,
     help="Create ~/.config/mother/config.toml if it does not exist, then exit.",
@@ -800,6 +808,7 @@ def cli(
     model: str | None,
     system: str | None,
     save_last: bool,
+    session_cleanup_age: str | None,
     init_config: bool,
     print_config_path: bool,
 ) -> None:
@@ -812,6 +821,16 @@ def cli(
             click.echo(str(LEGACY_CONFIG_FILE))
             return
         click.echo(str(CONFIG_FILE))
+        return
+
+    if session_cleanup_age is not None:
+        try:
+            max_age = parse_session_cleanup_age(session_cleanup_age)
+        except ValueError as exc:
+            click.echo(str(exc))
+            return
+        deleted = SessionManager.cleanup_old_sessions(max_age)
+        click.echo(f"Deleted {deleted} session log(s).")
         return
 
     if init_config:

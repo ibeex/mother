@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import RLock
 from typing import Literal, NotRequired, TypedDict, cast
@@ -18,6 +18,41 @@ DEFAULT_SESSIONS_DIR = Path.home() / ".mother" / "sessions"
 LAST_SESSION_FILE_NAME = "last"
 
 JsonValue = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
+
+
+def session_dir_name_for_cwd(cwd: Path) -> str:
+    """Return the Pi-style session directory name for a working directory."""
+    resolved = cwd.expanduser().resolve()
+    parts = [part for part in resolved.parts if part not in {resolved.anchor, os.sep, ""}]
+    if not parts:
+        return "--root--"
+    return f"--{'-'.join(parts)}--"
+
+
+def sessions_dir_for_cwd(root: Path, cwd: Path | None = None) -> Path:
+    """Return the per-working-directory session directory below the sessions root."""
+    return root.expanduser() / session_dir_name_for_cwd(cwd or Path.cwd())
+
+
+def parse_session_cleanup_age(value: str) -> timedelta:
+    """Parse a session cleanup age such as '30d' or '12h'."""
+    stripped = value.strip().lower()
+    if len(stripped) < 2:
+        raise ValueError("Use a cleanup age like 30d or 12h.")
+
+    unit = stripped[-1]
+    amount_text = stripped[:-1]
+    if not amount_text.isdecimal():
+        raise ValueError("Use a cleanup age like 30d or 12h.")
+
+    amount = int(amount_text)
+    if amount <= 0:
+        raise ValueError("Cleanup age must be greater than zero.")
+    if unit == "d":
+        return timedelta(days=amount)
+    if unit == "h":
+        return timedelta(hours=amount)
+    raise ValueError("Cleanup age must end with 'd' for days or 'h' for hours.")
 
 
 class SessionHeader(TypedDict, total=False):
@@ -153,7 +188,10 @@ def _read_session_header(path: Path) -> SessionHeader | None:
     if not first_line:
         return None
 
-    loaded = cast(object, json.loads(first_line))
+    try:
+        loaded = cast(object, json.loads(first_line))
+    except json.JSONDecodeError:
+        return None
     if not isinstance(loaded, dict):
         return None
 
@@ -181,6 +219,35 @@ def _read_session_header(path: Path) -> SessionHeader | None:
     if isinstance(pid, int):
         header["pid"] = pid
     return header
+
+
+def _parse_session_created(header: SessionHeader | None) -> datetime | None:
+    created = None if header is None else header.get("created")
+    if not isinstance(created, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(created)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _session_age_time(path: Path, header: SessionHeader | None) -> datetime:
+    created = _parse_session_created(header)
+    if created is not None:
+        return created
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+
+
+def _session_has_live_foreign_process(header: SessionHeader | None) -> bool:
+    session_pid = None if header is None else header.get("pid")
+    return bool(
+        isinstance(session_pid, int)
+        and session_pid != os.getpid()
+        and _process_is_alive(session_pid)
+    )
 
 
 def _render_details(summary: str, body: str) -> list[str]:
@@ -284,10 +351,12 @@ class SessionManager:
         cwd: Path | None = None,
         model_name: str | None = None,
     ) -> SessionManager:
-        """Create a new session and delete the previous unsaved one, if present."""
-        resolved_sessions_dir = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        """Create a new session under the current working directory's session folder."""
+        sessions_root = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        sessions_root.mkdir(parents=True, exist_ok=True)
+        cls.migrate_legacy_sessions(sessions_root)
+        resolved_sessions_dir = sessions_dir_for_cwd(sessions_root, cwd)
         resolved_sessions_dir.mkdir(parents=True, exist_ok=True)
-        cls._delete_last_if_unsaved(resolved_sessions_dir)
 
         created = datetime.now(UTC)
         session_id = uuid4().hex[:8]
@@ -320,9 +389,13 @@ class SessionManager:
         *,
         sessions_dir: Path | None = None,
         markdown_dir: Path | None = None,
+        cwd: Path | None = None,
     ) -> Path | None:
         """Save the last unsaved session to markdown, if one exists."""
-        resolved_sessions_dir = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        sessions_root = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        sessions_root.mkdir(parents=True, exist_ok=True)
+        cls.migrate_legacy_sessions(sessions_root)
+        resolved_sessions_dir = sessions_dir_for_cwd(sessions_root, cwd)
         last_file = resolved_sessions_dir / LAST_SESSION_FILE_NAME
         if not last_file.exists():
             return None
@@ -987,20 +1060,82 @@ class SessionManager:
             self.last_file.unlink(missing_ok=True)
 
     @classmethod
-    def _delete_last_if_unsaved(cls, sessions_dir: Path) -> None:
-        last_file = sessions_dir / LAST_SESSION_FILE_NAME
-        if not last_file.exists():
+    def migrate_legacy_sessions(cls, sessions_root: Path) -> None:
+        """Move legacy root-level session logs into per-directory session folders."""
+        root = sessions_root.expanduser()
+        if not root.exists():
             return
 
-        last_path = Path(last_file.read_text(encoding="utf-8").strip()).expanduser()
-        header = _read_session_header(last_path)
-        session_pid = None if header is None else header.get("pid")
-        if (
-            isinstance(session_pid, int)
-            and session_pid != os.getpid()
-            and _process_is_alive(session_pid)
+        legacy_last = root / LAST_SESSION_FILE_NAME
+        legacy_last_path: Path | None = None
+        if legacy_last.exists():
+            raw_last = legacy_last.read_text(encoding="utf-8").strip()
+            if raw_last:
+                legacy_last_path = Path(raw_last).expanduser()
+
+        moved_last_path: Path | None = None
+        for path in root.glob("*.jsonl"):
+            header = _read_session_header(path)
+            if _session_has_live_foreign_process(header):
+                continue
+
+            cwd = None if header is None else header.get("cwd")
+            if not isinstance(cwd, str) or not cwd:
+                path.unlink(missing_ok=True)
+                continue
+
+            destination_dir = sessions_dir_for_cwd(root, Path(cwd))
+            destination_dir.mkdir(parents=True, exist_ok=True)
+            destination = destination_dir / path.name
+            if destination.exists():
+                destination = destination_dir / f"{path.stem}_{uuid4().hex[:8]}{path.suffix}"
+            _ = shutil.move(str(path), str(destination))
+
+            if legacy_last_path is not None and legacy_last_path == path:
+                moved_last_path = destination
+
+        if legacy_last.exists():
+            legacy_last.unlink(missing_ok=True)
+        if moved_last_path is not None:
+            moved_last_file = moved_last_path.parent / LAST_SESSION_FILE_NAME
+            _ = moved_last_file.write_text(f"{moved_last_path}\n", encoding="utf-8")
+
+    @classmethod
+    def cleanup_old_sessions(
+        cls,
+        max_age: timedelta,
+        *,
+        sessions_dir: Path | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        """Delete inactive session logs older than max_age and return the number deleted."""
+        sessions_root = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        if not sessions_root.exists():
+            return 0
+
+        cls.migrate_legacy_sessions(sessions_root)
+        cutoff = (now or datetime.now(UTC)) - max_age
+        deleted = 0
+        for path in sessions_root.rglob("*.jsonl"):
+            header = _read_session_header(path)
+            if _session_has_live_foreign_process(header):
+                continue
+            if _session_age_time(path, header) >= cutoff:
+                continue
+
+            path.unlink(missing_ok=True)
+            deleted += 1
+            last_file = path.parent / LAST_SESSION_FILE_NAME
+            if last_file.exists() and last_file.read_text(encoding="utf-8").strip() == str(path):
+                last_file.unlink(missing_ok=True)
+
+        for directory in sorted(
+            (path for path in sessions_root.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
         ):
-            return
-
-        last_path.unlink(missing_ok=True)
-        last_file.unlink(missing_ok=True)
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        return deleted

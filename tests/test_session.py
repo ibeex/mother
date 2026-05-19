@@ -1,6 +1,7 @@
 """Tests for session persistence and markdown export."""
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast, final
 from unittest.mock import call, patch
@@ -12,7 +13,13 @@ from mother.council import (
     CouncilPeerReview,
     CouncilResult,
 )
-from mother.session import MarkdownFormatNotice, SessionManager, format_markdown_export
+from mother.session import (
+    MarkdownFormatNotice,
+    SessionManager,
+    format_markdown_export,
+    parse_session_cleanup_age,
+    sessions_dir_for_cwd,
+)
 
 
 @final
@@ -307,7 +314,7 @@ def test_repeated_saves_overwrite_same_markdown_file_for_one_session(tmp_path: P
     assert "second" in second_markdown
 
 
-def test_new_session_deletes_previous_unsaved_jsonl(tmp_path: Path):
+def test_new_session_keeps_previous_session_jsonl(tmp_path: Path):
     sessions_dir = tmp_path / "sessions"
     markdown_dir = tmp_path / "markdown"
 
@@ -317,7 +324,7 @@ def test_new_session_deletes_previous_unsaved_jsonl(tmp_path: Path):
 
     second = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
 
-    assert first.path.exists() is False
+    assert first.path.exists() is True
     assert second.last_file.read_text(encoding="utf-8").strip() == str(second.path)
 
 
@@ -342,6 +349,95 @@ def test_new_session_keeps_previous_live_session_jsonl(tmp_path: Path):
     assert second.last_file.read_text(encoding="utf-8").strip() == str(second.path)
 
 
+def test_sessions_are_stored_per_working_directory(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    markdown_dir = tmp_path / "markdown"
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+
+    first = SessionManager.create(
+        sessions_dir=sessions_dir,
+        markdown_dir=markdown_dir,
+        cwd=project_a,
+    )
+    second = SessionManager.create(
+        sessions_dir=sessions_dir,
+        markdown_dir=markdown_dir,
+        cwd=project_b,
+    )
+
+    assert first.sessions_dir == sessions_dir_for_cwd(sessions_dir, project_a)
+    assert second.sessions_dir == sessions_dir_for_cwd(sessions_dir, project_b)
+    assert first.sessions_dir != second.sessions_dir
+    assert first.last_file.read_text(encoding="utf-8").strip() == str(first.path)
+    assert second.last_file.read_text(encoding="utf-8").strip() == str(second.path)
+
+
+def test_migrate_legacy_sessions_moves_logs_with_cwd_and_deletes_unknown_cwd(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    sessions_dir.mkdir()
+    project = tmp_path / "project"
+    legacy_with_cwd = sessions_dir / "2026-01-01T00-00-00_aaaaaaaa.jsonl"
+    legacy_without_cwd = sessions_dir / "2026-01-02T00-00-00_bbbbbbbb.jsonl"
+    header_with_cwd = {
+        "type": "session",
+        "version": 3,
+        "id": "aaaaaaaa",
+        "created": "2026-01-01T00:00:00+00:00",
+        "cwd": str(project),
+        "pid": 999999,
+    }
+    header_without_cwd = {
+        "type": "session",
+        "version": 1,
+        "id": "bbbbbbbb",
+    }
+    _ = legacy_with_cwd.write_text(json.dumps(header_with_cwd) + "\n", encoding="utf-8")
+    _ = legacy_without_cwd.write_text(json.dumps(header_without_cwd) + "\n", encoding="utf-8")
+    _ = (sessions_dir / "last").write_text(f"{legacy_with_cwd}\n", encoding="utf-8")
+
+    with patch("mother.session._process_is_alive", return_value=False):
+        SessionManager.migrate_legacy_sessions(sessions_dir)
+
+    migrated = sessions_dir_for_cwd(sessions_dir, project) / legacy_with_cwd.name
+    assert migrated.exists() is True
+    assert legacy_with_cwd.exists() is False
+    assert legacy_without_cwd.exists() is False
+    assert (sessions_dir / "last").exists() is False
+    assert (migrated.parent / "last").read_text(encoding="utf-8").strip() == str(migrated)
+
+
+def test_cleanup_old_sessions_deletes_only_inactive_logs_older_than_age(tmp_path: Path):
+    sessions_dir = tmp_path / "sessions"
+    markdown_dir = tmp_path / "markdown"
+    old = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+    old.append("user", "old")
+    recent = SessionManager.create(sessions_dir=sessions_dir, markdown_dir=markdown_dir)
+    recent.append("user", "recent")
+    now = datetime(2026, 5, 19, tzinfo=UTC)
+    old_time = now - timedelta(days=31)
+    recent_time = now - timedelta(days=1)
+    old.header["created"] = old_time.isoformat()
+    recent.header["created"] = recent_time.isoformat()
+    _ = old.path.write_text(json.dumps(old.header) + "\n", encoding="utf-8")
+    _ = recent.path.write_text(json.dumps(recent.header) + "\n", encoding="utf-8")
+
+    deleted = SessionManager.cleanup_old_sessions(
+        timedelta(days=30),
+        sessions_dir=sessions_dir,
+        now=now,
+    )
+
+    assert deleted == 1
+    assert old.path.exists() is False
+    assert recent.path.exists() is True
+
+
+def test_parse_session_cleanup_age() -> None:
+    assert parse_session_cleanup_age("30d") == timedelta(days=30)
+    assert parse_session_cleanup_age("12h") == timedelta(hours=12)
+
+
 def test_save_last_exports_existing_unsaved_session(tmp_path: Path):
     sessions_dir = tmp_path / "sessions"
     markdown_dir = tmp_path / "markdown"
@@ -358,7 +454,7 @@ def test_save_last_exports_existing_unsaved_session(tmp_path: Path):
     assert "recover me" in markdown
     assert "saved" in markdown
     assert manager.path.exists() is False
-    assert (sessions_dir / "last").exists() is False
+    assert manager.last_file.exists() is False
 
 
 def test_save_last_rejects_active_session(tmp_path: Path):
