@@ -6,6 +6,11 @@ tools_enabled = true
 reasoning_effort = "medium"
 openai_reasoning_summary = "auto"
 
+# Prompt keys. Defaults are Ctrl+Enter to submit and Enter for newline.
+# If your terminal cannot send Ctrl+Enter, uncomment the next two lines:
+# submit_key = "enter"
+# newline_key = "shift+enter"
+
 [[models]]
 id = "gpt-5"
 name = "gpt-5"

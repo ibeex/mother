@@ -39,6 +39,7 @@ from mother.config import (
     MotherConfig,
     apply_cli_overrides,
     load_config,
+    normalize_key_binding,
     save_default_config,
 )
 from mother.conversation import ConversationState
@@ -115,7 +116,6 @@ class MotherApp(App[None]):
     DOUBLE_ESCAPE_WINDOW_SECONDS: ClassVar[float] = 0.4
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        ("ctrl+enter", "submit", "Send"),
         Binding("ctrl+o", "toggle_thinking_widget", "Expand", priority=True),
         ("ctrl+g", "toggle_auto_scroll", "Autoscroll"),
         ("end", "scroll_to_bottom", "Bottom"),
@@ -141,6 +141,7 @@ class MotherApp(App[None]):
             resolved_config,
             session_manager=session_manager,
         )
+        self.bind(normalize_key_binding(resolved_config.submit_key), "submit", description="Send")
         self.theme = self.config.theme  # pyright: ignore[reportUnannotatedClassAttribute]
         self.prompt_history: PromptHistory = prompt_history or PromptHistory()
         self.prompt_controller: PromptController = PromptController(
@@ -572,7 +573,7 @@ class MotherApp(App[None]):
         _ = self.prompt_controller.handle_option_selected(event)
 
     async def action_submit(self) -> None:
-        """When the user hits Ctrl+Enter."""
+        """Submit the current prompt."""
         await self.submission_controller.submit_current_prompt()
 
     def _reset_interrupt_escape(self) -> None:

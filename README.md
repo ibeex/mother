@@ -209,6 +209,30 @@ mother
 
 If you skip `--init-config`, Mother will still create a starter config automatically on first launch.
 
+## Prompt keys
+
+By default, the prompt input uses:
+
+- `Enter` to insert a newline
+- `Ctrl+Enter` to submit/send the prompt
+
+Some terminals do not distinguish or transmit `Ctrl+Enter` reliably. You can change both
+prompt keys in `~/.config/mother/config.toml`:
+
+```toml
+# Default behavior:
+submit_key = "ctrl+enter"
+newline_key = "enter"
+
+# Alternative for terminals where Ctrl+Enter does not work:
+# submit_key = "enter"
+# newline_key = "shift+enter"
+```
+
+Key names use Textual-style syntax such as `enter`, `ctrl+enter`, and `shift+enter`.
+The two keys must be different. Whether combinations like `shift+enter` work depends on
+what your terminal sends to terminal applications.
+
 ## Clipboard images
 
 When the prompt input is focused, `Ctrl+V` still behaves like paste, but Mother now

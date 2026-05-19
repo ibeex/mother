@@ -16,6 +16,7 @@ from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStrea
 from textual.widgets.option_list import Option
 
 from mother.clipboard import read_clipboard_text
+from mother.config import DEFAULT_NEWLINE_KEY, DEFAULT_SUBMIT_KEY, normalize_key_binding
 from mother.history import PromptHistoryMatch
 from mother.slash_commands import (
     SlashArgumentChoice,
@@ -212,24 +213,51 @@ class PromptTextArea(TextArea):
         self.move_cursor((0, len(self.text)), record_width=False)
         return True
 
-    async def handle_enter_key(self) -> None:
-        """Select completions, submit built-ins, or insert a newline."""
-        if self.history_search_active:
-            _ = self.post_message(self.HistorySearchAccept(self))
-            return
-        if self.slash_complete_active:
-            _ = self.post_message(self.SlashAccept(self))
-            return
-        if self.slash_argument_complete_active:
-            _ = self.post_message(self.SlashArgumentAccept(self))
-            return
-        if should_submit_on_enter(self.text):
-            app = cast(_PromptSubmitApp, cast(object, self.app))
-            await app.action_submit()
-            return
+    def _configured_key(self, field_name: str, default: str) -> str:
+        app = cast(object, self.app)
+        config = getattr(app, "config", None)
+        value = getattr(config, field_name, default)
+        if not isinstance(value, str):
+            return default
+        return normalize_key_binding(value)
+
+    def _insert_newline(self) -> None:
         start, end = self.selection
         result = self.replace("\n", start, end)
         self.move_cursor(result.end_location)
+
+    async def _handle_completion_or_builtin_submit(self) -> bool:
+        if self.history_search_active:
+            _ = self.post_message(self.HistorySearchAccept(self))
+            return True
+        if self.slash_complete_active:
+            _ = self.post_message(self.SlashAccept(self))
+            return True
+        if self.slash_argument_complete_active:
+            _ = self.post_message(self.SlashArgumentAccept(self))
+            return True
+        if should_submit_on_enter(self.text):
+            app = cast(_PromptSubmitApp, cast(object, self.app))
+            await app.action_submit()
+            return True
+        return False
+
+    async def handle_newline_key(self) -> None:
+        """Select completions, submit built-ins, or insert a newline."""
+        if await self._handle_completion_or_builtin_submit():
+            return
+        self._insert_newline()
+
+    async def handle_submit_key(self) -> None:
+        """Select completions or submit the current prompt."""
+        if await self._handle_completion_or_builtin_submit():
+            return
+        app = cast(_PromptSubmitApp, cast(object, self.app))
+        await app.action_submit()
+
+    async def handle_enter_key(self) -> None:
+        """Backward-compatible Enter behavior used by tests and direct callers."""
+        await self.handle_newline_key()
 
     @override
     def action_paste(self) -> None:
@@ -253,11 +281,17 @@ class PromptTextArea(TextArea):
 
     @override
     async def _on_key(self, event: events.Key) -> None:
-        """Handle Enter/Escape before TextArea inserts characters."""
-        if event.key == "enter":
+        """Handle configured prompt keys and Escape before TextArea inserts characters."""
+        event_key = normalize_key_binding(event.key)
+        if event_key == self._configured_key("submit_key", DEFAULT_SUBMIT_KEY):
             _ = event.stop()
             _ = event.prevent_default()
-            await self.handle_enter_key()
+            await self.handle_submit_key()
+            return
+        if event_key == self._configured_key("newline_key", DEFAULT_NEWLINE_KEY):
+            _ = event.stop()
+            _ = event.prevent_default()
+            await self.handle_newline_key()
             return
         if event.key == "tab":
             if self.history_search_active:

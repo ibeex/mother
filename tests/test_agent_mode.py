@@ -89,6 +89,39 @@ def test_prompt_enter_keeps_multiline_for_normal_text() -> None:
     assert text_area.text == "hello\n"
 
 
+def test_prompt_submit_key_submits_normal_text() -> None:
+    text_area = PromptTextArea("hello")
+    action_submit = AsyncMock()
+    fake_app = SimpleNamespace(action_submit=action_submit)
+
+    with patch.object(PromptTextArea, "app", new_callable=PropertyMock, return_value=fake_app):
+        asyncio.run(text_area.handle_submit_key())
+
+    action_submit.assert_awaited_once_with()
+    assert text_area.text == "hello"
+
+
+def test_configured_enter_can_submit_normal_prompt() -> None:
+    async def run() -> None:
+        app = MotherApp(
+            config=MotherConfig(model="test-model", submit_key="enter", newline_key="shift+enter")
+        )
+
+        async with app.run_test() as pilot:
+            text_area = app.query_one(PromptTextArea)
+            text_area.load_text("hello")
+            await pilot.pause()
+
+            with patch.object(app, "action_submit", new_callable=AsyncMock) as action_submit:
+                await pilot.press("enter")
+                await pilot.pause()
+
+            action_submit.assert_awaited_once_with()
+            assert text_area.text == "hello"
+
+    asyncio.run(run())
+
+
 def test_selected_slash_command_submits_on_second_enter() -> None:
     async def run() -> None:
         app = MotherApp(config=MotherConfig(model="test-model"))

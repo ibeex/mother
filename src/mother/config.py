@@ -21,6 +21,9 @@ CONFIG_DIR = Path.home() / ".config" / "mother"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 LEGACY_CONFIG_FILE = Path.home() / ".mother" / "config.toml"
 
+DEFAULT_SUBMIT_KEY = "ctrl+enter"
+DEFAULT_NEWLINE_KEY = "enter"
+
 _DEFAULT_SYSTEM = DEFAULT_BASE_SYSTEM
 
 _DEFAULT_CONFIG_TEMPLATE = """\
@@ -56,6 +59,15 @@ model = ""
 
 # Directory used by /save, Ctrl+S, and `mother --save` markdown exports.
 # session_markdown_dir = "~/Documents/mother"
+
+# Prompt key bindings.
+# Defaults: Enter inserts a newline; Ctrl+Enter submits the prompt.
+# If your terminal cannot send Ctrl+Enter, you can swap these, for example:
+# submit_key = "enter"
+# newline_key = "shift+enter"
+# Key names use Textual-style syntax such as "enter", "ctrl+enter", or "shift+enter".
+# submit_key = "ctrl+enter"
+# newline_key = "enter"
 
 # Legacy allowlist from the old regex-based bash guard.
 # Retained for backwards compatibility but ignored by the current
@@ -113,6 +125,8 @@ class MotherConfig:
     tools_enabled: bool = False
     ca_bundle_path: str = ""
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
+    submit_key: str = DEFAULT_SUBMIT_KEY
+    newline_key: str = DEFAULT_NEWLINE_KEY
     allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
     models: list[ModelEntry] = field(default_factory=default_model_entries)
     council: CouncilConfig = field(default_factory=CouncilConfig)
@@ -125,6 +139,22 @@ DEFAULT_SYSTEM = MotherConfig().system_prompt
 def save_default_config(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     _ = path.write_text(_DEFAULT_CONFIG_TEMPLATE, encoding="utf-8")
+
+
+def normalize_key_binding(value: str) -> str:
+    """Return a canonical Textual-style key binding string."""
+    return "+".join(part.strip().lower() for part in value.strip().split("+"))
+
+
+def _parse_key_binding(value: object, *, field_name: str, default: str) -> str:
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise ValueError(f"Config field {field_name!r} must be a string.")
+    normalized = normalize_key_binding(value)
+    if not normalized or any(part == "" for part in normalized.split("+")):
+        raise ValueError(f"Config field {field_name!r} must be a non-empty key binding string.")
+    return normalized
 
 
 def _parse_council_members(value: object, *, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -212,6 +242,19 @@ def load_config(path: Path | None = None) -> MotherConfig:
         if raw_openai_reasoning_summary is None
         else parse_openai_reasoning_summary(raw_openai_reasoning_summary)
     )
+    submit_key = _parse_key_binding(
+        data.get("submit_key"),
+        field_name="submit_key",
+        default=DEFAULT_SUBMIT_KEY,
+    )
+    newline_key = _parse_key_binding(
+        data.get("newline_key"),
+        field_name="newline_key",
+        default=DEFAULT_NEWLINE_KEY,
+    )
+    if submit_key == newline_key:
+        raise ValueError("Config fields 'submit_key' and 'newline_key' must be different.")
+
     return MotherConfig(
         model=cast(str, data.get("model", MotherConfig.model)),
         theme=cast(str, data.get("theme", MotherConfig.theme)),
@@ -224,6 +267,8 @@ def load_config(path: Path | None = None) -> MotherConfig:
             str,
             data.get("session_markdown_dir", MotherConfig().session_markdown_dir),
         ),
+        submit_key=submit_key,
+        newline_key=newline_key,
         allowlist=allowlist,
         models=load_model_entries(cast(dict[str, object], data)),
         council=_load_council_config(cast(dict[str, object], data)),
@@ -244,6 +289,8 @@ def apply_cli_overrides(
         tools_enabled=config.tools_enabled,
         ca_bundle_path=config.ca_bundle_path,
         session_markdown_dir=config.session_markdown_dir,
+        submit_key=config.submit_key,
+        newline_key=config.newline_key,
         allowlist=config.allowlist,
         models=list(config.models),
         council=config.council,

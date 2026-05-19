@@ -16,6 +16,8 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.openai_reasoning_summary == "auto"
     assert config.tools_enabled is False
     assert config.ca_bundle_path == ""
+    assert config.submit_key == "ctrl+enter"
+    assert config.newline_key == "enter"
     assert config.council == CouncilConfig()
     assert config_file.exists()
 
@@ -31,6 +33,8 @@ def test_load_config_from_file(tmp_path: Path) -> None:
                 'openai_reasoning_summary = "detailed"',
                 "tools_enabled = true",
                 'ca_bundle_path = "/etc/ssl/certs/ib_cert.pem"',
+                'submit_key = "Enter"',
+                'newline_key = "Shift+Enter"',
                 "",
                 "[[models]]",
                 'id = "openrouter"',
@@ -54,6 +58,8 @@ def test_load_config_from_file(tmp_path: Path) -> None:
     assert config.openai_reasoning_summary == "detailed"
     assert config.tools_enabled is True
     assert config.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
+    assert config.submit_key == "enter"
+    assert config.newline_key == "shift+enter"
     assert len(config.models) == 1
     assert config.models[0].response_model_name is True
     assert config.system_prompt == DEFAULT_SYSTEM
@@ -106,6 +112,8 @@ def test_apply_cli_overrides() -> None:
     assert result.reasoning_effort == "high"
     assert result.openai_reasoning_summary == "detailed"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
+    assert result.submit_key == "ctrl+enter"
+    assert result.newline_key == "enter"
     assert result.council == CouncilConfig(members=("gpt-5",), judge="gpt-5")
 
 
@@ -127,6 +135,19 @@ def test_apply_cli_overrides_none() -> None:
     assert result.openai_reasoning_summary == "concise"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
     assert result.council == CouncilConfig(members=("opus",), judge="opus")
+
+
+def test_load_config_rejects_same_submit_and_newline_keys(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text('submit_key = "enter"\nnewline_key = "Enter"\n')
+
+    try:
+        _ = load_config(config_file)
+    except ValueError as exc:
+        assert "submit_key" in str(exc)
+        assert "newline_key" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate prompt keys to raise ValueError")
 
 
 def test_config_allowlist_from_toml(tmp_path: Path) -> None:
