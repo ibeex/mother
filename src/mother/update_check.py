@@ -112,7 +112,7 @@ def _fetch_upgrade_changelog(previous: str | None, current: str) -> str | None:
     for release in releases:
         after_previous = previous is None or _compare_versions(release.version, previous) > 0
         if after_previous and _compare_versions(release.version, current) <= 0:
-            body = release.body.strip() or "No release notes provided."
+            body = _format_release_body(release.body)
             sections.append(f"## {release.title}\n\n{body}")
     return "\n\n".join(sections) if sections else None
 
@@ -182,13 +182,39 @@ def _release_from_json(data: dict[str, object]) -> ReleaseInfo:
     )
 
 
+def _format_release_body(value: str) -> str:
+    """Normalize release notes so Markdown renders each note on its own line."""
+    text = value.strip()
+    if not text:
+        return "No release notes provided."
+    text = re.sub(r"\s+(Full Changelog:)", r"\n\n\1", text)
+    text = re.sub(
+        r"(?<!-)\s+((?:feat|fix|docs|style|refactor|perf|test|build|ci|chore)(?:\(.+?\))?:)",
+        r"\n\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = re.sub(r"(?<!-)\s+(breaking change\b)", r"\n\1", text, flags=re.IGNORECASE)
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            if lines and lines[-1]:
+                lines.append("")
+            continue
+        if re.match(r"(?:(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore)(?:\(.+\))?:|breaking change\b)", line, re.IGNORECASE):
+            line = f"- {line}"
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
 def _html_to_text(value: str) -> str:
     text = re.sub(r"</(?:p|div|li|h[1-6])>", "\n", value)
     text = re.sub(r"<li>", "- ", text)
     text = re.sub(r"<br\s*/?>", "\n", text)
     text = re.sub(r"<[^>]+>", "", text)
     lines = [line.strip() for line in html.unescape(text).splitlines()]
-    return "\n".join(line for line in lines if line)
+    return _format_release_body("\n".join(line for line in lines if line))
 
 
 def _read_state() -> dict[str, object]:
