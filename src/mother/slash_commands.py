@@ -46,6 +46,7 @@ class SlashArgumentSpec:
 
 
 SLASH_COMMANDS: tuple[SlashCommand, ...] = (
+    SlashCommand("/help", "Ask about Mother using the bundled README", "question"),
     SlashCommand("/save", "Save the current session to markdown"),
     SlashCommand("/quit", "Quit Mother"),
     SlashCommand("/exit", "Quit Mother"),

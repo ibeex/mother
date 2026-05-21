@@ -11,11 +11,13 @@ from textual.containers import VerticalScroll
 
 from mother.agent_modes import AgentProfile, normalize_agent_profile
 from mother.app_session import AppSession
+from mother.help import build_help_prompt
 from mother.history import PromptHistory
 from mother.models import ModelEntry
 from mother.user_commands import (
     AgentModeCommand,
     CouncilCommand,
+    HelpCommand,
     ModelsCommand,
     QuitAppCommand,
     ReasoningCommand,
@@ -195,15 +197,26 @@ class SubmissionController:
 
     async def submit_chat_turn(self, value: str) -> None:
         """Submit a normal chat or agent turn."""
+        attachments = self.prepare_chat_attachments(value)
+        await self.submit_chat_turn_with_prompt(value, value, attachments=attachments)
+
+    async def submit_chat_turn_with_prompt(
+        self,
+        value: str,
+        prompt_value: str,
+        *,
+        attachments: list[Path] | None = None,
+    ) -> None:
+        """Submit a visible chat turn with an explicit model prompt."""
         session = self.callbacks.app_session
         self.callbacks.prompt_history.append(value)
-        attachments = self.prepare_chat_attachments(value)
+        resolved_attachments = attachments or []
         session.record_session_message("user", value)
         chat_view = cast(VerticalScroll, self.callbacks.query_one("#chat-view"))
         should_follow = self.callbacks.should_follow_chat_updates()
         prompt_input = self.callbacks.prompt_input()
         prompt_input.read_only = True
-        prompt = session.flush_pending_context(value)
+        prompt = session.flush_pending_context(prompt_value)
         turn = ConversationTurn(prompt_text=value, include_thinking=True)
         self.callbacks.set_active_turn(turn)
         _ = await chat_view.mount(turn)
@@ -219,7 +232,7 @@ class SubmissionController:
                 value,
                 turn.response_widget,
                 thinking_output,
-                attachments,
+                resolved_attachments,
             )
         )
 
@@ -239,5 +252,8 @@ class SubmissionController:
             return
         if isinstance(parsed, ShellCommand):
             self.submit_shell_command(value, parsed)
+            return
+        if isinstance(parsed, HelpCommand):
+            await self.submit_chat_turn_with_prompt(value, build_help_prompt(parsed.question))
             return
         await self.submit_chat_turn(value)

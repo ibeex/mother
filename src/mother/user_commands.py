@@ -10,6 +10,7 @@ _AGENT_COMMAND = "/agent"
 _MODELS_COMMAND = "/models"
 _REASONING_COMMAND = "/reasoning"
 _COUNCIL_COMMAND = "/council"
+_HELP_COMMAND = "/help"
 
 
 @dataclass
@@ -57,6 +58,12 @@ class CouncilCommand:
     prompt: str | None = None
 
 
+@dataclass
+class HelpCommand:
+    command: str = _HELP_COMMAND
+    question: str | None = None
+
+
 def current_model_query(text: str) -> str | None:
     """Return the active ``/models`` query for inline model completion."""
     query = current_slash_argument_query(text)
@@ -92,7 +99,12 @@ def should_submit_on_enter(text: str) -> bool:
         return parsed.prompt is not None
     return isinstance(
         parsed,
-        SaveSessionCommand | QuitAppCommand | AgentModeCommand | ModelsCommand | ReasoningCommand,
+        SaveSessionCommand
+        | QuitAppCommand
+        | AgentModeCommand
+        | ModelsCommand
+        | ReasoningCommand
+        | HelpCommand,
     )
 
 
@@ -119,6 +131,7 @@ def parse_user_input(
     | ModelsCommand
     | ReasoningCommand
     | CouncilCommand
+    | HelpCommand
     | ShellCommand
 ):
     """Parse user input for built-in slash commands and ! / !! shell commands.
@@ -135,6 +148,8 @@ def parse_user_input(
     - ``/reasoning value``       → ReasoningCommand(effort=...)
     - ``/council``               → CouncilCommand()
     - ``/council question``      → CouncilCommand(prompt=...)
+    - ``/help``                  → HelpCommand()
+    - ``/help question``         → HelpCommand(question=...)
     - ``/council\nquestion``     → CouncilCommand(prompt=...)
     - ``!!command``              → ShellCommand(..., include_in_context=False)
     - ``!command``               → ShellCommand(..., include_in_context=True)
@@ -167,6 +182,10 @@ def parse_user_input(
         if separator.isspace():
             prompt = candidate[len(_COUNCIL_COMMAND) :].strip()
             return CouncilCommand(prompt=prompt or None)
+    if normalized == _HELP_COMMAND:
+        return HelpCommand()
+    if normalized.startswith(f"{_HELP_COMMAND} "):
+        return HelpCommand(question=candidate[len(_HELP_COMMAND) :].strip() or None)
 
     if text.startswith("!!"):
         command = text[2:].strip()

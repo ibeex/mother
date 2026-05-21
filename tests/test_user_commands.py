@@ -6,6 +6,7 @@ from mother.bash_execution import BashExecution, format_for_context, format_for_
 from mother.user_commands import (
     AgentModeCommand,
     CouncilCommand,
+    HelpCommand,
     ModelsCommand,
     NormalPrompt,
     QuitAppCommand,
@@ -136,6 +137,20 @@ def test_detect_council_question_command():
     assert result.prompt == "summarize this thread"
 
 
+def test_detect_help_command():
+    result = parse_user_input("/help")
+    assert isinstance(result, HelpCommand)
+    assert result.command == "/help"
+    assert result.question is None
+
+
+def test_detect_help_question_command():
+    result = parse_user_input(" /help how do models work? ")
+    assert isinstance(result, HelpCommand)
+    assert result.command == "/help"
+    assert result.question == "how do models work?"
+
+
 def test_detect_multiline_council_question_command():
     result = parse_user_input(" /council\nSummarize this thread\nand list next steps ")
     assert isinstance(result, CouncilCommand)
@@ -199,6 +214,11 @@ def test_should_submit_council_on_enter():
     assert should_submit_on_enter("/council ") is False
     assert should_submit_on_enter("/council summarize this") is True
     assert should_submit_on_enter("/council\nsummarize this") is False
+
+
+def test_should_submit_help_on_enter():
+    assert should_submit_on_enter("/help") is True
+    assert should_submit_on_enter("/help models") is True
 
 
 def test_is_council_multiline_input():

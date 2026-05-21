@@ -74,7 +74,7 @@ package = true
 mother = "mother:cli"
 
 [tool.setuptools.package-data]
-mother = ["css/*.tcss", "py.typed"]
+mother = ["css/*.tcss", "py.typed", "README.md"]
 
 
 # ---- Settings ----
