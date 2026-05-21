@@ -37,6 +37,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 ## Features
 
 - terminal-first chat UI
+- README-backed `/help` quick cheatsheet and follow-up help context
 - model switching
 - anonymous multi-model `/council` synthesis across configurable members and a configurable judge
 - optional thinking display from structured model reasoning when the provider exposes it
@@ -247,6 +248,21 @@ works for plain text when no image is present in the clipboard.
 - if no image is present, `Ctrl+V` falls back to normal text paste, including system clipboard text on macOS
 
 Your selected model must support image attachments for multimodal prompts to work.
+
+## Built-in help
+
+Use `/help` for a short README-backed cheatsheet of Mother's main commands and workflows.
+Mother sends the bundled README to the model for that help turn and keeps it in the conversation context, so after plain `/help` you can ask normal follow-up questions without repeating the command.
+
+Use `/help [question]` for a one-off README-grounded answer to a specific question.
+
+Examples:
+
+```text
+/help
+how do I configure web search?
+/help how does council mode work?
+```
 
 ## Inline web fetch expansion
 
