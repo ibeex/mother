@@ -206,6 +206,7 @@ class SubmissionController:
         prompt_value: str,
         *,
         attachments: list[Path] | None = None,
+        context_user_text: str | None = None,
     ) -> None:
         """Submit a visible chat turn with an explicit model prompt."""
         session = self.callbacks.app_session
@@ -233,6 +234,7 @@ class SubmissionController:
                 turn.response_widget,
                 thinking_output,
                 resolved_attachments,
+                context_user_text,
             )
         )
 
@@ -254,6 +256,11 @@ class SubmissionController:
             self.submit_shell_command(value, parsed)
             return
         if isinstance(parsed, HelpCommand):
-            await self.submit_chat_turn_with_prompt(value, build_help_prompt(parsed.question))
+            help_prompt = build_help_prompt(parsed.question)
+            await self.submit_chat_turn_with_prompt(
+                value,
+                help_prompt,
+                context_user_text=help_prompt if parsed.question is None else None,
+            )
             return
         await self.submit_chat_turn(value)

@@ -260,6 +260,7 @@ def build_submission_controller_callbacks(
         response: Response,
         thinking_output: ThinkingOutput | None = None,
         attachments: list[Path] | None = None,
+        context_user_text: str | None = None,
     ) -> object:
         return _call_app_method(
             app,
@@ -269,6 +270,7 @@ def build_submission_controller_callbacks(
             response,
             thinking_output,
             attachments,
+            context_user_text,
         )
 
     def send_council(

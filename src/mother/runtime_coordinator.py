@@ -463,6 +463,7 @@ class RuntimeCoordinator:
         response: Response,
         thinking_output: ThinkingOutput | None = None,
         attachments: list[Path] | None = None,
+        context_user_text: str | None = None,
     ) -> None:
         """Run a chat/agent turn inside the worker thread and persist the result."""
         session = self.callbacks.app_session
@@ -512,7 +513,7 @@ class RuntimeCoordinator:
         )
 
         if full_text is not None:
-            session.conversation_state.append_transcript_turn(user_text, full_text)
+            session.conversation_state.append_transcript_turn(context_user_text or user_text, full_text)
             session.record_session_message("assistant", full_text)
 
     def send_council(

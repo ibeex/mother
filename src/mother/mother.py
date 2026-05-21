@@ -747,6 +747,7 @@ class MotherApp(App[None]):
         response: Response,
         thinking_output: ThinkingOutput | None = None,
         attachments: list[Path] | None = None,
+        context_user_text: str | None = None,
     ) -> None:
         """Get the response in a worker thread while preserving runtime/session state."""
         self.runtime_coordinator.send_prompt(
@@ -755,6 +756,7 @@ class MotherApp(App[None]):
             response,
             thinking_output,
             attachments,
+            context_user_text,
         )
 
     @work(thread=True)
