@@ -15,6 +15,7 @@ from pydantic_ai import Tool
 
 from mother.app_session import AppSession
 from mother.council import CouncilProgressUpdate, CouncilResult, CouncilRunner
+from mother.help import build_help_prompt
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
 from mother.runtime import (
@@ -475,6 +476,12 @@ class RuntimeCoordinator:
         )
 
         prompt_text = session.expand_prompt_fetch_directives(prompt, user_text)
+        normalized_user_text = user_text.strip()
+        if prompt_text == user_text and normalized_user_text.lower().startswith("/help"):
+            question = normalized_user_text[len("/help") :].strip() or None
+            prompt_text = build_help_prompt(question)
+            if question is None and context_user_text is None:
+                context_user_text = prompt_text
 
         def request_bash_approval(decision: BashGuardDecision) -> bool:
             approval_queue: Queue[bool] = Queue(maxsize=1)

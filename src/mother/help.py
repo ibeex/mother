@@ -25,8 +25,10 @@ def build_help_prompt(question: str | None = None) -> str:
     readme = read_bundled_readme()
     if question is None or not question.strip():
         instruction = (
-            "Summarize what Mother can do for a user. Include the most useful commands, "
-            "configuration concepts, and workflow tips from the README."
+            "Return a short quick-start cheatsheet for Mother. Keep it compact: "
+            "one brief sentence, then at most 8 bullets covering the most useful slash "
+            "commands and everyday workflows. End by telling the user they can now ask "
+            "plain follow-up questions for details. Do not include long explanations."
         )
     else:
         instruction = f"Answer this user question about Mother: {question.strip()}"
