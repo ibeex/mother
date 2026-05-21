@@ -18,7 +18,7 @@ from mother.widgets import (
 )
 
 PROMPT_HISTORY_HELP_TEXT = "History search · ↑↓ navigate · Enter accept · Esc cancel"
-COUNCIL_MULTILINE_HELP_TEXT = "Council multiline mode · Enter newline · Ctrl+Enter submit"
+COUNCIL_MULTILINE_HELP_TEXT = "Council multiline mode · Shift+Enter newline · Enter submit"
 
 
 def build_prompt_area() -> Vertical:

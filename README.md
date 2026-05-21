@@ -213,20 +213,20 @@ If you skip `--init-config`, Mother will still create a starter config automatic
 
 By default, the prompt input uses:
 
-- `Enter` to insert a newline
-- `Ctrl+Enter` to submit/send the prompt
+- `Enter` to submit/send the prompt
+- `Shift+Enter` to insert a newline
 
-Some terminals do not distinguish or transmit `Ctrl+Enter` reliably. You can change both
-prompt keys in `~/.config/mother/config.toml`:
+If your terminal supports `Ctrl+Enter` and you prefer `Enter` for newline, you can change
+both prompt keys in `~/.config/mother/config.toml`:
 
 ```toml
 # Default behavior:
-submit_key = "ctrl+enter"
-newline_key = "enter"
+submit_key = "enter"
+newline_key = "shift+enter"
 
-# Alternative for terminals where Ctrl+Enter does not work:
-# submit_key = "enter"
-# newline_key = "shift+enter"
+# Alternative for terminals where Ctrl+Enter works:
+# submit_key = "ctrl+enter"
+# newline_key = "enter"
 ```
 
 Key names use Textual-style syntax such as `enter`, `ctrl+enter`, and `shift+enter`.
@@ -301,7 +301,7 @@ What it does:
 - asks the configured judge to synthesize the final answer without seeing model ids
 - shows live council progress in the reply placeholder while stages 1–3 are running
 
-You can keep the question on the same line, or type just `/council`, press `Enter` to continue on the next line, then press `Ctrl+Enter` to submit the full multiline question.
+You can keep the question on the same line, or type just `/council`, press `Shift+Enter` to continue on the next line, then press `Enter` to submit the full multiline question.
 
 Important behavior:
 

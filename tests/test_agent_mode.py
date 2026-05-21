@@ -144,7 +144,7 @@ def test_selected_slash_command_submits_on_second_enter() -> None:
     asyncio.run(run())
 
 
-def test_selected_council_command_enters_multiline_mode_on_second_enter() -> None:
+def test_selected_council_command_enters_multiline_mode_on_shift_enter() -> None:
     async def run() -> None:
         app = MotherApp(config=MotherConfig(model="test-model"))
 
@@ -160,7 +160,7 @@ def test_selected_council_command_enters_multiline_mode_on_second_enter() -> Non
             assert app.slash_complete.display is False
             assert council_help.display is False
 
-            await pilot.press("enter")
+            await pilot.press("shift+enter")
             await pilot.pause()
             assert text_area.text == "/council \n"
             assert council_help.display is True

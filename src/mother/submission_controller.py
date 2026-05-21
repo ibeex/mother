@@ -129,7 +129,7 @@ class SubmissionController:
         """Submit a /council request after validation and UI setup."""
         if command.prompt is None:
             self.callbacks.notify(
-                "Usage: /council [question] — add the question inline or on the next line, then press Ctrl+Enter",
+                "Usage: /council [question] — add the question inline or on the next line, then press Enter to submit",
                 title="Council",
                 severity="warning",
             )

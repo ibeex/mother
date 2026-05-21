@@ -21,8 +21,8 @@ CONFIG_DIR = Path.home() / ".config" / "mother"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 LEGACY_CONFIG_FILE = Path.home() / ".mother" / "config.toml"
 
-DEFAULT_SUBMIT_KEY = "ctrl+enter"
-DEFAULT_NEWLINE_KEY = "enter"
+DEFAULT_SUBMIT_KEY = "enter"
+DEFAULT_NEWLINE_KEY = "shift+enter"
 
 _DEFAULT_SYSTEM = DEFAULT_BASE_SYSTEM
 
@@ -61,13 +61,13 @@ model = ""
 # session_markdown_dir = "~/Documents/mother"
 
 # Prompt key bindings.
-# Defaults: Enter inserts a newline; Ctrl+Enter submits the prompt.
-# If your terminal cannot send Ctrl+Enter, you can swap these, for example:
-# submit_key = "enter"
-# newline_key = "shift+enter"
-# Key names use Textual-style syntax such as "enter", "ctrl+enter", or "shift+enter".
+# Defaults: Enter submits the prompt; Shift+Enter inserts a newline.
+# If your terminal supports Ctrl+Enter and you prefer Enter for newline, you can swap these:
 # submit_key = "ctrl+enter"
 # newline_key = "enter"
+# Key names use Textual-style syntax such as "enter", "ctrl+enter", or "shift+enter".
+# submit_key = "enter"
+# newline_key = "shift+enter"
 
 # Legacy allowlist from the old regex-based bash guard.
 # Retained for backwards compatibility but ignored by the current

@@ -16,8 +16,8 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.openai_reasoning_summary == "auto"
     assert config.tools_enabled is False
     assert config.ca_bundle_path == ""
-    assert config.submit_key == "ctrl+enter"
-    assert config.newline_key == "enter"
+    assert config.submit_key == "enter"
+    assert config.newline_key == "shift+enter"
     assert config.council == CouncilConfig()
     assert config_file.exists()
 
@@ -112,8 +112,8 @@ def test_apply_cli_overrides() -> None:
     assert result.reasoning_effort == "high"
     assert result.openai_reasoning_summary == "detailed"
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
-    assert result.submit_key == "ctrl+enter"
-    assert result.newline_key == "enter"
+    assert result.submit_key == "enter"
+    assert result.newline_key == "shift+enter"
     assert result.council == CouncilConfig(members=("gpt-5",), judge="gpt-5")
 
 
