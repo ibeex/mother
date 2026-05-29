@@ -133,7 +133,8 @@ Example `~/.config/mother/keys.json`:
 
 ```json
 {
-  "OPENAI_KEY": "paste-your-api-key-here"
+  "OPENAI_KEY": "paste-your-api-key-here",
+  "JINA": "paste-your-jina-api-key-here"
 }
 ```
 
@@ -362,10 +363,11 @@ Deep research mode keeps only the two web tools:
 Implementation notes:
 
 - uses Jina Search API: `https://s.jina.ai/?q=...`
-- sends the API key from `pass api/jina`
+- sends the API key from `~/.config/mother/keys.json` key `"JINA"` when present
+- otherwise falls back to `pass api/jina`
 - returns plain-text search results
 
-If `pass` is not installed or `api/jina` is missing from your password store, search requests will fail with a readable error.
+If neither `~/.config/mother/keys.json` contains `"JINA"` nor `pass api/jina` is available, search requests will fail with a readable error.
 
 ### `web_fetch`
 
@@ -386,7 +388,7 @@ How `auto` behaves:
 Jina fetch behavior:
 
 - first tries without auth
-- if Jina responds with auth/rate-limit style failure, retries once with the API key from `pass api/jina`
+- if Jina responds with auth/rate-limit style failure, retries once with the API key from `~/.config/mother/keys.json` key `"JINA"` when present, otherwise `pass api/jina`
 
 Use `raw` mode when you need:
 
@@ -398,13 +400,24 @@ Use `raw` mode when you need:
 
 ## Jina API key setup
 
-Mother expects the Jina API key in your password store at:
+Mother supports either of these Jina API key sources:
+
+1. `~/.config/mother/keys.json` with key `"JINA"`
+2. `pass api/jina`
+
+Example `~/.config/mother/keys.json`:
+
+```json
+{
+  "JINA": "paste-your-jina-api-key-here"
+}
+```
+
+Password store example:
 
 ```text
 api/jina
 ```
-
-Example:
 
 ```bash
 pass insert api/jina

@@ -88,7 +88,8 @@ model = ""
 # Example keys.json:
 # {
 #   "CODY_KEY": "paste-remote-key-here",
-#   "LOCAL_KEY": "lm-studio"
+#   "LOCAL_KEY": "lm-studio",
+#   "JINA": "paste-your-jina-api-key-here"
 # }
 #
 # Example model:

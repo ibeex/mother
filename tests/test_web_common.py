@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import ssl
+import subprocess
 from pathlib import Path
 from typing import cast, final
 from unittest.mock import patch
 
-from mother.tools.web_common import build_ssl_context, should_retry_with_jina_api_key
+from mother.tools.web_common import build_ssl_context, get_jina_api_key, should_retry_with_jina_api_key
 
 
 @final
@@ -18,6 +19,31 @@ class _FakeSSLContext:
 
     def load_verify_locations(self, cafile: str) -> None:
         self.loaded_cafiles.append(cafile)
+
+
+def test_get_jina_api_key_uses_keys_json_alias_when_present() -> None:
+    with (
+        patch("mother.models.load_key_aliases", return_value={"JINA": "keys-file-secret"}),
+        patch("mother.tools.web_common.subprocess.run") as mock_run,
+    ):
+        api_key = get_jina_api_key()
+
+    assert api_key == "keys-file-secret"
+    mock_run.assert_not_called()
+
+
+def test_get_jina_api_key_falls_back_to_pass() -> None:
+    completed = subprocess.CompletedProcess(
+        args=["pass", "api/jina"], returncode=0, stdout="secret-key\n"
+    )
+
+    with (
+        patch("mother.models.load_key_aliases", return_value={}),
+        patch("mother.tools.web_common.subprocess.run", return_value=completed),
+    ):
+        api_key = get_jina_api_key()
+
+    assert api_key == "secret-key"
 
 
 def test_should_retry_with_jina_api_key_for_rate_limit() -> None:

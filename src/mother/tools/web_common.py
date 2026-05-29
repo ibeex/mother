@@ -48,7 +48,13 @@ class FetchResultLike(Protocol):
 
 
 def get_jina_api_key(pass_path: str = DEFAULT_PASS_PATH) -> str:
-    """Load the Jina API key from the local password store."""
+    """Load the Jina API key from keys.json or the local password store."""
+    from mother.models import load_key_aliases
+
+    keys_file_value = load_key_aliases().get("JINA", "").strip()
+    if keys_file_value:
+        return keys_file_value
+
     try:
         completed = subprocess.run(
             ["pass", pass_path],

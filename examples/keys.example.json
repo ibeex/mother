@@ -1,4 +1,5 @@
 {
   "OPENAI_KEY": "paste-your-api-key-here",
-  "ANTHROPIC_KEY": "paste-your-api-key-here"
+  "ANTHROPIC_KEY": "paste-your-api-key-here",
+  "JINA": "paste-your-jina-api-key-here"
 }
