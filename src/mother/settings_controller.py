@@ -169,6 +169,8 @@ class SettingsController:
         if profile is not None:
             session.agent_profile = profile
         session.agent_mode = enabled
+        if not session.agent_mode or session.agent_profile != "deep_research":
+            session.pending_deep_research = None
         session.record_session_event(
             "agent_mode_change",
             {

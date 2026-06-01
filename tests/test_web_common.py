@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import cast, final
 from unittest.mock import patch
 
-from mother.tools.web_common import build_ssl_context, get_jina_api_key, should_retry_with_jina_api_key
+from mother.tools.web_common import (
+    build_ssl_context,
+    get_jina_api_key,
+    should_retry_with_jina_api_key,
+)
 
 
 @final

@@ -19,6 +19,7 @@ from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig
 from mother.conversation import ConversationState
 from mother.conversation_handoff import portable_history
+from mother.deep_research import PendingDeepResearch
 from mother.models import ModelEntry, find_model_entry, resolve_model_entry
 from mother.prompt_expansion import expand_prompt_fetch_directives
 from mother.reasoning import (
@@ -63,6 +64,7 @@ class AppSession:
         self.session_cached_tokens: int | None = None
         self.last_response_time_seconds: float | None = None
         self.last_response_model_name: str | None = None
+        self.pending_deep_research: PendingDeepResearch | None = None
 
     @property
     def has_history(self) -> bool:

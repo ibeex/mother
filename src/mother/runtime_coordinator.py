@@ -15,6 +15,7 @@ from pydantic_ai import Tool
 
 from mother.app_session import AppSession
 from mother.council import CouncilProgressUpdate, CouncilResult, CouncilRunner
+from mother.deep_research import DeepResearchRunner, PendingDeepResearch, is_research_approval
 from mother.help import build_help_prompt
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
@@ -361,6 +362,155 @@ class RuntimeCoordinator:
             _ = self.callbacks.call_from_thread(self.callbacks.disable_agent_mode_unsupported)
         return stream_state.visible_text
 
+    async def run_deep_research_request(
+        self,
+        prompt: str,
+        user_text: str,
+        response: Response,
+        tools: list[Tool[None]],
+    ) -> str | None:
+        """Run Mother-specific deep research: plan first, then approved execution."""
+        session = self.callbacks.app_session
+        runner = DeepResearchRunner(
+            session.current_model_entry,
+            base_system_prompt=session.config.system_prompt,
+            ca_bundle_path=session.config.ca_bundle_path,
+            model_settings=session.reasoning_options(),
+        )
+        stream_state = _RuntimeStreamState(response, None)
+
+        def on_progress(message: str) -> None:
+            _ = self.callbacks.call_from_thread(
+                self.callbacks.set_response_waiting_message,
+                response,
+                message,
+            )
+
+        try:
+            pending = session.pending_deep_research
+            if pending is None:
+                on_progress("Deep research · planning")
+                plan_response = await runner.create_plan(
+                    prompt,
+                    message_history=session.conversation_state.message_history,
+                    on_text_update=partial(self._runtime_on_text_update, stream_state),
+                )
+                session.pending_deep_research = PendingDeepResearch(
+                    question=prompt,
+                    plan=plan_response.text,
+                )
+                session.conversation_state.message_history = list(plan_response.all_messages)
+                session.record_session_event(
+                    "deep_research_plan_created",
+                    {"question": prompt, "model": session.current_model_entry.id},
+                )
+                _ = self.callbacks.call_from_thread(
+                    self.callbacks.apply_turn_usage, plan_response.usage
+                )
+                session.record_session_event("turn_usage", plan_response.usage.to_event_details())
+                session.conversation_state.append_transcript_turn(user_text, plan_response.text)
+                final_text = plan_response.text
+            else:
+                approved = is_research_approval(user_text)
+                if not approved:
+                    on_progress("Deep research · checking approval")
+                    approval_response = await runner.classify_plan_reply(pending, user_text)
+                    approved = approval_response.text.strip().upper().startswith("APPROVE")
+                    session.record_session_event(
+                        "deep_research_approval_classified",
+                        {
+                            "question": pending.question,
+                            "decision": "approve" if approved else "revise",
+                            "model": session.current_model_entry.id,
+                        },
+                    )
+                    session.record_session_event(
+                        "turn_usage", approval_response.usage.to_event_details()
+                    )
+                    _ = self.callbacks.call_from_thread(
+                        self.callbacks.apply_turn_usage,
+                        approval_response.usage,
+                    )
+
+                if not approved:
+                    on_progress("Deep research · revising plan")
+                    revised_response = await runner.revise_plan(
+                        pending,
+                        user_text,
+                        message_history=session.conversation_state.message_history,
+                        on_text_update=partial(self._runtime_on_text_update, stream_state),
+                    )
+                    session.pending_deep_research = PendingDeepResearch(
+                        question=pending.question,
+                        plan=revised_response.text,
+                    )
+                    session.conversation_state.message_history = list(revised_response.all_messages)
+                    session.record_session_event(
+                        "deep_research_plan_revised",
+                        {"question": pending.question, "model": session.current_model_entry.id},
+                    )
+                    _ = self.callbacks.call_from_thread(
+                        self.callbacks.apply_turn_usage,
+                        revised_response.usage,
+                    )
+                    session.record_session_event(
+                        "turn_usage", revised_response.usage.to_event_details()
+                    )
+                    session.conversation_state.append_transcript_turn(
+                        user_text, revised_response.text
+                    )
+                    final_text = revised_response.text
+                else:
+                    on_progress("Deep research · starting")
+                    result = await runner.run_research(
+                        pending,
+                        tools=tools,
+                        on_text_update=partial(self._runtime_on_text_update, stream_state),
+                        on_tool_event=partial(self._runtime_on_tool_event, stream_state),
+                        on_progress=on_progress,
+                    )
+                    session.pending_deep_research = None
+                    session.conversation_state.append_synthetic_turn(pending.question, result.text)
+                    session.record_session_event(
+                        "deep_research_completed",
+                        {"question": pending.question, "model": session.current_model_entry.id},
+                    )
+                    session.record_session_event("turn_usage", result.usage.to_event_details())
+                    _ = self.callbacks.call_from_thread(
+                        self.callbacks.apply_turn_usage, result.usage
+                    )
+                    final_text = result.text
+        except UserInterruptedError as exc:
+            interrupted_text = self._format_interrupted_output(
+                stream_state.visible_text or exc.partial_output
+            )
+            self._show_error(response, interrupted_text)
+            session.record_session_event(
+                "deep_research_interrupted", {"agent_mode": session.agent_mode}
+            )
+            return None
+        except Exception as exc:
+            self._show_error(response, f"**Error:** {exc}")
+            logger.exception(
+                "Deep research request failed for model %s", session.current_model_entry.id
+            )
+            return None
+
+        if (
+            final_text != stream_state.visible_text
+            or self.callbacks.runtime_presentation.has_waiting_animation(response)
+        ):
+            stream_state.visible_text = final_text
+            _ = self.callbacks.call_from_thread(
+                self.callbacks.update_response_output,
+                response,
+                stream_state.visible_text,
+            )
+        _ = self.callbacks.call_from_thread(response.stop_stream)
+        response.reset_state(stream_state.visible_text)
+        session.record_session_message("assistant", stream_state.visible_text)
+        return stream_state.visible_text
+
     async def run_council_request(
         self,
         *,
@@ -508,6 +658,17 @@ class RuntimeCoordinator:
             attachment_paths=attachment_paths,
         )
 
+        if session.runtime_mode() == "deep_research":
+            _ = self._run_async_request(
+                self.run_deep_research_request(
+                    prompt_text,
+                    user_text,
+                    response,
+                    tools,
+                )
+            )
+            return
+
         full_text = self._run_async_request(
             self.run_runtime_request(
                 prompt_text,
@@ -520,7 +681,9 @@ class RuntimeCoordinator:
         )
 
         if full_text is not None:
-            session.conversation_state.append_transcript_turn(context_user_text or user_text, full_text)
+            session.conversation_state.append_transcript_turn(
+                context_user_text or user_text, full_text
+            )
             session.record_session_message("assistant", full_text)
 
     def send_council(

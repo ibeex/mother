@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 import ssl
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from importlib import import_module
 from pathlib import Path
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
@@ -49,8 +50,10 @@ class FetchResultLike(Protocol):
 
 def get_jina_api_key(pass_path: str = DEFAULT_PASS_PATH) -> str:
     """Load the Jina API key from keys.json or the local password store."""
-    from mother.models import load_key_aliases
-
+    load_key_aliases = cast(
+        Callable[[], dict[str, str]],
+        import_module("mother.models").load_key_aliases,
+    )
     keys_file_value = load_key_aliases().get("JINA", "").strip()
     if keys_file_value:
         return keys_file_value
