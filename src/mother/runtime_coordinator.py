@@ -473,7 +473,11 @@ class RuntimeCoordinator:
                     session.conversation_state.append_synthetic_turn(pending.question, result.text)
                     session.record_session_event(
                         "deep_research_completed",
-                        {"question": pending.question, "model": session.current_model_entry.id},
+                        {
+                            "question": pending.question,
+                            "model": session.current_model_entry.id,
+                            **result.stats.to_event_details(),
+                        },
                     )
                     session.record_session_event("turn_usage", result.usage.to_event_details())
                     _ = self.callbacks.call_from_thread(
