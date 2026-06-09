@@ -1,11 +1,11 @@
 ModelPickerScreen {
     align: center middle;
-    background: $background 60%;
+    background: $background 35%;
 }
 
 #model-picker {
     width: 72;
-    border: round $primary;
+    border: round $primary 20%;
     background: $surface;
     padding: 1;
     height: 24;

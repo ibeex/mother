@@ -1,42 +1,6 @@
-ShellOutput {
-    height: auto;
-    border: none;
-    background: transparent;
-    color: $text;
-    margin: 0;
-    padding: 0 1;
-}
-
-ShellOutput:focus {
-    background: $accent 6%;
-}
-
-ToolOutput {
-    height: auto;
-    border: none;
-    background: transparent;
-    color: $text;
-    margin: 0;
-    padding: 0 1;
-}
-
-ToolOutput:focus {
-    background: $secondary 6%;
-}
-
-CouncilOutput {
-    height: auto;
-    border: none;
-    background: transparent;
-    color: $text;
-    margin: 0;
-    padding: 0 1;
-}
-
-CouncilOutput:focus {
-    background: $warning 8%;
-}
-
+ShellOutput,
+ToolOutput,
+CouncilOutput,
 ThinkingOutput {
     height: auto;
     border: none;
@@ -46,6 +10,9 @@ ThinkingOutput {
     padding: 0 1;
 }
 
+ShellOutput:focus,
+ToolOutput:focus,
+CouncilOutput:focus,
 ThinkingOutput:focus {
-    background: $primary 6%;
+    background: $surface 18%;
 }

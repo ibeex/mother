@@ -33,20 +33,22 @@ ConversationTurn {
     height: auto;
     width: 100%;
     margin: 0;
+    border: none;
     background: transparent;
 }
 
 .prompt-section {
-    border-left: solid $primary 18%;
-    background: $primary 7%;
+    border-left: solid $primary 10%;
+    background: $surface;
 }
 
 .thinking-section {
-    border-left: solid $secondary 16%;
-    background: $secondary 5%;
+    border-left: solid $secondary 10%;
+    background: $surface 8%;
 }
 
 .response-section {
+    border: none;
     background: transparent;
 }
 
@@ -92,10 +94,7 @@ TurnLabel {
     color: $secondary;
 }
 
-.recovery-title {
-    color: $warning;
-}
-
+.recovery-title,
 .council-title {
     color: $warning;
 }
@@ -113,13 +112,13 @@ Response {
 }
 
 Response.response-awaiting {
-    color: #9ece6a;
+    color: $success;
     text-style: bold;
 }
 
 Response.response-awaiting MarkdownBlock {
     & > .code_inline {
-        color: #e0af68;
+        color: $warning;
         background: transparent;
         text-style: bold;
     }
@@ -133,7 +132,7 @@ Response.grouped {
 
 Prompt.grouped,
 ThinkingOutput.grouped {
-    padding: 0 1 0 0;
+    padding: 0 1 0 1;
 }
 
 Response.grouped,
@@ -146,7 +145,7 @@ Response.grouped:focus,
 ThinkingOutput.grouped:focus,
 Response:focus {
     border: none;
-    background: $surface 35%;
+    background: $surface 18%;
 }
 
 Prompt > MarkdownBlock:last-child,
@@ -155,5 +154,5 @@ Response > MarkdownBlock:last-child {
 }
 
 MarkdownBlock.highlight {
-    background: $primary 14%;
+    background: $primary 10%;
 }
