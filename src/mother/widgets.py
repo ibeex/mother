@@ -792,6 +792,11 @@ class ThinkingOutput(CopyableOutput):
 _FENCED_BLOCK_OPEN_RE = re.compile(r" {0,3}([`~]{3,})(.*)")
 
 
+def _contains_fenced_block_marker(markdown: str) -> bool:
+    """Return whether markdown contains a line that opens or closes a fenced code block."""
+    return any(_FENCED_BLOCK_OPEN_RE.fullmatch(line) is not None for line in markdown.splitlines())
+
+
 def _ends_inside_fenced_block(markdown: str) -> bool:
     """Return whether the markdown currently ends inside an open fenced code block."""
     active_fence_char: str | None = None
@@ -849,9 +854,14 @@ class CopyableMarkdown(Markdown):
             return
         previous_raw = self._raw
         self._raw += fragment
-        if _ends_inside_fenced_block(previous_raw) or _ends_inside_fenced_block(self._raw):
+        if (
+            _ends_inside_fenced_block(previous_raw)
+            or _ends_inside_fenced_block(self._raw)
+            or _contains_fenced_block_marker(fragment)
+        ):
             # Textual's incremental Markdown.append can lose fenced code contents
-            # when a fence opens in one fragment and continues in later fragments.
+            # or produce stale block layout when streamed fragments contain fences.
+            # Reparse the full response whenever a fence is active or appears.
             await self.stop_stream()
             await self.update(self._raw)
             return
