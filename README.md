@@ -389,10 +389,13 @@ It supports three modes:
 - `raw`: direct `urllib` request
 - `jina`: fetch through Jina reader for plain-text page extraction
 
+`auto` also detects supported YouTube video URLs and returns a formatted transcript using `youtube-transcript-api` when available.
+
 How `auto` behaves:
 
 - uses `raw` for localhost URLs
 - uses `raw` for API-style requests with custom method, headers, or body
+- uses YouTube transcript fetches for supported YouTube video URLs
 - uses `jina` for normal public web pages
 
 Jina fetch behavior:

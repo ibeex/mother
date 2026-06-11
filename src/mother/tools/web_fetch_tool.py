@@ -7,7 +7,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 from urllib.error import HTTPError
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+from youtube_transcript_api import YouTubeTranscriptApi
 
 from mother.tools.cleaners import clean_fetched_body
 from mother.tools.web_common import (
@@ -27,12 +29,13 @@ from mother.tools.web_common import (
 )
 
 FetchMode = Literal["auto", "raw", "jina"]
+ResolvedFetchMode = Literal["raw", "jina", "youtube_transcript"]
 
 
 @dataclass(frozen=True, slots=True)
 class FetchResult:
     url: str
-    mode: FetchMode
+    mode: ResolvedFetchMode
     content: str
     status: int | None = None
     content_type: str | None = None
@@ -42,10 +45,21 @@ MAX_TIMEOUT = 120.0
 MAX_CONTENT_BYTES = 512_000
 _CONTENT_TRUNCATED_MARKER = "[Content truncated due to size limit]"
 _CLOUDFLARE_FORBIDDEN = 403
+_MAX_YOUTUBE_TRANSCRIPT_CHARS = 24_000
 _BROWSER_LIKE_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+_YOUTUBE_HOSTS = {
+    "youtu.be",
+    "www.youtu.be",
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+}
 
 
 def _validate_url(url: str) -> str:
@@ -67,13 +81,32 @@ def _resolve_timeout(timeout: float) -> float:
     return min(timeout, MAX_TIMEOUT)
 
 
+def _extract_youtube_video_id(url: str) -> str | None:
+    parsed = urlparse(url)
+    hostname = (parsed.hostname or "").lower()
+    if hostname not in _YOUTUBE_HOSTS and not hostname.endswith(".youtube.com"):
+        return None
+
+    if hostname in {"youtu.be", "www.youtu.be"}:
+        candidate = parsed.path.strip("/").split("/", maxsplit=1)[0]
+        return candidate or None
+
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if parsed.path == "/watch":
+        candidate = parse_qs(parsed.query).get("v", [""])[0]
+        return candidate or None
+    if len(path_parts) >= 2 and path_parts[0] in {"embed", "live", "shorts", "v"}:
+        return path_parts[1]
+    return None
+
+
 def _resolve_mode(
     url: str,
     mode: FetchMode,
     method: str,
     headers_json: str,
     body: str,
-) -> FetchMode:
+) -> ResolvedFetchMode:
     if mode not in {"auto", "raw", "jina"}:
         raise ValueError("mode must be one of: auto, raw, jina.")
 
@@ -84,6 +117,8 @@ def _resolve_mode(
         return "raw"
     if is_local_url(url):
         return "raw"
+    if _extract_youtube_video_id(url) is not None:
+        return "youtube_transcript"
     return "jina"
 
 
@@ -199,6 +234,74 @@ def _run_raw_request(
         )
 
 
+def _format_youtube_timestamp(seconds: float) -> str:
+    total_seconds = max(int(seconds), 0)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _run_youtube_transcript_request(url: str) -> FetchResult:
+    video_id = _extract_youtube_video_id(url)
+    if video_id is None:
+        raise ValueError("Could not extract a YouTube video ID from the URL.")
+
+    transcript = YouTubeTranscriptApi().fetch(video_id)
+    header_lines = [
+        "[YOUTUBE VIDEO TRANSCRIPT]",
+        f"Video ID: {transcript.video_id}",
+        f"Language: {transcript.language} ({transcript.language_code})",
+        f"Source: {'Auto-generated' if transcript.is_generated else 'Manual'}",
+        f"URL: {url}",
+        "",
+    ]
+
+    transcript_lines: list[str] = []
+    transcript_text_parts: list[str] = []
+    for snippet in transcript:
+        text = snippet.text.strip()
+        if not text:
+            continue
+        transcript_text_parts.append(text)
+        transcript_lines.append(f"[{_format_youtube_timestamp(snippet.start)}] {text}")
+
+    if transcript_lines:
+        content = "\n".join([
+            *header_lines,
+            "Timestamped Transcript:",
+            *transcript_lines,
+            "[END TRANSCRIPT]",
+        ])
+    else:
+        content = "\n".join([
+            *header_lines,
+            "Transcript:",
+            "(empty transcript)",
+            "[END TRANSCRIPT]",
+        ])
+
+    if len(content) > _MAX_YOUTUBE_TRANSCRIPT_CHARS:
+        full_text = " ".join(transcript_text_parts).strip() or "(empty transcript)"
+        content = "\n".join([
+            *header_lines,
+            "Transcript:",
+            full_text,
+            "[END TRANSCRIPT]",
+        ])
+    if len(content) > _MAX_YOUTUBE_TRANSCRIPT_CHARS:
+        truncated = content[:_MAX_YOUTUBE_TRANSCRIPT_CHARS].rstrip()
+        content = f"{truncated}\n{_CONTENT_TRUNCATED_MARKER}"
+
+    return FetchResult(
+        url=url,
+        mode="youtube_transcript",
+        content=content,
+        content_type="text/plain",
+    )
+
+
 def _build_jina_reader_request(url: str, api_key: str | None = None) -> urllib.request.Request:
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
@@ -254,6 +357,8 @@ def fetch_url(
             resolved_timeout,
             ca_bundle_path,
         )
+    if resolved_mode == "youtube_transcript":
+        return _run_youtube_transcript_request(normalized_url)
 
     try:
         content = _run_jina_request(
@@ -306,7 +411,8 @@ def make_web_fetch_tool(
 
         Choosing a mode:
         - mode="auto": best default. Uses raw HTTP for localhost, APIs, custom headers,
-          non-GET methods, or request bodies. Uses jina for normal public web pages.
+          non-GET methods, or request bodies. Uses YouTube transcripts for supported
+          YouTube video URLs. Uses jina for normal public web pages.
         - mode="raw": direct urllib request. Best for APIs, localhost, JSON endpoints,
           POST requests, custom headers, or exact HTTP behavior.
         - mode="jina": readable page fetch for public websites. Best for articles,

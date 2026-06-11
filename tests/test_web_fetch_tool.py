@@ -11,6 +11,8 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request
 
+from youtube_transcript_api import FetchedTranscript, FetchedTranscriptSnippet
+
 from mother.tools import get_default_tools
 from mother.tools.web_fetch_tool import MAX_TIMEOUT, make_web_fetch_tool
 
@@ -122,6 +124,43 @@ def test_web_fetch_tool_auto_mode_uses_jina_for_remote_pages():
     assert len(captured_requests) == 1
     assert captured_requests[0].full_url == "https://r.jina.ai/https://example.com/docs"
     assert _get_header(captured_requests[0], "Authorization") is None
+
+
+def test_web_fetch_tool_auto_mode_uses_youtube_transcript_for_youtube_videos():
+    transcript = FetchedTranscript(
+        snippets=[
+            FetchedTranscriptSnippet(text=" Hello world ", start=0.0, duration=2.0),
+            FetchedTranscriptSnippet(text="Second line", start=3661.0, duration=3.0),
+        ],
+        video_id="abc123xyz00",
+        language="English",
+        language_code="en",
+        is_generated=False,
+    )
+
+    def _unexpected_urlopen(
+        request: Request, *, timeout: float, context: ssl.SSLContext
+    ) -> _FakeResponse:
+        _ = request
+        _ = timeout
+        _ = context
+        raise AssertionError("urlopen should not be used for YouTube transcript fetches")
+
+    with (
+        patch("mother.tools.web_fetch_tool.YouTubeTranscriptApi.fetch", return_value=transcript) as fetch,
+        patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_unexpected_urlopen),
+    ):
+        tool = make_web_fetch_tool()
+        output = tool("https://www.youtube.com/watch?v=abc123xyz00")
+
+    fetch.assert_called_once_with("abc123xyz00")
+    assert "- Mode: youtube_transcript" in output
+    assert "- URL: https://www.youtube.com/watch?v=abc123xyz00" in output
+    assert "[YOUTUBE VIDEO TRANSCRIPT]" in output
+    assert "Language: English (en)" in output
+    assert "Source: Manual" in output
+    assert "[00:00] Hello world" in output
+    assert "[01:01:01] Second line" in output
 
 
 def test_web_fetch_tool_cleans_hacker_news_item_content():
