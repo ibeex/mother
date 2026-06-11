@@ -250,12 +250,40 @@ class AppSession:
 
         return tuple(resolved_members), judge_entry
 
+    def reset_for_new_session(self) -> None:
+        """Clear conversation, pending context, and accumulated usage for a fresh chat."""
+        self.conversation_state.clear()
+        self.pending_executions.clear()
+        self.pending_image_attachments.clear()
+        self.session_usage = SessionUsage()
+        self.last_turn_usage = None
+        self.last_context_tokens = None
+        self.session_input_tokens = None
+        self.session_output_tokens = None
+        self.session_cached_tokens = None
+        self.last_response_time_seconds = None
+        self.last_response_model_name = None
+        self.pending_deep_research = None
+
     def start_new_session(self) -> None:
-        """Rotate to a fresh transient session after a successful save."""
+        """Rotate to a fresh transient session and reset in-memory chat state."""
+        sessions_root: Path | None = None
+        markdown_dir = Path(self.config.session_markdown_dir)
+        cwd: Path | None = None
+        if self.session_manager is not None:
+            sessions_root = self.session_manager.sessions_dir.parent
+            markdown_dir = self.session_manager.markdown_dir
+            raw_cwd = self.session_manager.header.get("cwd")
+            if isinstance(raw_cwd, str) and raw_cwd:
+                cwd = Path(raw_cwd)
+
         self.session_manager = SessionManager.create(
-            markdown_dir=Path(self.config.session_markdown_dir),
+            sessions_dir=sessions_root,
+            markdown_dir=markdown_dir,
+            cwd=cwd,
             model_name=self.config.model,
         )
+        self.reset_for_new_session()
 
     def enabled_tools(
         self,

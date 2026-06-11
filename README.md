@@ -42,6 +42,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 - anonymous multi-model `/council` synthesis across configurable members and a configurable judge
 - optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
+- `/new` to start a fresh session and clear chat/output context
 - clipboard image paste in the prompt via `Ctrl+V` (with `Cmd+V` still working for normal paste on macOS)
 - explicit `[[fetch https://...]]` prompt expansion in any chat or agent turn
 - agent mode with tool traces
@@ -293,6 +294,7 @@ Notes:
 Each app launch starts a new JSONL session under a Pi-style per-working-directory folder in `~/.mother/sessions`, for example `~/.mother/sessions/--Users-you-project--/`.
 
 - `/save` or `Ctrl+S` exports the current session to markdown
+- `/new` clears the current chat/output context and rotates to a fresh transient session
 - `mother --save` recovers the last unsaved session for the current working directory and exits
 - `mother --cleanup-sessions 30d` deletes inactive JSONL session logs older than 30 days; hours are supported too, for example `12h`
 - after each markdown export, Mother tries `uv run rumdl fmt --disable MD013 <file>` for cleaner formatting

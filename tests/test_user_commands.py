@@ -8,6 +8,7 @@ from mother.user_commands import (
     CouncilCommand,
     HelpCommand,
     ModelsCommand,
+    NewSessionCommand,
     NormalPrompt,
     QuitAppCommand,
     ReasoningCommand,
@@ -53,6 +54,12 @@ def test_detect_export_command():
     result = parse_user_input(" /export ")
     assert isinstance(result, SaveSessionCommand)
     assert result.command == "/export"
+
+
+def test_detect_new_session_command():
+    result = parse_user_input("/new")
+    assert isinstance(result, NewSessionCommand)
+    assert result.command == "/new"
 
 
 def test_detect_quit_command():
@@ -186,6 +193,10 @@ def test_should_expand_reasoning_query_only_for_exact_command():
 
 def test_should_submit_save_on_enter():
     assert should_submit_on_enter("/save ") is True
+
+
+def test_should_submit_new_session_on_enter():
+    assert should_submit_on_enter("/new") is True
 
 
 def test_should_submit_quit_on_enter():

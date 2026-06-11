@@ -12,6 +12,7 @@ from pydantic_ai import Tool
 from textual import events, on, work
 from textual.app import App, ComposeResult, ScreenStackError
 from textual.binding import Binding, BindingType
+from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Footer, Header, OptionList, Static, TextArea
 from textual.worker import Worker, WorkerState
@@ -73,6 +74,7 @@ from mother.widgets import (
     SlashComplete,
     StatusLine,
     ThinkingOutput,
+    WelcomeBanner,
 )
 
 PromptNavigateEvent = (
@@ -496,6 +498,40 @@ class MotherApp(App[None]):
                 title="Session",
                 severity=notification.severity,
             )
+
+    def action_new_session(self) -> None:
+        """Clear chat/output state and start a fresh in-memory and persisted session."""
+        self.app_session.start_new_session()
+        self.runtime_presentation.reset_session_view()
+        self.set_active_turn(None)
+        try:
+            chat_view = self.query_one("#chat-view", VerticalScroll)
+        except (NoMatches, ScreenStackError):
+            chat_view = None
+        if chat_view is not None:
+            welcome_banner = next(
+                (child for child in chat_view.children if isinstance(child, WelcomeBanner)),
+                None,
+            )
+            children_to_remove = [
+                child for child in chat_view.children if child is not welcome_banner
+            ]
+            if children_to_remove:
+                _ = chat_view.remove_children(children_to_remove)
+            if welcome_banner is None:
+                _ = chat_view.mount(WelcomeBanner())
+        try:
+            prompt_input = self.prompt_input
+        except (NoMatches, ScreenStackError):
+            prompt_input = None
+        if prompt_input is not None:
+            prompt_input.read_only = False
+            _ = prompt_input.clear()
+            _ = prompt_input.focus()
+        self._reset_interrupt_escape()
+        self._update_statusline()
+        self._scroll_chat_to_end(force=True)
+        self.notify("Started a new session", title="Session")
 
     def action_quit_app(self) -> None:
         """Close the application immediately."""

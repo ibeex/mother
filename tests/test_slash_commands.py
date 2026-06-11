@@ -104,6 +104,10 @@ def test_default_slash_commands_expose_save() -> None:
     assert any(command.command == "/save" for command in SLASH_COMMANDS)
 
 
+def test_default_slash_commands_expose_new() -> None:
+    assert any(command.command == "/new" for command in SLASH_COMMANDS)
+
+
 def test_default_slash_commands_expose_quit_aliases() -> None:
     commands = {command.command for command in SLASH_COMMANDS}
 

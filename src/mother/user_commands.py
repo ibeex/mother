@@ -1,4 +1,4 @@
-"""Parsing for direct user shell commands: !command and !!command."""
+"""Parsing for Mother's built-in slash commands and direct shell commands."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ _MODELS_COMMAND = "/models"
 _REASONING_COMMAND = "/reasoning"
 _COUNCIL_COMMAND = "/council"
 _HELP_COMMAND = "/help"
+_NEW_COMMAND = "/new"
 
 
 @dataclass
@@ -27,6 +28,11 @@ class ShellCommand:
 @dataclass
 class SaveSessionCommand:
     command: str = "/save"
+
+
+@dataclass
+class NewSessionCommand:
+    command: str = "/new"
 
 
 @dataclass
@@ -99,7 +105,8 @@ def should_submit_on_enter(text: str) -> bool:
         return parsed.prompt is not None
     return isinstance(
         parsed,
-        SaveSessionCommand
+        NewSessionCommand
+        | SaveSessionCommand
         | QuitAppCommand
         | AgentModeCommand
         | ModelsCommand
@@ -126,6 +133,7 @@ def parse_user_input(
 ) -> (
     NormalPrompt
     | SaveSessionCommand
+    | NewSessionCommand
     | QuitAppCommand
     | AgentModeCommand
     | ModelsCommand
@@ -137,6 +145,7 @@ def parse_user_input(
     """Parse user input for built-in slash commands and ! / !! shell commands.
 
     - ``/save`` or ``/export``   → SaveSessionCommand()
+    - ``/new``                   → NewSessionCommand()
     - ``/quit`` or ``/exit``     → QuitAppCommand()
     - ``/agent``                 → AgentModeCommand()
     - ``/agent standard``        → AgentModeCommand(mode="standard")
@@ -161,6 +170,8 @@ def parse_user_input(
     normalized = candidate.lower()
     if normalized in {"/save", "/export"}:
         return SaveSessionCommand(command=normalized)
+    if normalized == _NEW_COMMAND:
+        return NewSessionCommand()
     if normalized in {"/quit", "/exit"}:
         return QuitAppCommand(command=normalized)
     if normalized == _AGENT_COMMAND:

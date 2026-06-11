@@ -19,6 +19,7 @@ from mother.user_commands import (
     CouncilCommand,
     HelpCommand,
     ModelsCommand,
+    NewSessionCommand,
     QuitAppCommand,
     ReasoningCommand,
     SaveSessionCommand,
@@ -44,6 +45,7 @@ class SubmissionControllerCallbacks:
     set_active_prompt_worker: Callable[[object | None], None]
     set_active_shell_worker: Callable[[object | None], None]
     action_save_session: Callable[[], None]
+    action_new_session: Callable[[], None]
     action_quit_app: Callable[[], None]
     action_toggle_agent_mode: Callable[[], None]
     action_set_agent_profile: Callable[[AgentProfile], None]
@@ -69,6 +71,9 @@ class SubmissionController:
         """Handle slash commands that only mutate app state and return immediately."""
         if isinstance(parsed, SaveSessionCommand):
             self.callbacks.action_save_session()
+            return True
+        if isinstance(parsed, NewSessionCommand):
+            self.callbacks.action_new_session()
             return True
         if isinstance(parsed, QuitAppCommand):
             self.callbacks.action_quit_app()

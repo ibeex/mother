@@ -203,6 +203,9 @@ def build_submission_controller_callbacks(
     def action_save_session() -> None:
         _ = _call_app_method(app, "action_save_session")
 
+    def action_new_session() -> None:
+        _ = _call_app_method(app, "action_new_session")
+
     def action_quit_app() -> None:
         _ = _call_app_method(app, "action_quit_app")
 
@@ -306,6 +309,7 @@ def build_submission_controller_callbacks(
         set_active_prompt_worker=set_active_prompt_worker,
         set_active_shell_worker=set_active_shell_worker,
         action_save_session=action_save_session,
+        action_new_session=action_new_session,
         action_quit_app=action_quit_app,
         action_toggle_agent_mode=action_toggle_agent_mode,
         action_set_agent_profile=action_set_agent_profile,

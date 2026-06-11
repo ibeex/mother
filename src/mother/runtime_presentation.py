@@ -174,6 +174,14 @@ class RuntimePresentationController:
         if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
+    def reset_session_view(self) -> None:
+        """Forget transient turn-specific presentation state for a fresh chat session."""
+        self.active_turn = None
+        self._tool_outputs.clear()
+        for animation in self._response_waiting_animations.values():
+            _ = animation.response.remove_class("response-awaiting")
+        self._response_waiting_animations.clear()
+
     def waiting_response_positions(self, message: str | None = None) -> tuple[int, ...]:
         """Return the character positions used by the animated waiting wave."""
         active_message = message or self.waiting_messages[0]
