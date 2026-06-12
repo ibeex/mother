@@ -249,7 +249,7 @@ class RuntimeCoordinator:
             self.callbacks.update_response_output, response, error_text
         )
         _ = self.callbacks.call_from_thread(response.stop_stream)
-        response.reset_state(error_text)
+        _ = self.callbacks.call_from_thread(response.reset_state, error_text)
 
     async def run_runtime_request(
         self,
@@ -342,7 +342,7 @@ class RuntimeCoordinator:
 
         _ = self.callbacks.call_from_thread(response.stop_stream)
         session.conversation_state.message_history = list(runtime_response.all_messages)
-        response.reset_state(stream_state.visible_text)
+        _ = self.callbacks.call_from_thread(response.reset_state, stream_state.visible_text)
         if runtime_response.tool_limit_recovery_used:
             session.record_session_event(
                 "tool_limit_recovery",
@@ -511,7 +511,7 @@ class RuntimeCoordinator:
                 stream_state.visible_text,
             )
         _ = self.callbacks.call_from_thread(response.stop_stream)
-        response.reset_state(stream_state.visible_text)
+        _ = self.callbacks.call_from_thread(response.reset_state, stream_state.visible_text)
         session.record_session_message("assistant", stream_state.visible_text)
         return stream_state.visible_text
 
@@ -589,7 +589,7 @@ class RuntimeCoordinator:
             )
         _ = self.callbacks.call_from_thread(self.callbacks.show_council_trace, result)
         _ = self.callbacks.call_from_thread(response.stop_stream)
-        response.reset_state(final_text)
+        _ = self.callbacks.call_from_thread(response.reset_state, final_text)
         session.conversation_state.append_synthetic_turn(user_question, final_text)
         session.record_session_message("assistant", final_text)
         session.record_session_event("council_completed", result.to_event_details())

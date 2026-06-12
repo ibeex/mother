@@ -1,5 +1,6 @@
 """Reusable TUI widget classes for Mother."""
 
+import asyncio
 import re
 from dataclasses import dataclass
 from itertools import pairwise
@@ -835,6 +836,7 @@ class CopyableMarkdown(Markdown):
         self._cursor: int = 0
         self._raw: str = markdown
         self._stream: MarkdownStream | None = None
+        self._update_lock: asyncio.Lock = asyncio.Lock()
 
     @property
     def raw_markdown(self) -> str:
@@ -850,31 +852,61 @@ class CopyableMarkdown(Markdown):
 
     async def append_fragment(self, fragment: str) -> None:
         """Append a streamed markdown fragment without reparsing the full response."""
+        async with self._update_lock:
+            await self._append_fragment_locked(fragment)
+
+    async def _append_fragment_locked(self, fragment: str) -> None:
+        """Append a fragment while the markdown update lock is held."""
         if not fragment:
             return
         previous_raw = self._raw
         self._raw += fragment
         if (
-            _ends_inside_fenced_block(previous_raw)
+            _contains_fenced_block_marker(previous_raw)
+            or _ends_inside_fenced_block(previous_raw)
             or _ends_inside_fenced_block(self._raw)
             or _contains_fenced_block_marker(fragment)
         ):
-            # Textual's incremental Markdown.append can lose fenced code contents
-            # or produce stale block layout when streamed fragments contain fences.
-            # Reparse the full response whenever a fence is active or appears.
-            await self.stop_stream()
+            # Textual's incremental Markdown.append can lose fenced code contents,
+            # append following paragraphs into the preceding fence, or produce stale
+            # block layout when streamed fragments contain fences. Once a response
+            # has seen a fence, reparse the full response for all later fragments.
+            await self._stop_stream_locked()
             await self.update(self._raw)
             return
         await self.stream.write(fragment)
 
     async def replace_markdown(self, markdown: str) -> None:
         """Replace the rendered markdown, stopping any active incremental stream first."""
-        await self.stop_stream()
+        async with self._update_lock:
+            await self._replace_markdown_locked(markdown)
+
+    async def _replace_markdown_locked(self, markdown: str) -> None:
+        """Replace markdown while the markdown update lock is held."""
+        await self._stop_stream_locked()
         self._raw = markdown
         await self.update(markdown)
 
+    async def update_streamed_markdown(self, markdown: str, *, force_replace: bool = False) -> None:
+        """Render a streamed full-text snapshot in order, ignoring stale prefix snapshots."""
+        async with self._update_lock:
+            current_text = self._raw
+            if not force_replace and current_text.startswith(markdown) and markdown != current_text:
+                return
+            if force_replace:
+                await self._replace_markdown_locked(markdown)
+            elif markdown.startswith(current_text):
+                await self._append_fragment_locked(markdown[len(current_text) :])
+            else:
+                await self._replace_markdown_locked(markdown)
+
     async def stop_stream(self) -> None:
         """Stop the active incremental markdown stream, flushing any pending fragments."""
+        async with self._update_lock:
+            await self._stop_stream_locked()
+
+    async def _stop_stream_locked(self) -> None:
+        """Stop the active incremental markdown stream while the update lock is held."""
         if self._stream is None:
             return
         stream = self._stream

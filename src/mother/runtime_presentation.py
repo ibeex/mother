@@ -271,13 +271,7 @@ class RuntimePresentationController:
         had_waiting_animation = self.has_waiting_animation(response)
         self.clear_response_waiting_animation(response)
         should_follow = self.host.should_follow_chat_updates()
-        current_text = response.raw_markdown
-        if had_waiting_animation:
-            await response.replace_markdown(text)
-        elif text.startswith(current_text):
-            await response.append_fragment(text[len(current_text) :])
-        else:
-            await response.replace_markdown(text)
+        await response.update_streamed_markdown(text, force_replace=had_waiting_animation)
         if should_follow:
             self.host.scroll_chat_to_end(force=True)
 

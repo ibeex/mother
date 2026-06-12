@@ -5,6 +5,7 @@ from typing import final, override
 from unittest.mock import AsyncMock
 
 from textual.app import App, ComposeResult
+from textual.await_complete import AwaitComplete
 from textual.widgets.markdown import MarkdownFence
 
 from mother.widgets import Response
@@ -25,6 +26,53 @@ class _MarkdownStreamingApp(App[None]):
         yield Response("")
 
 
+@final
+class _RecordingResponse(Response):
+    """Response test double that records rendered markdown with configurable delay."""
+
+    def __init__(self) -> None:
+        super().__init__("")
+        self.rendered_markdown: list[str] = []
+
+    @override
+    def update(self, markdown: str) -> AwaitComplete:
+        async def record() -> None:
+            if markdown == "```bash\n":
+                await asyncio.sleep(0.02)
+            self.rendered_markdown.append(markdown)
+
+        return AwaitComplete(record())
+
+
+def test_response_streaming_serializes_fenced_code_reparses() -> None:
+    async def run() -> None:
+        response = _RecordingResponse()
+
+        first_update = asyncio.create_task(response.append_fragment("```bash\n"))
+        await asyncio.sleep(0)
+        final_update = asyncio.create_task(response.append_fragment("echo ok\n```\n"))
+        _ = await asyncio.gather(first_update, final_update)
+
+        assert response.raw_markdown == "```bash\necho ok\n```\n"
+        assert response.rendered_markdown[-1] == response.raw_markdown
+
+    asyncio.run(run())
+
+
+def test_response_streaming_ignores_stale_prefix_snapshots() -> None:
+    async def run() -> None:
+        response = _RecordingResponse()
+        final_markdown = "```bash\necho ok\n```\n"
+
+        await response.update_streamed_markdown(final_markdown)
+        await response.update_streamed_markdown("```bash\n")
+
+        assert response.raw_markdown == final_markdown
+        assert response.rendered_markdown[-1] == final_markdown
+
+    asyncio.run(run())
+
+
 def test_response_streaming_reparses_fragments_that_contain_complete_fences() -> None:
     async def run() -> None:
         app = _MarkdownStreamingApp()
@@ -42,6 +90,25 @@ def test_response_streaming_reparses_fragments_that_contain_complete_fences() ->
 
             fence = response.query_one(MarkdownFence)
             assert fence.code == "print 1"
+            assert response.raw_markdown.endswith("After\n")
+
+    asyncio.run(run())
+
+
+def test_response_streaming_keeps_text_after_closed_fence_out_of_code_block() -> None:
+    async def run() -> None:
+        app = _MarkdownStreamingApp()
+
+        async with app.run_test() as pilot:
+            response = app.query_one(Response)
+
+            await response.append_fragment("```bash\n")
+            await response.append_fragment("echo ok\n")
+            await response.append_fragment("```\n")
+            await response.append_fragment("\nAfter\n")
+            await pilot.pause()
+
+            assert response.query_one(MarkdownFence).code == "echo ok"
             assert response.raw_markdown.endswith("After\n")
 
     asyncio.run(run())

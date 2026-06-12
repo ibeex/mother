@@ -67,6 +67,14 @@ class _FakeResponse:
         self.raw_markdown = markdown
         self.updated_texts.append(markdown)
 
+    async def update_streamed_markdown(self, markdown: str, *, force_replace: bool = False) -> None:
+        if force_replace:
+            await self.replace_markdown(markdown)
+        elif markdown.startswith(self.raw_markdown):
+            await self.append_fragment(markdown[len(self.raw_markdown) :])
+        else:
+            await self.replace_markdown(markdown)
+
     async def stop_stream(self) -> None:
         self.stop_stream_calls += 1
 
