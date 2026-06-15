@@ -20,6 +20,7 @@ from mother.help import build_help_prompt
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
 from mother.runtime import (
+    TUI_STREAM_UPDATE_INTERVAL_SECONDS,
     ChatRuntime,
     RuntimePartialRunError,
     RuntimeRecoveryEvent,
@@ -263,7 +264,11 @@ class RuntimeCoordinator:
         """Run one chat runtime request and coordinate streamed UI/state updates."""
         session = self.callbacks.app_session
         model_entry = session.current_model_entry
-        runtime = ChatRuntime(model_entry, ca_bundle_path=session.config.ca_bundle_path)
+        runtime = ChatRuntime(
+            model_entry,
+            ca_bundle_path=session.config.ca_bundle_path,
+            stream_update_interval_seconds=TUI_STREAM_UPDATE_INTERVAL_SECONDS,
+        )
         stream_state = _RuntimeStreamState(response, thinking_output)
 
         try:

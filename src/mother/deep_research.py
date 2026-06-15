@@ -21,7 +21,13 @@ from pydantic_ai import Tool
 from pydantic_ai.messages import ModelMessage
 
 from mother.models import ModelEntry
-from mother.runtime import ChatRuntime, RuntimePartialRunError, RuntimeResponse, RuntimeToolEvent
+from mother.runtime import (
+    TUI_STREAM_UPDATE_INTERVAL_SECONDS,
+    ChatRuntime,
+    RuntimePartialRunError,
+    RuntimeResponse,
+    RuntimeToolEvent,
+)
 from mother.stats import TurnUsage
 
 _APPROVAL_WORDS: frozenset[str] = frozenset(
@@ -332,7 +338,11 @@ class DeepResearchRunner:
             self.fetches_per_round + self.max_queries_per_round,
             max_tool_calls_per_round,
         )
-        self.runtime: ChatRuntime = ChatRuntime(model_entry, ca_bundle_path=ca_bundle_path)
+        self.runtime: ChatRuntime = ChatRuntime(
+            model_entry,
+            ca_bundle_path=ca_bundle_path,
+            stream_update_interval_seconds=TUI_STREAM_UPDATE_INTERVAL_SECONDS,
+        )
 
     def _system(self, role: str) -> str:
         return "\n\n".join(

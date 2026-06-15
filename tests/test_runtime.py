@@ -143,6 +143,61 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
     ]
 
 
+def test_chat_runtime_can_throttle_streamed_callback_updates() -> None:
+    entry = ModelEntry(
+        id="local_3",
+        name="local_3",
+        api_type="openai-chat",
+        supports_reasoning=True,
+    )
+    response = ModelResponse(parts=[TextPart(content="hello")])
+    result = AgentRunResult(
+        "hello",
+        _state=GraphAgentState(
+            message_history=[cast(ModelMessage, response)],
+            usage=RunUsage(input_tokens=1, output_tokens=1),
+        ),
+    )
+    _FakeAgent.events = (
+        PartStartEvent(index=0, part=TextPart(content="h")),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="e")),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="l")),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="l")),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="o")),
+        AgentRunResultEvent(result=result),
+    )
+    _FakeAgent.event_batches = []
+    _FakeAgent.init_calls = []
+    _FakeAgent.run_calls = []
+    callback_events: list[str] = []
+    clock_values = iter((0.0, 0.05, 0.10, 0.15, 0.20, 0.20))
+
+    runtime = ChatRuntime(
+        entry,
+        stream_update_interval_seconds=0.2,
+        stream_update_clock=lambda: next(clock_values),
+    )
+
+    with (
+        patch("mother.runtime.Agent", _FakeAgent),
+        patch("mother.runtime.create_pydantic_model", return_value=object()),
+    ):
+        runtime_response = asyncio.run(
+            runtime.run_stream(
+                prompt_text="hello",
+                system_prompt="system",
+                message_history=[],
+                attachments=[],
+                tools=[],
+                model_settings={},
+                on_text_update=callback_events.append,
+            )
+        )
+
+    assert callback_events == ["h", "hello"]
+    assert runtime_response.text == "hello"
+
+
 def test_run_stream_disables_parallel_tool_calls_for_openai_tool_runs() -> None:
     entry = ModelEntry(
         id="local_3",

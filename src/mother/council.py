@@ -15,7 +15,7 @@ from typing import Self, cast
 from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry
 from mother.reasoning import build_reasoning_options
-from mother.runtime import ChatRuntime
+from mother.runtime import TUI_STREAM_UPDATE_INTERVAL_SECONDS, ChatRuntime
 from mother.system_prompt import build_system_prompt
 
 logger = logging.getLogger(__name__)
@@ -538,7 +538,11 @@ class CouncilRunner:
         prompt_text: str,
         system_prompt: str,
     ) -> _CouncilModelReply | None:
-        runtime = ChatRuntime(model, ca_bundle_path=self.ca_bundle_path)
+        runtime = ChatRuntime(
+            model,
+            ca_bundle_path=self.ca_bundle_path,
+            stream_update_interval_seconds=TUI_STREAM_UPDATE_INTERVAL_SECONDS,
+        )
         try:
             response = await runtime.run_stream(
                 prompt_text=prompt_text,

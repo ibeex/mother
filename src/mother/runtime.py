@@ -36,6 +36,9 @@ from mother.interrupts import UserInterruptedError
 from mother.models import ModelEntry, create_pydantic_model
 from mother.stats import TurnUsage
 
+DEFAULT_STREAM_UPDATE_INTERVAL_SECONDS = 0.0
+TUI_STREAM_UPDATE_INTERVAL_SECONDS = 1 / 30
+
 _TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT = (
     "You already used the only allowed tool call for this turn and attempted another tool call. "
     "Write the final reply to the user's previous request in plain text using only the "
@@ -87,6 +90,33 @@ class _ToolState:
 class _StreamProgress:
     text: str = ""
     thinking: str = ""
+    emit_interval_seconds: float = DEFAULT_STREAM_UPDATE_INTERVAL_SECONDS
+    now: Callable[[], float] = perf_counter
+    last_emitted_text: str = ""
+    last_emitted_thinking: str = ""
+    last_text_emit_at: float | None = None
+    last_thinking_emit_at: float | None = None
+
+    def _emit_text(self, callback: Callable[[str], None] | None) -> None:
+        if callback is None or self.text == self.last_emitted_text:
+            return
+        self.last_emitted_text = self.text
+        self.last_text_emit_at = self.now()
+        callback(self.text)
+
+    def _emit_thinking(self, callback: Callable[[str], None] | None) -> None:
+        if callback is None or self.thinking == self.last_emitted_thinking:
+            return
+        self.last_emitted_thinking = self.thinking
+        self.last_thinking_emit_at = self.now()
+        callback(self.thinking)
+
+    def _should_emit(self, last_emit_at: float | None) -> bool:
+        if self.emit_interval_seconds <= 0:
+            return True
+        if last_emit_at is None:
+            return True
+        return (self.now() - last_emit_at) >= self.emit_interval_seconds
 
     def append_text(
         self,
@@ -96,8 +126,8 @@ class _StreamProgress:
         if not content:
             return
         self.text += content
-        if callback is not None:
-            callback(self.text)
+        if self._should_emit(self.last_text_emit_at):
+            self._emit_text(callback)
 
     def append_thinking(
         self,
@@ -107,8 +137,14 @@ class _StreamProgress:
         if not content:
             return
         self.thinking += content
-        if callback is not None:
-            callback(self.thinking)
+        if self._should_emit(self.last_thinking_emit_at):
+            self._emit_thinking(callback)
+
+    def flush_text(self, callback: Callable[[str], None] | None) -> None:
+        self._emit_text(callback)
+
+    def flush_thinking(self, callback: Callable[[str], None] | None) -> None:
+        self._emit_thinking(callback)
 
 
 @dataclass(slots=True)
@@ -131,9 +167,18 @@ class RuntimePartialRunError(Exception):
 class ChatRuntime:
     """Thin adapter around pydantic-ai streaming APIs."""
 
-    def __init__(self, model_entry: ModelEntry, *, ca_bundle_path: str = "") -> None:
+    def __init__(
+        self,
+        model_entry: ModelEntry,
+        *,
+        ca_bundle_path: str = "",
+        stream_update_interval_seconds: float = DEFAULT_STREAM_UPDATE_INTERVAL_SECONDS,
+        stream_update_clock: Callable[[], float] = perf_counter,
+    ) -> None:
         self.model_entry: ModelEntry = model_entry
         self.ca_bundle_path: str = ca_bundle_path
+        self.stream_update_interval_seconds: float = max(0.0, stream_update_interval_seconds)
+        self.stream_update_clock: Callable[[], float] = stream_update_clock
 
     @staticmethod
     def _guess_media_type(path: Path) -> str:
@@ -420,11 +465,10 @@ class ChatRuntime:
         effective_model_settings: dict[str, object],
         usage_limits: UsageLimits | None,
         captured_messages_ref: _CapturedRunMessages,
+        progress: _StreamProgress,
         on_text_update: Callable[[str], None] | None,
         on_thinking_update: Callable[[str], None] | None,
-    ) -> tuple[AgentRunResultEvent[str], _StreamProgress]:
-        progress = _StreamProgress()
-
+    ) -> AgentRunResultEvent[str]:
         with capture_run_messages() as captured_messages:
             captured_messages_ref.messages = captured_messages
             async for event in agent.run_stream_events(
@@ -440,7 +484,7 @@ class ChatRuntime:
                     on_thinking_update=on_thinking_update,
                 )
                 if final_result is not None:
-                    return final_result, progress
+                    return final_result
 
         raise RuntimeError("Agent stream ended without a final result")
 
@@ -453,10 +497,10 @@ class ChatRuntime:
         on_text_update: Callable[[str], None] | None,
         on_thinking_update: Callable[[str], None] | None,
     ) -> None:
-        if final_thinking != progress.thinking and on_thinking_update is not None:
-            on_thinking_update(final_thinking)
-        if final_text != progress.text and on_text_update is not None:
-            on_text_update(final_text)
+        progress.thinking = final_thinking
+        progress.text = final_text
+        progress.flush_thinking(on_thinking_update)
+        progress.flush_text(on_text_update)
 
     def _build_runtime_response(
         self,
@@ -660,15 +704,20 @@ class ChatRuntime:
         )
         started_at = perf_counter()
         captured_messages_ref = _CapturedRunMessages()
+        progress = _StreamProgress(
+            emit_interval_seconds=self.stream_update_interval_seconds,
+            now=self.stream_update_clock,
+        )
 
         try:
-            final_result, progress = await self._collect_stream_result(
+            final_result = await self._collect_stream_result(
                 agent=agent,
                 user_prompt=user_prompt,
                 message_history=message_history,
                 effective_model_settings=effective_model_settings,
                 usage_limits=usage_limits,
                 captured_messages_ref=captured_messages_ref,
+                progress=progress,
                 on_text_update=on_text_update,
                 on_thinking_update=on_thinking_update,
             )
@@ -683,7 +732,14 @@ class ChatRuntime:
                 on_thinking_update=on_thinking_update,
             )
         except asyncio.CancelledError as exc:
-            raise UserInterruptedError() from exc
+            self._flush_final_updates(
+                final_text=progress.text,
+                final_thinking=progress.thinking,
+                progress=progress,
+                on_text_update=on_text_update,
+                on_thinking_update=on_thinking_update,
+            )
+            raise UserInterruptedError(partial_output=progress.text) from exc
         except Exception as exc:
             if isinstance(exc, UserInterruptedError):
                 raise

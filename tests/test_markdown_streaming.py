@@ -2,7 +2,7 @@
 
 import asyncio
 from typing import final, override
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from textual.app import App, ComposeResult
 from textual.await_complete import AwaitComplete
@@ -110,6 +110,45 @@ def test_response_streaming_keeps_text_after_closed_fence_out_of_code_block() ->
 
             assert response.query_one(MarkdownFence).code == "echo ok"
             assert response.raw_markdown.endswith("After\n")
+
+    asyncio.run(run())
+
+
+def test_response_streaming_throttles_rapid_fenced_reparses_until_flush() -> None:
+    async def run() -> None:
+        response = _RecordingResponse()
+        clock_values = iter((0.0, 0.01, 0.02, 0.20))
+
+        large_line = "x" * 2_100 + "\n"
+
+        with patch("mother.widgets.perf_counter", side_effect=lambda: next(clock_values)):
+            await response.append_fragment("```python\n")
+            await response.append_fragment(large_line)
+            await response.append_fragment(large_line)
+
+            assert response.rendered_markdown == ["```python\n"]
+            assert response.raw_markdown == f"```python\n{large_line}{large_line}"
+
+            await response.stop_stream()
+
+        assert response.rendered_markdown[-1] == response.raw_markdown
+
+    asyncio.run(run())
+
+
+def test_response_stop_stream_forces_final_full_render_for_fenced_markdown() -> None:
+    async def run() -> None:
+        response = _RecordingResponse()
+
+        await response.append_fragment("```python\n")
+        await response.append_fragment("print('hello')\n")
+        await response.append_fragment("```\n")
+        render_count_before_stop = len(response.rendered_markdown)
+
+        await response.stop_stream()
+
+        assert len(response.rendered_markdown) == render_count_before_stop + 1
+        assert response.rendered_markdown[-1] == response.raw_markdown
 
     asyncio.run(run())
 
