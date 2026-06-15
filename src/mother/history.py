@@ -92,8 +92,8 @@ class PromptHistory:
         )
         temporary_path = self.path.with_name(f"{self.path.name}.tmp")
         try:
-            temporary_path.write_text(serialized, encoding="utf-8")
-            temporary_path.replace(self.path)
+            _ = temporary_path.write_text(serialized, encoding="utf-8")
+            _ = temporary_path.replace(self.path)
         except OSError:
             if temporary_path.exists():
                 temporary_path.unlink(missing_ok=True)

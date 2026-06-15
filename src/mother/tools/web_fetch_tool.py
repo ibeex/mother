@@ -268,28 +268,34 @@ def _run_youtube_transcript_request(url: str) -> FetchResult:
         transcript_lines.append(f"[{_format_youtube_timestamp(snippet.start)}] {text}")
 
     if transcript_lines:
-        content = "\n".join([
-            *header_lines,
-            "Timestamped Transcript:",
-            *transcript_lines,
-            "[END TRANSCRIPT]",
-        ])
+        content = "\n".join(
+            [
+                *header_lines,
+                "Timestamped Transcript:",
+                *transcript_lines,
+                "[END TRANSCRIPT]",
+            ]
+        )
     else:
-        content = "\n".join([
-            *header_lines,
-            "Transcript:",
-            "(empty transcript)",
-            "[END TRANSCRIPT]",
-        ])
+        content = "\n".join(
+            [
+                *header_lines,
+                "Transcript:",
+                "(empty transcript)",
+                "[END TRANSCRIPT]",
+            ]
+        )
 
     if len(content) > _MAX_YOUTUBE_TRANSCRIPT_CHARS:
         full_text = " ".join(transcript_text_parts).strip() or "(empty transcript)"
-        content = "\n".join([
-            *header_lines,
-            "Transcript:",
-            full_text,
-            "[END TRANSCRIPT]",
-        ])
+        content = "\n".join(
+            [
+                *header_lines,
+                "Transcript:",
+                full_text,
+                "[END TRANSCRIPT]",
+            ]
+        )
     if len(content) > _MAX_YOUTUBE_TRANSCRIPT_CHARS:
         truncated = content[:_MAX_YOUTUBE_TRANSCRIPT_CHARS].rstrip()
         content = f"{truncated}\n{_CONTENT_TRUNCATED_MARKER}"

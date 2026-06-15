@@ -147,8 +147,12 @@ def test_web_fetch_tool_auto_mode_uses_youtube_transcript_for_youtube_videos():
         raise AssertionError("urlopen should not be used for YouTube transcript fetches")
 
     with (
-        patch("mother.tools.web_fetch_tool.YouTubeTranscriptApi.fetch", return_value=transcript) as fetch,
-        patch("mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_unexpected_urlopen),
+        patch(
+            "mother.tools.web_fetch_tool.YouTubeTranscriptApi.fetch", return_value=transcript
+        ) as fetch,
+        patch(
+            "mother.tools.web_fetch_tool.urllib.request.urlopen", side_effect=_unexpected_urlopen
+        ),
     ):
         tool = make_web_fetch_tool()
         output = tool("https://www.youtube.com/watch?v=abc123xyz00")

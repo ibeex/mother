@@ -202,7 +202,11 @@ def _format_release_body(value: str) -> str:
             if lines and lines[-1]:
                 lines.append("")
             continue
-        if re.match(r"(?:(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore)(?:\(.+\))?:|breaking change\b)", line, re.IGNORECASE):
+        if re.match(
+            r"(?:(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore)(?:\(.+\))?:|breaking change\b)",
+            line,
+            re.IGNORECASE,
+        ):
             line = f"- {line}"
         lines.append(line)
     return "\n".join(lines).strip()
