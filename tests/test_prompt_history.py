@@ -51,8 +51,35 @@ def test_prompt_history_search_deduplicates_identical_entries(tmp_path: Path) ->
 
     matches = history.search("")
 
+    assert history.size == 2
     assert [match.text for match in matches] == ["duplicate prompt", "something else"]
     assert matches[0].index == 1
+
+
+def test_prompt_history_append_moves_exact_duplicate_to_top_without_jsonl_duplicates(
+    tmp_path: Path,
+) -> None:
+    history_path = tmp_path / "prompt_history.jsonl"
+    history = PromptHistory(history_path)
+
+    history.append("first prompt")
+    history.append("second prompt")
+    history.append("first prompt")
+
+    reloaded = PromptHistory(history_path)
+
+    assert reloaded.size == 2
+    assert reloaded.entry(1) == "first prompt"
+    assert reloaded.entry(2) == "second prompt"
+    assert [match.text for match in reloaded.search("")] == [
+        "first prompt",
+        "second prompt",
+    ]
+
+    lines = history_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    assert '"input": "second prompt"' in lines[0]
+    assert '"input": "first prompt"' in lines[1]
 
 
 def test_prompt_text_area_exposes_history_search_binding() -> None:
