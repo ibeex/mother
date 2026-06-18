@@ -20,6 +20,16 @@ class _FailingMarkdownStream:
         raise AssertionError("fenced fragments must be rendered via full markdown update")
 
 
+@final
+class _RecordingMarkdownStream:
+    def __init__(self) -> None:
+        self.stop: AsyncMock = AsyncMock()
+        self.fragments: list[str] = []
+
+    async def write(self, fragment: str) -> None:
+        self.fragments.append(fragment)
+
+
 class _MarkdownStreamingApp(App[None]):
     @override
     def compose(self) -> ComposeResult:
@@ -42,6 +52,32 @@ class _RecordingResponse(Response):
             self.rendered_markdown.append(markdown)
 
         return AwaitComplete(record())
+
+
+def test_response_replace_markdown_renders_control_characters_visibly() -> None:
+    async def run() -> None:
+        response = _RecordingResponse()
+
+        await response.replace_markdown("wc.\x1bchannel\x7f")
+
+        assert response.raw_markdown == "wc.\x1bchannel\x7f"
+        assert response.rendered_markdown == ["wc.␛channel␡"]
+
+    asyncio.run(run())
+
+
+def test_response_incremental_stream_sanitizes_control_characters() -> None:
+    async def run() -> None:
+        response = Response("")
+        stream = _RecordingMarkdownStream()
+        response._stream = stream  # pyright: ignore[reportPrivateUsage, reportAttributeAccessIssue]
+
+        await response.append_fragment("wc.\x1bchannel")
+
+        assert response.raw_markdown == "wc.\x1bchannel"
+        assert stream.fragments == ["wc.␛channel"]
+
+    asyncio.run(run())
 
 
 def test_response_streaming_serializes_fenced_code_reparses() -> None:

@@ -59,10 +59,29 @@ class _PromptHistoryApp(Protocol):
     def action_prompt_history_search(self) -> None: ...
 
 
+_DISPLAY_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def sanitize_markdown_for_display(markdown: str) -> str:
+    """Render terminal control characters visibly before handing text to Textual Markdown."""
+    normalized = markdown.replace("\r\n", "\n").replace("\r", "\n")
+
+    def replace_control(match: re.Match[str]) -> str:
+        codepoint = ord(match.group(0))
+        if codepoint == 0x7F:
+            return "␡"
+        return chr(0x2400 + codepoint)
+
+    return _DISPLAY_CONTROL_CHAR_RE.sub(replace_control, normalized)
+
+
 class Prompt(Markdown):
     """Markdown for the user prompt."""
 
     BORDER_TITLE: ClassVar[str] = "You"
+
+    def __init__(self, markdown: str = "") -> None:
+        super().__init__(sanitize_markdown_for_display(markdown))
 
 
 class PromptTextArea(TextArea):
@@ -835,10 +854,11 @@ class CopyableMarkdown(Markdown):
     can_focus: bool = True
 
     def __init__(self, markdown: str = "") -> None:
-        super().__init__(markdown)
+        rendered_markdown = sanitize_markdown_for_display(markdown)
+        super().__init__(rendered_markdown)
         self._cursor: int = 0
         self._raw: str = markdown
-        self._rendered_markdown: str = markdown
+        self._rendered_markdown: str = rendered_markdown
         self._stream: MarkdownStream | None = None
         self._update_lock: asyncio.Lock = asyncio.Lock()
         self._pending_full_render: bool = False
@@ -889,8 +909,9 @@ class CopyableMarkdown(Markdown):
             self._pending_full_render = True
             return
         self._pending_full_render = False
-        await self.update(self._raw)
-        self._rendered_markdown = self._raw
+        rendered_markdown = sanitize_markdown_for_display(self._raw)
+        await self.update(rendered_markdown)
+        self._rendered_markdown = rendered_markdown
         self._last_full_render_at = perf_counter()
 
     async def _append_fragment_locked(self, fragment: str) -> None:
@@ -906,8 +927,9 @@ class CopyableMarkdown(Markdown):
             # has seen a fence, reparse the full response for all later fragments.
             await self._render_full_markdown_locked()
             return
-        await self.stream.write(fragment)
-        self._rendered_markdown = self._raw
+        sanitized_fragment = sanitize_markdown_for_display(fragment)
+        await self.stream.write(sanitized_fragment)
+        self._rendered_markdown += sanitized_fragment
 
     async def replace_markdown(self, markdown: str) -> None:
         """Replace the rendered markdown, stopping any active incremental stream first."""
@@ -960,21 +982,23 @@ class CopyableMarkdown(Markdown):
         # streaming path can intentionally skip intermediate reparses for CPU
         # reasons, but the completed response should end in a fully normalized
         # Markdown tree.
-        await self.update(self._raw)
-        self._rendered_markdown = self._raw
+        rendered_markdown = sanitize_markdown_for_display(self._raw)
+        await self.update(rendered_markdown)
+        self._rendered_markdown = rendered_markdown
         self._last_full_render_at = perf_counter()
 
     def set_markdown(self, markdown: str):
         """Update the rendered Markdown while keeping a copyable raw value."""
+        rendered_markdown = sanitize_markdown_for_display(markdown)
         self._raw = markdown
-        self._rendered_markdown = markdown
+        self._rendered_markdown = rendered_markdown
         self._pending_full_render = False
-        return self.update(markdown)
+        return self.update(rendered_markdown)
 
     def reset_state(self, raw: str) -> None:
         """Reset the raw text and cursor position."""
         self._raw = raw
-        self._rendered_markdown = raw
+        self._rendered_markdown = sanitize_markdown_for_display(raw)
         self._pending_full_render = False
         self._cursor = 0
 
