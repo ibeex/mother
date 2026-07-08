@@ -66,6 +66,56 @@ class _FakeAgent:
             yield event
 
 
+@final
+class _FakeRunStreamEventsContext:
+    def __init__(self, events: tuple[object, ...]) -> None:
+        self._events = events
+
+    async def __aenter__(self):
+        async def iterator():
+            for event in self._events:
+                if isinstance(event, Exception):
+                    raise event
+                yield event
+
+        return iterator()
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+
+@final
+class _FakeContextAgent:
+    events: tuple[object, ...] = ()
+    event_batches: list[tuple[object, ...]] = []
+    init_calls: list[dict[str, object]] = []
+    run_calls: list[dict[str, object]] = []
+
+    def __init__(self, model: object, tools: list[object], instructions: str) -> None:
+        type(self).init_calls.append({"model": model, "tools": tools, "instructions": instructions})
+        self._events = (
+            type(self).event_batches.pop(0) if type(self).event_batches else type(self).events
+        )
+
+    def run_stream_events(
+        self,
+        user_prompt: str | list[object],
+        *,
+        message_history: list[object],
+        model_settings: dict[str, object],
+        usage_limits: object,
+    ) -> _FakeRunStreamEventsContext:
+        type(self).run_calls.append(
+            {
+                "user_prompt": user_prompt,
+                "message_history": list(message_history),
+                "model_settings": model_settings,
+                "usage_limits": usage_limits,
+            }
+        )
+        return _FakeRunStreamEventsContext(self._events)
+
+
 def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
     entry = ModelEntry(
         id="local_3",
@@ -141,6 +191,53 @@ def test_chat_runtime_run_stream_events_streams_thinking_before_text() -> None:
             "usage_limits": None,
         }
     ]
+
+
+def test_chat_runtime_supports_context_manager_stream_events() -> None:
+    entry = ModelEntry(
+        id="local_3",
+        name="local_3",
+        api_type="openai-chat",
+        supports_reasoning=True,
+    )
+    response = ModelResponse(parts=[TextPart(content="hello")])
+    result = AgentRunResult(
+        "hello",
+        _state=GraphAgentState(
+            message_history=[cast(ModelMessage, response)],
+            usage=RunUsage(input_tokens=1, output_tokens=1),
+        ),
+    )
+    _FakeContextAgent.events = (
+        PartStartEvent(index=0, part=TextPart(content="he")),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta="llo")),
+        AgentRunResultEvent(result=result),
+    )
+    _FakeContextAgent.event_batches = []
+    _FakeContextAgent.init_calls = []
+    _FakeContextAgent.run_calls = []
+    callback_events: list[str] = []
+
+    runtime = ChatRuntime(entry)
+
+    with (
+        patch("mother.runtime.Agent", _FakeContextAgent),
+        patch("mother.runtime.create_pydantic_model", return_value=object()),
+    ):
+        runtime_response = asyncio.run(
+            runtime.run_stream(
+                prompt_text="hello",
+                system_prompt="system",
+                message_history=[],
+                attachments=[],
+                tools=[],
+                model_settings={},
+                on_text_update=callback_events.append,
+            )
+        )
+
+    assert callback_events == ["he", "hello"]
+    assert runtime_response.text == "hello"
 
 
 def test_chat_runtime_can_throttle_streamed_callback_updates() -> None:

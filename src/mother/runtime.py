@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from inspect import Parameter, isawaitable, signature
 from pathlib import Path
 from time import perf_counter
-from typing import Literal, cast
+from types import TracebackType
+from typing import Literal, Protocol, cast, runtime_checkable
 
 from pydantic_ai import Agent, AgentRunResultEvent, Tool, capture_run_messages
 from pydantic_ai.exceptions import UsageLimitExceeded
@@ -84,6 +85,18 @@ class _ToolState:
     def next_call_id(self, tool_name: str) -> str:
         self.sequence += 1
         return f"{tool_name}-{self.sequence}"
+
+
+@runtime_checkable
+class _AsyncIteratorContextManager(Protocol):
+    async def __aenter__(self) -> AsyncIterator[object]: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
 
 
 @dataclass(slots=True)
@@ -456,10 +469,53 @@ class ChatRuntime:
             )
         return None
 
+    async def _collect_final_result_from_events(
+        self,
+        events: AsyncIterable[object],
+        *,
+        progress: _StreamProgress,
+        on_text_update: Callable[[str], None] | None,
+        on_thinking_update: Callable[[str], None] | None,
+    ) -> AgentRunResultEvent[str] | None:
+        async for event in events:
+            final_result = self._process_stream_event(
+                event,
+                progress=progress,
+                on_text_update=on_text_update,
+                on_thinking_update=on_thinking_update,
+            )
+            if final_result is not None:
+                return final_result
+        return None
+
+    async def _collect_final_result_from_stream_events(
+        self,
+        stream_events: object,
+        *,
+        progress: _StreamProgress,
+        on_text_update: Callable[[str], None] | None,
+        on_thinking_update: Callable[[str], None] | None,
+    ) -> AgentRunResultEvent[str] | None:
+        if isinstance(stream_events, _AsyncIteratorContextManager):
+            async with stream_events as events:
+                return await self._collect_final_result_from_events(
+                    events,
+                    progress=progress,
+                    on_text_update=on_text_update,
+                    on_thinking_update=on_thinking_update,
+                )
+
+        return await self._collect_final_result_from_events(
+            cast(AsyncIterable[object], stream_events),
+            progress=progress,
+            on_text_update=on_text_update,
+            on_thinking_update=on_thinking_update,
+        )
+
     async def _collect_stream_result(
         self,
         *,
-        agent: Agent,
+        agent: Agent[None, str],
         user_prompt: str | list[UserContent],
         message_history: list[ModelMessage],
         effective_model_settings: dict[str, object],
@@ -471,20 +527,23 @@ class ChatRuntime:
     ) -> AgentRunResultEvent[str]:
         with capture_run_messages() as captured_messages:
             captured_messages_ref.messages = captured_messages
-            async for event in agent.run_stream_events(
-                user_prompt,
-                message_history=message_history,
-                model_settings=cast(ModelSettings, cast(object, effective_model_settings)),
-                usage_limits=usage_limits,
-            ):
-                final_result = self._process_stream_event(
-                    event,
-                    progress=progress,
-                    on_text_update=on_text_update,
-                    on_thinking_update=on_thinking_update,
-                )
-                if final_result is not None:
-                    return final_result
+            stream_events = cast(
+                object,
+                agent.run_stream_events(
+                    user_prompt,
+                    message_history=message_history,
+                    model_settings=cast(ModelSettings, cast(object, effective_model_settings)),
+                    usage_limits=usage_limits,
+                ),
+            )
+            final_result = await self._collect_final_result_from_stream_events(
+                stream_events,
+                progress=progress,
+                on_text_update=on_text_update,
+                on_thinking_update=on_thinking_update,
+            )
+            if final_result is not None:
+                return final_result
 
         raise RuntimeError("Agent stream ended without a final result")
 
@@ -692,11 +751,20 @@ class ChatRuntime:
             for tool in tools
         ]
         user_prompt = self._build_user_prompt(prompt_text, attachments)
-        agent = Agent(
-            create_pydantic_model(self.model_entry, self.ca_bundle_path),
-            tools=wrapped_tools,
-            instructions=system_prompt,
-        )
+        agent: Agent[None, str]
+        if "deps_type" in signature(Agent).parameters:
+            agent = Agent(
+                create_pydantic_model(self.model_entry, self.ca_bundle_path),
+                tools=wrapped_tools,
+                instructions=system_prompt,
+                deps_type=type(None),
+            )
+        else:
+            agent = Agent(  # pyright: ignore[reportCallIssue, reportArgumentType]
+                create_pydantic_model(self.model_entry, self.ca_bundle_path),
+                tools=wrapped_tools,
+                instructions=system_prompt,
+            )
         usage_limits = UsageLimits(tool_calls_limit=tool_call_limit) if wrapped_tools else None
         effective_model_settings = self._effective_model_settings(
             model_settings=model_settings,
