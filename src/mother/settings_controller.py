@@ -171,6 +171,15 @@ class SettingsController:
         session.agent_mode = enabled
         if not session.agent_mode or session.agent_profile != "deep_research":
             session.pending_deep_research = None
+            session.deep_research_completed = False
+        elif (
+            previous_enabled
+            and previous_profile == "deep_research"
+            and session.deep_research_completed
+        ):
+            # Selecting deep research again is the explicit way to leave the
+            # post-report discussion and begin another research task.
+            session.deep_research_completed = False
         session.record_session_event(
             "agent_mode_change",
             {

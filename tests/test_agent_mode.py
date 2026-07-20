@@ -47,6 +47,20 @@ def test_set_deep_research_mode_on() -> None:
     assert app.agent_profile == "deep_research"
 
 
+def test_completed_research_enters_follow_up_conversation_until_reselected() -> None:
+    app = MotherApp()
+    with patch.object(app, "notify"):
+        app.action_set_agent_profile("deep_research")
+        app.app_session.deep_research_completed = True
+
+        assert not app.app_session.should_run_deep_research_workflow()
+
+        # Explicitly selecting the profile again starts the next research task.
+        app.action_set_agent_profile("deep_research")
+
+    assert app.app_session.should_run_deep_research_workflow()
+
+
 def test_prompt_enter_selects_slash_completion() -> None:
     text_area = PromptTextArea()
     text_area.slash_complete_active = True

@@ -475,6 +475,7 @@ class RuntimeCoordinator:
                         on_progress=on_progress,
                     )
                     session.pending_deep_research = None
+                    session.deep_research_completed = True
                     session.conversation_state.append_synthetic_turn(pending.question, result.text)
                     session.record_session_event(
                         "deep_research_completed",
@@ -655,9 +656,22 @@ class RuntimeCoordinator:
             )
             return approval_queue.get()
 
-        tools = session.enabled_tools(request_bash_approval=request_bash_approval)
+        # After a completed report, keep deep-research mode as a focused,
+        # no-tool conversation about that report. This prevents follow-up
+        # questions from being treated as a fresh plan/research request.
+        discussing_completed_research = (
+            session.runtime_mode() == "deep_research" and session.deep_research_completed
+        )
+        tools = (
+            []
+            if discussing_completed_research
+            else session.enabled_tools(request_bash_approval=request_bash_approval)
+        )
         tool_names = session.tool_names(tools)
-        system = session.build_system_prompt(tools)
+        system = session.build_system_prompt(
+            tools,
+            agent_mode=False if discussing_completed_research else None,
+        )
         attachment_paths = [str(path) for path in resolved_attachments]
         session.record_prompt_context(
             user_text=user_text,
@@ -667,7 +681,7 @@ class RuntimeCoordinator:
             attachment_paths=attachment_paths,
         )
 
-        if session.runtime_mode() == "deep_research":
+        if session.should_run_deep_research_workflow():
             _ = self._run_async_request(
                 self.run_deep_research_request(
                     prompt_text,

@@ -65,6 +65,9 @@ class AppSession:
         self.last_response_time_seconds: float | None = None
         self.last_response_model_name: str | None = None
         self.pending_deep_research: PendingDeepResearch | None = None
+        # Once a report is complete, deep-research mode becomes a no-tool
+        # discussion of that report until the user explicitly starts a new run.
+        self.deep_research_completed: bool = False
 
     @property
     def has_history(self) -> bool:
@@ -88,6 +91,14 @@ class AppSession:
             agent_enabled=self.agent_mode,
             agent_profile=self.agent_profile,
         )
+
+    def should_run_deep_research_workflow(self) -> bool:
+        """Return whether the next turn should enter the plan/research workflow.
+
+        A completed report deliberately leaves the user in a conversational
+        follow-up state. Re-selecting deep-research mode starts a new workflow.
+        """
+        return self.runtime_mode() == "deep_research" and not self.deep_research_completed
 
     def status_agent_label(self) -> str:
         """Return the compact status-line agent label."""
@@ -264,6 +275,7 @@ class AppSession:
         self.last_response_time_seconds = None
         self.last_response_model_name = None
         self.pending_deep_research = None
+        self.deep_research_completed = False
 
     def start_new_session(self) -> None:
         """Rotate to a fresh transient session and reset in-memory chat state."""
