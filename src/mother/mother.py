@@ -433,6 +433,7 @@ class MotherApp(App[None]):
             model_name=self.app_session.display_model_name(),
             agent_mode=self.agent_mode,
             agent_profile=self.agent_profile,
+            deep_research_completed=self.app_session.deep_research_completed,
         )
         self.sub_title = sub_title  # pyright: ignore[reportUnannotatedClassAttribute]
 
@@ -456,8 +457,9 @@ class MotherApp(App[None]):
         update_status_line(status_line, self._status_line_state())
 
     def _apply_turn_usage(self, usage: TurnUsage) -> None:
-        """Accumulate normalized turn statistics and refresh the status line."""
+        """Accumulate normalized turn statistics and refresh runtime chrome."""
         self.app_session.apply_turn_usage(usage)
+        self._update_subtitle()
         self._update_statusline()
 
     def capture_clipboard_image(self) -> str | None:

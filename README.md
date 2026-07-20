@@ -10,7 +10,7 @@ It supports three modes:
 
 - **Chat mode**: conversational answers only
 - **Agent mode**: still conversational, but the model may use tools and then report findings before waiting for your next input. Use `/agent` to toggle it on quickly, or `/agent standard` / `/agent conversational` to select it explicitly.
-- **Deep research mode**: activated with `/agent deep research` (or via the `/agent` inline profile picker); Mother switches to a dedicated research workflow that first proposes a plan, waits for approval or scope changes, then runs bounded web-research rounds and a final synthesis using only web search/fetch tools
+- **Deep research mode**: activated with `/agent deep research` (or via the `/agent` inline profile picker); Mother proposes a plan, waits for approval or scope changes, then runs bounded web-research rounds and a final synthesis using only web search/fetch tools. After the report, it switches to normal no-tool chat for discussing the findings; run `/agent deep research` again to begin another research task.
 
 ## Why Mother?
 
@@ -365,6 +365,9 @@ Unlike standard agent mode, deep research is not just a prompt instruction. When
 3. revise the plan if you change scope
 4. run bounded search/fetch research rounds with only `web_search` and `web_fetch`
 5. write a final synthesized report without tools
+6. switch to normal no-tool chat so you can discuss, question, or refine the report without triggering another research plan
+
+After a report, the header shows `[CHAT]` and the status line shows `A:chat`. To start a separate deep-research workflow, explicitly run `/agent deep research` again.
 
 This keeps standard agent mode unchanged: one conversational tool step per turn, with `bash` still available there.
 

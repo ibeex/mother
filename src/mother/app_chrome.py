@@ -30,8 +30,11 @@ def subtitle_text(
     model_name: str,
     agent_mode: bool,
     agent_profile: AgentProfile,
+    deep_research_completed: bool = False,
 ) -> str:
     """Build the app subtitle for the current model and runtime mode."""
+    if deep_research_completed:
+        return f"{model_name} [CHAT]"
     if not agent_mode:
         return model_name
     if agent_profile == "deep_research":

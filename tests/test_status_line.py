@@ -49,6 +49,19 @@ def test_subtitle_shows_research_indicator() -> None:
     assert "[RESEARCH]" in app.sub_title
 
 
+def test_completed_research_shows_chat_in_runtime_chrome() -> None:
+    app = MotherApp()
+    app.agent_mode = True
+    app.agent_profile = "deep_research"
+    app.app_session.deep_research_completed = True
+    app.config = MotherConfig(model="test-model")
+
+    app._update_subtitle()  # pyright: ignore[reportPrivateUsage]
+
+    assert app.sub_title == "test-model [CHAT]"
+    assert app._status_line_state().agent_label == "chat"  # pyright: ignore[reportPrivateUsage]
+
+
 def test_subtitle_uses_response_model_name_when_enabled() -> None:
     app = MotherApp(
         config=MotherConfig(

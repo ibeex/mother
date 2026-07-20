@@ -102,6 +102,8 @@ class AppSession:
 
     def status_agent_label(self) -> str:
         """Return the compact status-line agent label."""
+        if self.deep_research_completed:
+            return "chat"
         return format_agent_status(self.agent_mode, self.agent_profile)
 
     def reasoning_options(self) -> dict[str, object]:
