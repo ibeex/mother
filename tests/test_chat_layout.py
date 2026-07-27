@@ -44,6 +44,31 @@ def test_chat_layout_renders_welcome_state_and_prompt_gutter() -> None:
     asyncio.run(run())
 
 
+def test_ctrl_e_cycles_prompt_area_size() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            prompt_area = app.query_one("#prompt-area")
+
+            await pilot.press("ctrl+e")
+            await pilot.pause()
+            assert app._prompt_area_expansion_mode == 1  # pyright: ignore[reportPrivateUsage]
+            assert str(prompt_area.styles.height) == "50h"
+
+            await pilot.press("ctrl+e")
+            await pilot.pause()
+            assert app._prompt_area_expansion_mode == 2  # pyright: ignore[reportPrivateUsage]
+            assert str(prompt_area.styles.height) == "100h"
+
+            await pilot.press("ctrl+e")
+            await pilot.pause()
+            assert app._prompt_area_expansion_mode == 0  # pyright: ignore[reportPrivateUsage]
+            assert str(prompt_area.styles.height) == "auto"
+
+    asyncio.run(run())
+
+
 def test_tool_output_is_nested_above_response_within_turn() -> None:
     async def run() -> None:
         app = MotherApp(config=MotherConfig(model="test-model"))

@@ -119,6 +119,7 @@ class MotherApp(App[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("ctrl+o", "toggle_thinking_widget", "Expand", priority=True),
+        Binding("ctrl+e", "cycle_prompt_size", "Input size", priority=True),
         ("ctrl+g", "toggle_auto_scroll", "Autoscroll"),
         ("end", "scroll_to_bottom", "Bottom"),
         ("shift+g", "scroll_to_bottom_from_chat", "Bottom"),
@@ -137,6 +138,7 @@ class MotherApp(App[None]):
         prompt_history: PromptHistory | None = None,
     ) -> None:
         super().__init__()
+        self._prompt_area_expansion_mode: int = 0
         base = config or MotherConfig()
         resolved_config = apply_cli_overrides(base, model_name, system)
         self.app_session: AppSession = AppSession(
@@ -290,6 +292,26 @@ class MotherApp(App[None]):
         if self.handle_interrupt_escape():
             _ = event.stop()
             _ = event.prevent_default()
+
+    def action_cycle_prompt_size(self) -> None:
+        """Cycle the prompt between its normal, half-screen, and full-screen sizes."""
+        prompt_area = self.query_one("#prompt-area")
+        prompt_row = self.query_one("#prompt-row")
+        prompt_input = self.prompt_input
+
+        self._prompt_area_expansion_mode = (self._prompt_area_expansion_mode + 1) % 3
+        if self._prompt_area_expansion_mode == 1:
+            prompt_area.styles.height = "50%"
+            prompt_row.styles.height = "1fr"
+            prompt_input.styles.height = "1fr"
+        elif self._prompt_area_expansion_mode == 2:
+            prompt_area.styles.height = "100%"
+            prompt_row.styles.height = "1fr"
+            prompt_input.styles.height = "1fr"
+        else:
+            prompt_area.styles.height = "auto"
+            prompt_row.styles.height = "auto"
+            prompt_input.styles.height = "4"
 
     @property
     def prompt_input(self) -> PromptTextArea:

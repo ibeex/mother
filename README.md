@@ -218,6 +218,11 @@ By default, the prompt input uses:
 
 - `Enter` to submit/send the prompt
 - `Shift+Enter` to insert a newline
+- `Ctrl+E` to cycle the input area through normal size, half-screen, and full-screen modes
+
+The footer shows `Ctrl+E Input size` along with other available shortcuts such as `Expand` and
+`Autoscroll`. Press `Ctrl+E` once to expand the input to half the available screen, again to
+use the full available screen, and a third time to return to the normal layout.
 
 If your terminal supports `Ctrl+Enter` and you prefer `Enter` for newline, you can change
 both prompt keys in `~/.config/mother/config.toml`:

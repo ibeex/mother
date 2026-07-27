@@ -49,6 +49,12 @@ class _PromptInterruptApp(Protocol):
     def handle_interrupt_escape(self) -> bool: ...
 
 
+class _PromptResizeApp(Protocol):
+    """Subset of app API used to resize the prompt area."""
+
+    def action_cycle_prompt_size(self) -> None: ...
+
+
 class _PromptHistoryApp(Protocol):
     """Subset of app API used for prompt-history navigation/search."""
 
@@ -304,6 +310,11 @@ class PromptTextArea(TextArea):
     async def _on_key(self, event: events.Key) -> None:
         """Handle configured prompt keys and Escape before TextArea inserts characters."""
         event_key = normalize_key_binding(event.key)
+        if event_key == "ctrl+e":
+            _ = event.stop()
+            _ = event.prevent_default()
+            self.action_cycle_prompt_size()
+            return
         if event_key == self._configured_key("submit_key", DEFAULT_SUBMIT_KEY):
             _ = event.stop()
             _ = event.prevent_default()
@@ -380,6 +391,11 @@ class PromptTextArea(TextArea):
         """Search backward through prompt history using the current draft as a query."""
         app = cast(_PromptHistoryApp, cast(object, self.app))
         app.action_prompt_history_search()
+
+    def action_cycle_prompt_size(self) -> None:
+        """Cycle the prompt area size through the application action."""
+        app = cast(_PromptResizeApp, cast(object, self.app))
+        app.action_cycle_prompt_size()
 
     @override
     def action_cursor_up(self, select: bool = False) -> None:
