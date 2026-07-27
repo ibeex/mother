@@ -78,6 +78,12 @@ Or install it directly from GitHub:
 uv tool install --from git+https://github.com/ibeex/mother.git mother
 ```
 
+Alternatively, install Mother with `pipx`:
+
+```bash
+pipx install git+https://github.com/ibeex/mother.git
+```
+
 ### Create your config
 
 Mother can scaffold the config file for you:
