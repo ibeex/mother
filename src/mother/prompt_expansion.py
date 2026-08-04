@@ -15,6 +15,7 @@ _FETCH_DIRECTIVE_PATTERN = re.compile(
 _MAX_FETCH_DIRECTIVES = 3
 _MAX_FETCH_CHARS_PER_SOURCE = 12_000
 _MAX_FETCH_CHARS_TOTAL = 24_000
+_MAX_YOUTUBE_TRANSCRIPT_PROMPT_CHARS = 100_000
 _PROMPT_TRUNCATED_MARKER = "[Content truncated for prompt context]"
 
 
@@ -73,22 +74,30 @@ def expand_prompt_fetch_directives(text: str, *, ca_bundle_path: str = "") -> Pr
     remaining_chars = _MAX_FETCH_CHARS_TOTAL
     limited_urls = fetch_urls[:_MAX_FETCH_DIRECTIVES]
     for index, url in enumerate(limited_urls, start=1):
-        content_limit = min(_MAX_FETCH_CHARS_PER_SOURCE, remaining_chars)
-        if content_limit <= 0:
-            sections.append(
-                "Additional fetched content was omitted because the prompt context limit was reached."
-            )
-            break
-
         try:
             result = fetch_url(url, ca_bundle_path=ca_bundle_path)
-            formatted_result = _format_fetch_result_for_prompt(result, content_limit=content_limit)
-            remaining_chars -= min(len(formatted_result), content_limit)
         except Exception as exc:
-            formatted_result = f"URL: {url}\n\n{format_fetch_error(exc)}"
-            remaining_chars -= content_limit
+            sections.extend(["", f"Source {index}", f"URL: {url}\n\n{format_fetch_error(exc)}"])
+            remaining_chars -= _MAX_FETCH_CHARS_PER_SOURCE
+            continue
 
+        is_youtube = result.mode == "youtube_transcript"
+        if is_youtube:
+            # Long-form YouTube transcripts are intentionally exempt from the
+            # bounded per-source/total prompt caps; pass them through fully.
+            content_limit = _MAX_YOUTUBE_TRANSCRIPT_PROMPT_CHARS
+        else:
+            if remaining_chars <= 0:
+                sections.append(
+                    "Additional fetched content was omitted because the prompt context limit was reached."
+                )
+                break
+            content_limit = min(_MAX_FETCH_CHARS_PER_SOURCE, remaining_chars)
+
+        formatted_result = _format_fetch_result_for_prompt(result, content_limit=content_limit)
         sections.extend(["", f"Source {index}", formatted_result])
+        if not is_youtube:
+            remaining_chars -= min(len(formatted_result), content_limit)
 
     ignored_count = len(fetch_urls) - len(limited_urls)
     if ignored_count > 0:

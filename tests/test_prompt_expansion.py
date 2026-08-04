@@ -88,3 +88,37 @@ def test_expand_prompt_fetch_directives_counts_failed_fetches_against_total_budg
     assert "Source 3" not in result.prompt_text
     assert "should not be fetched" not in result.prompt_text
     assert "Additional fetched content was omitted" in result.prompt_text
+
+
+def test_expand_prompt_fetch_directives_passes_youtube_transcript_through_without_capping() -> None:
+    long_transcript = " ".join(["segment"] * 5_000)  # ~40k chars, well over the 12k per-source cap
+    with patch(
+        "mother.prompt_expansion.fetch_url",
+        return_value=FetchResult(
+            url="https://www.youtube.com/watch?v=Zuu3GGQzknE",
+            mode="youtube_transcript",
+            content=long_transcript,
+        ),
+    ):
+        result = expand_prompt_fetch_directives(
+            "[[fetch https://www.youtube.com/watch?v=Zuu3GGQzknE]]"
+        )
+
+    assert "Source 1" in result.prompt_text
+    assert long_transcript in result.prompt_text
+    assert "Content truncated for prompt context" not in result.prompt_text
+
+
+def test_expand_prompt_fetch_directives_still_caps_non_youtube_content() -> None:
+    long_content = "y" * 20_000
+    with patch(
+        "mother.prompt_expansion.fetch_url",
+        return_value=FetchResult(
+            url="https://example.com/docs",
+            mode="jina",
+            content=long_content,
+        ),
+    ):
+        result = expand_prompt_fetch_directives("[[fetch https://example.com/docs]]")
+
+    assert "Content truncated for prompt context" in result.prompt_text
