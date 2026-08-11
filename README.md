@@ -136,6 +136,28 @@ Valid values are:
 This also affects feature wiring such as reasoning/tool behavior, so make sure every
 configured model, including `bash_checker`, uses the correct `api_type`.
 
+#### Per-model request settings
+
+Use an optional inline `model_settings` table to pass fixed PydanticAI model
+settings on every request for that model. This is useful for local
+OpenAI-compatible servers with model-specific sampling requirements:
+
+```toml
+[[models]]
+id = "ds4"
+name = "deepseek-v4-flash"
+api_type = "openai-chat"
+base_url = "http://127.0.0.1:8000/v1"
+supports_tools = true
+supports_reasoning = true
+model_settings = { temperature = 0, top_p = 1 }
+```
+
+For `ds4-server` with DSpark enabled, `temperature = 0` selects greedy decoding,
+which allows DSpark speculative decoding to run. `top_p = 1` is explicit but has
+no effect when temperature is zero. Settings are combined with Mother's reasoning
+settings; reasoning-specific options take precedence if a key overlaps.
+
 Example `~/.config/mother/keys.json`:
 
 ```json

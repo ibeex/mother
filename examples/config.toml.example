@@ -20,6 +20,9 @@ supports_tools = true
 supports_reasoning = true
 supports_images = true
 
+# Optional per-model PydanticAI request settings. For ds4-server with DSpark:
+# model_settings = { temperature = 0, top_p = 1 }
+
 # Optional: council setup
 # [council]
 # members = ["gpt-5"]
