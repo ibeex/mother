@@ -107,12 +107,16 @@ class AppSession:
         return format_agent_status(self.agent_mode, self.agent_profile)
 
     def reasoning_options(self) -> dict[str, object]:
-        """Return supported reasoning settings for the current model."""
-        return build_reasoning_options(
-            self.current_model_entry,
-            self.config.reasoning_effort,
-            self.config.openai_reasoning_summary,
+        """Return configured model defaults plus supported reasoning settings."""
+        settings = dict(self.current_model_entry.model_settings)
+        settings.update(
+            build_reasoning_options(
+                self.current_model_entry,
+                self.config.reasoning_effort,
+                self.config.openai_reasoning_summary,
+            )
         )
+        return settings
 
     def status_reasoning_effort(self) -> str | None:
         """Return the visible reasoning label for the status line."""

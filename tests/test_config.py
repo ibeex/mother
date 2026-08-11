@@ -41,6 +41,7 @@ def test_load_config_from_file(tmp_path: Path) -> None:
                 'name = "openrouter/free"',
                 'api_type = "openai-chat"',
                 "response_model_name = true",
+                "model_settings = { temperature = 0, top_p = 1 }",
                 "",
                 "[council]",
                 'members = ["gpt-5", "g3", "opus"]',
@@ -62,6 +63,7 @@ def test_load_config_from_file(tmp_path: Path) -> None:
     assert config.newline_key == "shift+enter"
     assert len(config.models) == 1
     assert config.models[0].response_model_name is True
+    assert config.models[0].model_settings == {"temperature": 0, "top_p": 1}
     assert config.system_prompt == DEFAULT_SYSTEM
     assert config.council == CouncilConfig(
         members=("gpt-5", "g3", "opus"),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 from typing import Literal, cast
@@ -32,6 +32,7 @@ class ModelEntry:
     supports_reasoning: bool = False
     supports_images: bool = False
     response_model_name: bool = False
+    model_settings: dict[str, object] = field(default_factory=dict)
 
 
 _DEFAULT_MODEL_ENTRIES: tuple[ModelEntry, ...] = ()
@@ -76,6 +77,13 @@ def _optional_bool(raw_entry: dict[str, object], key: str) -> bool:
     return value
 
 
+def _optional_model_settings(raw_entry: dict[str, object]) -> dict[str, object]:
+    value = raw_entry.get("model_settings", {})
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+        raise ValueError("Model config field 'model_settings' must be a table.")
+    return dict(value)
+
+
 def load_model_entries(toml_data: dict[str, object]) -> list[ModelEntry]:
     """Parse ``[[models]]`` entries from TOML data."""
     raw_models = toml_data.get("models")
@@ -116,6 +124,7 @@ def load_model_entries(toml_data: dict[str, object]) -> list[ModelEntry]:
                 supports_reasoning=_optional_bool(raw_entry, "supports_reasoning"),
                 supports_images=_optional_bool(raw_entry, "supports_images"),
                 response_model_name=_optional_bool(raw_entry, "response_model_name"),
+                model_settings=_optional_model_settings(raw_entry),
             )
         )
     return entries
