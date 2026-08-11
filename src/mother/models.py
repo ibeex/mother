@@ -32,7 +32,11 @@ class ModelEntry:
     supports_reasoning: bool = False
     supports_images: bool = False
     response_model_name: bool = False
-    model_settings: dict[str, object] = field(default_factory=dict)
+    # Model settings are mutable mappings and therefore cannot participate in
+    # the generated hash for this frozen dataclass.  ``create_pydantic_model``
+    # is cached and uses ModelEntry as a cache key, so hashing this field raises
+    # ``TypeError: unhashable type: 'dict'`` on every request.
+    model_settings: dict[str, object] = field(default_factory=dict, hash=False)
 
 
 _DEFAULT_MODEL_ENTRIES: tuple[ModelEntry, ...] = ()
