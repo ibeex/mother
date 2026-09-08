@@ -10,7 +10,7 @@ from functools import cache
 from pathlib import Path
 from typing import Literal, cast
 
-import httpx
+import httpx2
 from pydantic_ai.models import Model as PydanticModel
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -169,13 +169,13 @@ def create_pydantic_model(entry: ModelEntry, ca_bundle_path: str = "") -> Pydant
     """Create and cache a pydantic-ai model instance for a registry entry."""
     api_key = resolve_api_key(entry) or None
     base_url = entry.base_url or None
-    http_client: httpx.AsyncClient | None = None
+    http_client: httpx2.AsyncClient | None = None
 
     normalized_ca_bundle_path = ca_bundle_path.strip()
     if normalized_ca_bundle_path:
         from mother.tools.web_common import build_ssl_context
 
-        http_client = httpx.AsyncClient(verify=build_ssl_context(normalized_ca_bundle_path))
+        http_client = httpx2.AsyncClient(verify=build_ssl_context(normalized_ca_bundle_path))
 
     if entry.api_type == "openai-responses":
         provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)
