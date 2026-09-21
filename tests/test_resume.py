@@ -4,13 +4,16 @@ import asyncio
 from pathlib import Path
 from time import sleep
 
+from rich.text import Text
 from textual.containers import VerticalScroll
+from textual.widgets.option_list import Option
 
 from mother import MotherApp
 from mother.app_session import AppSession
 from mother.config import MotherConfig
 from mother.models import ModelEntry
 from mother.session import SessionManager
+from mother.session_picker import build_session_picker_entry
 from mother.widgets import ConversationTurn, WelcomeBanner
 
 
@@ -91,6 +94,28 @@ def test_list_sessions_is_newest_first_for_the_requested_cwd(tmp_path: Path) -> 
     sessions = SessionManager.list_sessions(sessions_dir=sessions_dir, cwd=cwd)
 
     assert [session.path for session in sessions] == [second.path, first.path]
+
+
+def test_session_picker_entry_shows_and_searches_the_first_prompt(tmp_path: Path) -> None:
+    manager = SessionManager.create(sessions_dir=tmp_path / "sessions", cwd=tmp_path / "project")
+    manager.append("user", "Build a resumable session picker with useful transcript context.")
+    manager.record_prompt(
+        user_text="Build a resumable session picker with useful transcript context.",
+        prompt_text="expanded prompt",
+        system_prompt="system",
+        agent_mode=False,
+        tool_names=[],
+        attachment_paths=[],
+    )
+    manager.append("assistant", "I can do that.")
+
+    entry = build_session_picker_entry(manager)
+
+    assert entry.preview == "Build a resumable session picker with useful transcript context."
+    assert entry.message_count == 2
+    assert entry.preview in entry.label
+    assert "2 messages" in entry.label
+    assert isinstance(Option(Text(entry.label)).prompt, Text)
 
 
 def test_load_last_rejects_an_unknown_session_version(tmp_path: Path) -> None:
