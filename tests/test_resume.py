@@ -9,9 +9,10 @@ from textual.containers import VerticalScroll
 from textual.widgets.option_list import Option
 
 from mother import MotherApp
-from mother.app_session import AppSession
+from mother.app_session import RESUME_HISTORY_TURN_LIMIT, AppSession
 from mother.config import MotherConfig
 from mother.models import ModelEntry
+from mother.picker_search import PickerSearchField, filter_picker_items
 from mother.session import SessionManager
 from mother.session_picker import build_session_picker_entry
 from mother.widgets import ConversationTurn, WelcomeBanner
@@ -116,6 +117,73 @@ def test_session_picker_entry_shows_and_searches_the_first_prompt(tmp_path: Path
     assert entry.preview in entry.label
     assert "2 messages" in entry.label
     assert isinstance(Option(Text(entry.label)).prompt, Text)
+
+
+def test_picker_searches_full_transcript_not_just_the_preview(tmp_path: Path) -> None:
+    manager = SessionManager.create(sessions_dir=tmp_path / "sessions", cwd=tmp_path / "project")
+    manager.append("user", "A short opening question")
+    manager.append("assistant", "The searchable needle is in this response.")
+    entry = build_session_picker_entry(manager)
+
+    matches = filter_picker_items(
+        [entry],
+        "needle",
+        lambda item: (PickerSearchField(item.search_text),),
+    )
+
+    assert matches == [entry]
+
+
+def test_load_reference_accepts_a_session_id(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    cwd = tmp_path / "project"
+    manager = SessionManager.create(sessions_dir=sessions_dir, cwd=cwd)
+    manager.append("user", "hello")
+
+    session_id = manager.header.get("id")
+    assert isinstance(session_id, str)
+    loaded = SessionManager.load_reference(session_id, sessions_dir=sessions_dir, cwd=cwd)
+
+    assert loaded.path == manager.path
+
+
+def test_resume_bounds_model_context_but_keeps_the_full_transcript(tmp_path: Path) -> None:
+    manager = SessionManager.create(sessions_dir=tmp_path / "sessions", cwd=tmp_path / "project")
+    turn_count = RESUME_HISTORY_TURN_LIMIT + 1
+    for number in range(turn_count):
+        manager.append("user", f"question {number}")
+        manager.append("assistant", f"answer {number}")
+
+    app_session = AppSession(_config(), session_manager=manager, loaded_session=True)
+
+    assert len(app_session.conversation_state.transcript_messages) == turn_count * 2
+    assert len(app_session.conversation_state.message_history) == RESUME_HISTORY_TURN_LIMIT * 2
+    assert app_session.conversation_state.transcript_messages[0].content == "question 0"
+    assert app_session.conversation_state.transcript_messages[-2].content == (
+        f"question {turn_count - 1}"
+    )
+
+
+def test_resume_replays_model_and_agent_mode_events(tmp_path: Path) -> None:
+    config = MotherConfig(
+        model="first-model",
+        models=[
+            ModelEntry(id="first-model", name="first", api_type="openai-responses"),
+            ModelEntry(id="final-model", name="final", api_type="openai-responses"),
+        ],
+    )
+    manager = SessionManager.create(
+        sessions_dir=tmp_path / "sessions", cwd=tmp_path / "project", model_name="first-model"
+    )
+    manager.record_event("model_change", {"model": "final-model"})
+    manager.record_event("agent_mode_change", {"enabled": True, "profile": "deep_research"})
+
+    app_session = AppSession(config, session_manager=manager, loaded_session=True)
+
+    assert app_session.config.model == "final-model"
+    assert app_session.current_model_entry.id == "final-model"
+    assert app_session.agent_mode is True
+    assert app_session.agent_profile == "deep_research"
 
 
 def test_load_last_rejects_an_unknown_session_version(tmp_path: Path) -> None:

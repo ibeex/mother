@@ -939,17 +939,15 @@ class MotherApp(App[None]):
 @click.option("--resume", "resume_picker", "-r", is_flag=True, help="Choose a session to resume.")
 @click.option(
     "--session",
-    "session_path",
-    type=click.Path(path_type=Path),
+    "session_reference",
     default=None,
-    help="Resume a session JSONL path.",
+    help="Resume a session JSONL path or session ID.",
 )
 @click.option(
     "--fork",
-    "fork_path",
-    type=click.Path(path_type=Path),
+    "fork_reference",
     default=None,
-    help="Fork a session into a new log.",
+    help="Fork a session JSONL path or session ID into a new log.",
 )
 @click.option(
     "--cleanup-sessions",
@@ -976,8 +974,8 @@ def cli(
     continue_last: bool,
     session_name: str | None,
     resume_picker: bool,
-    session_path: Path | None,
-    fork_path: Path | None,
+    session_reference: str | None,
+    fork_reference: str | None,
     session_cleanup_age: str | None,
     init_config: bool,
     print_config_path: bool,
@@ -1034,11 +1032,11 @@ def cli(
         return
 
     session_manager: SessionManager | None = None
-    source_path = fork_path or session_path
-    if source_path is not None:
+    source_reference = fork_reference or session_reference
+    if source_reference is not None:
         try:
-            session_manager = SessionManager.load_path(
-                source_path, markdown_dir=Path(config.session_markdown_dir)
+            session_manager = SessionManager.load_reference(
+                source_reference, markdown_dir=Path(config.session_markdown_dir)
             )
         except (RuntimeError, ValueError) as exc:
             click.echo(str(exc))
@@ -1075,7 +1073,7 @@ def cli(
         click.echo(f"Configured default model {config.model!r} was not found in {CONFIG_FILE}.")
         return
 
-    if fork_path is not None:
+    if fork_reference is not None:
         source = session_manager
         if source is None:
             raise AssertionError("Fork source must be loaded")
@@ -1103,7 +1101,9 @@ def cli(
     app = MotherApp(
         config=config,
         session_manager=session_manager,
-        loaded_session=continue_last or session_path is not None or fork_path is not None,
+        loaded_session=(
+            continue_last or session_reference is not None or fork_reference is not None
+        ),
     )
     if resume_picker:
         _ = app.call_after_refresh(app.action_resume)

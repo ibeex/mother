@@ -76,13 +76,17 @@ class ConversationState:
         )
 
 
-def restore_conversation(entries: Iterable[SessionEntry]) -> ConversationState:
-    """Rebuild text-only model history from persisted completed message pairs.
+def restore_conversation(
+    entries: Iterable[SessionEntry], *, max_history_turns: int | None = None
+) -> ConversationState:
+    """Rebuild text-only state from persisted completed message pairs.
 
-    Tool calls are intentionally not restored: they were persisted separately and
-    cannot safely be resumed as an in-flight model request.
+    ``max_history_turns`` bounds only model-visible context. The complete
+    transcript remains available for rendering and session search. Tool calls
+    are intentionally not restored: they were persisted separately and cannot
+    safely be resumed as an in-flight model request.
     """
-    state = ConversationState()
+    turns: list[tuple[str, str]] = []
     pending_user: str | None = None
     for entry in entries:
         if entry["type"] != "message":
@@ -90,7 +94,24 @@ def restore_conversation(entries: Iterable[SessionEntry]) -> ConversationState:
         if entry["role"] == "user":
             pending_user = entry["content"]
         elif entry["role"] == "assistant" and pending_user is not None:
-            content = entry["content"]
-            state.append_synthetic_turn(pending_user, content)
+            turns.append((pending_user, entry["content"]))
             pending_user = None
+
+    state = ConversationState()
+    for user_text, assistant_text in turns:
+        state.append_transcript_turn(user_text, assistant_text)
+    history_turns = (
+        turns
+        if max_history_turns is None
+        else turns[-max_history_turns:]
+        if max_history_turns > 0
+        else []
+    )
+    for user_text, assistant_text in history_turns:
+        state.message_history.extend(
+            [
+                ModelRequest(parts=[UserPromptPart(user_text)]),
+                ModelResponse(parts=[TextPart(content=assistant_text)]),
+            ]
+        )
     return state

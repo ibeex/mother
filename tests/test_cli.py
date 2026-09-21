@@ -1,12 +1,15 @@
 """Tests for Mother's CLI entrypoint."""
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 from mother import MotherConfig, cli
 from mother.models import ModelEntry
+from mother.session import SessionManager
 
 
 def _test_model_entry(model_id: str = "gpt-5") -> ModelEntry:
@@ -120,6 +123,79 @@ def test_cli_custom_system() -> None:
         call_kwargs = mock_app_cls.call_args
         passed_config: MotherConfig = call_kwargs.kwargs["config"]  # pyright: ignore[reportAny]
         assert passed_config.system_prompt == "Be a pirate."
+
+
+def test_cli_resumes_session_by_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    config = MotherConfig(model="gpt-5", models=[_test_model_entry()])
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.chdir(tmp_path)
+    source = SessionManager.create(sessions_dir=sessions_dir, cwd=Path.cwd(), model_name="gpt-5")
+    source.append("user", "resume me")
+    session_id = source.header.get("id")
+    assert isinstance(session_id, str)
+    with (
+        patch("mother.mother.load_config", return_value=config),
+        patch("mother.mother.MotherApp") as mock_app_cls,
+        patch("mother.session.DEFAULT_SESSIONS_DIR", sessions_dir),
+    ):
+        mock_app = MagicMock()
+        mock_app_cls.return_value = mock_app
+        result = runner.invoke(cli, ["--session", session_id])
+
+    assert result.exit_code == 0
+    passed_manager = cast(SessionManager, mock_app_cls.call_args.kwargs["session_manager"])
+    assert passed_manager.path == source.path
+    assert mock_app_cls.call_args.kwargs["loaded_session"] is True
+    mock_app.run.assert_called_once()  # pyright: ignore[reportAny]
+
+
+def test_cli_forks_session_by_id_into_a_distinct_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runner = CliRunner()
+    config = MotherConfig(model="gpt-5", models=[_test_model_entry()])
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.chdir(tmp_path)
+    source = SessionManager.create(sessions_dir=sessions_dir, cwd=Path.cwd(), model_name="gpt-5")
+    source.append("user", "fork me")
+    source.append("assistant", "forked")
+    session_id = source.header.get("id")
+    assert isinstance(session_id, str)
+    with (
+        patch("mother.mother.load_config", return_value=config),
+        patch("mother.mother.MotherApp") as mock_app_cls,
+        patch("mother.session.DEFAULT_SESSIONS_DIR", sessions_dir),
+    ):
+        mock_app = MagicMock()
+        mock_app_cls.return_value = mock_app
+        result = runner.invoke(cli, ["--fork", session_id])
+
+    assert result.exit_code == 0
+    fork = cast(SessionManager, mock_app_cls.call_args.kwargs["session_manager"])
+    assert fork.path != source.path
+    assert [
+        (entry["role"], entry["content"])
+        for entry in fork.load_entries()
+        if entry["type"] == "message"
+    ] == [("user", "fork me"), ("assistant", "forked")]
+    fork_event = next(entry for entry in fork.load_entries() if entry["type"] == "event")
+    assert fork_event["name"] == "forked_from"
+    assert fork_event["details"]["id"] == session_id
+
+
+def test_cli_reports_an_unknown_session_id() -> None:
+    runner = CliRunner()
+    config = MotherConfig(model="gpt-5", models=[_test_model_entry()])
+    with (
+        patch("mother.mother.load_config", return_value=config),
+        patch("mother.mother.MotherApp") as mock_app_cls,
+    ):
+        result = runner.invoke(cli, ["--session", "does-not-exist"])
+
+    assert result.exit_code == 0
+    assert "was not found as a path or ID" in result.output
+    mock_app_cls.assert_not_called()
 
 
 def test_cli_exits_before_tui_when_no_models_are_configured() -> None:

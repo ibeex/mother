@@ -454,6 +454,30 @@ class SessionManager:
         return manager
 
     @classmethod
+    def load_reference(
+        cls,
+        reference: str | Path,
+        *,
+        sessions_dir: Path | None = None,
+        markdown_dir: Path | None = None,
+        cwd: Path | None = None,
+    ) -> SessionManager:
+        """Load a session addressed by an existing path or an ID in this directory."""
+        raw_reference = str(reference)
+        candidate = Path(raw_reference).expanduser()
+        if candidate.exists():
+            return cls.load_path(candidate, markdown_dir=markdown_dir)
+
+        for manager in cls.list_sessions(
+            sessions_dir=sessions_dir, markdown_dir=markdown_dir, cwd=cwd
+        ):
+            if manager.header.get("id") == raw_reference:
+                if _session_has_live_foreign_process(manager.header):
+                    raise RuntimeError("Session is still active in another Mother instance.")
+                return manager
+        raise ValueError(f"Session {raw_reference!r} was not found as a path or ID.")
+
+    @classmethod
     def list_sessions(
         cls,
         *,

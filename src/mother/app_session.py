@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 from pydantic_ai import Tool
 
@@ -13,6 +14,7 @@ from mother.agent_modes import (
     AgentProfile,
     RuntimeMode,
     format_agent_status,
+    normalize_agent_profile,
     resolve_runtime_mode,
 )
 from mother.bash_execution import BashExecution, format_for_context
@@ -28,11 +30,13 @@ from mother.reasoning import (
     supports_openai_reasoning_summary,
     supports_reasoning_effort,
 )
-from mother.session import SessionManager
+from mother.session import SessionEntry, SessionManager
 from mother.stats import SessionUsage, TurnUsage
 from mother.system_prompt import build_system_prompt
 from mother.tools import get_default_tools
 from mother.tools.bash_guard import BashGuardDecision
+
+RESUME_HISTORY_TURN_LIMIT = 40
 
 
 class CouncilModelResolutionError(ValueError):
@@ -54,18 +58,15 @@ class AppSession:
         self.session_manager: SessionManager | None = session_manager
         self.loaded_session: bool = loaded_session
         entries = session_manager.load_entries() if loaded_session and session_manager else []
-        self.conversation_state: ConversationState = restore_conversation(entries)
-        latest_prompt = next(
-            (entry for entry in reversed(entries) if entry["type"] == "prompt"),
-            None,
+        self.conversation_state: ConversationState = restore_conversation(
+            entries,
+            max_history_turns=RESUME_HISTORY_TURN_LIMIT if loaded_session else None,
         )
-        self.agent_mode: bool = (
-            latest_prompt["agent_mode"] if latest_prompt is not None else config.tools_enabled
-        )
-        self.restored_system_prompt: str | None = (
-            latest_prompt["system_prompt"] if latest_prompt is not None else None
-        )
+        self.agent_mode: bool = config.tools_enabled
+        self.restored_system_prompt: str | None = None
         self.agent_profile: AgentProfile = DEFAULT_AGENT_PROFILE
+        if loaded_session and session_manager is not None:
+            self._restore_session_settings(session_manager, entries)
         self.pending_executions: list[BashExecution] = []
         self.pending_image_attachments: dict[str, Path] = {}
         self.session_usage: SessionUsage = SessionUsage()
@@ -83,26 +84,53 @@ class AppSession:
 
     def resume_session(self, manager: SessionManager) -> None:
         """Replace this session's persisted conversation with a selected session."""
-        saved_model = manager.header.get("model")
-        if (
-            isinstance(saved_model, str)
-            and find_model_entry(saved_model, self.config.models) is not None
-        ):
-            self.config = replace(self.config, model=saved_model)
-            self.current_model_entry = resolve_model_entry(saved_model, self.config.models)
         entries = manager.load_entries()
         self.session_manager = manager
         self.loaded_session = True
-        self.conversation_state = restore_conversation(entries)
+        self.conversation_state = restore_conversation(
+            entries, max_history_turns=RESUME_HISTORY_TURN_LIMIT
+        )
+        self._restore_session_settings(manager, entries)
+
+    def _restore_session_settings(
+        self, manager: SessionManager, entries: list[SessionEntry]
+    ) -> None:
+        """Replay saved model and agent-mode transitions for a resumed session."""
+        saved_model = manager.header.get("model")
+        if isinstance(saved_model, str):
+            self._restore_model(saved_model)
+
         latest_prompt = next(
             (entry for entry in reversed(entries) if entry["type"] == "prompt"), None
         )
-        self.agent_mode = (
-            latest_prompt["agent_mode"] if latest_prompt is not None else self.config.tools_enabled
-        )
-        self.restored_system_prompt = (
-            latest_prompt["system_prompt"] if latest_prompt is not None else None
-        )
+        if latest_prompt is not None:
+            self.agent_mode = latest_prompt["agent_mode"]
+            self.restored_system_prompt = latest_prompt["system_prompt"]
+
+        for entry in entries:
+            if entry["type"] != "event":
+                continue
+            details = entry["details"]
+            if entry["name"] == "model_change":
+                model = cast(object, details.get("model"))
+                if isinstance(model, str):
+                    self._restore_model(model)
+            elif entry["name"] == "agent_mode_change":
+                enabled = cast(object, details.get("enabled"))
+                if isinstance(enabled, bool):
+                    self.agent_mode = enabled
+                profile = cast(object, details.get("profile"))
+                if isinstance(profile, str):
+                    restored_profile = normalize_agent_profile(profile)
+                    if restored_profile is not None:
+                        self.agent_profile = restored_profile
+
+    def _restore_model(self, model_id: str) -> None:
+        """Select a persisted model only when it is still configured locally."""
+        if find_model_entry(model_id, self.config.models) is None:
+            return
+        self.config = replace(self.config, model=model_id)
+        self.current_model_entry = resolve_model_entry(model_id, self.config.models)
 
     @property
     def has_history(self) -> bool:

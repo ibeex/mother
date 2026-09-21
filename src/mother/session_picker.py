@@ -27,6 +27,7 @@ class SessionPickerEntry:
     session: SessionManager
     title: str
     preview: str
+    search_text: str
     message_count: int
 
     @property
@@ -45,6 +46,7 @@ def build_session_picker_entry(session: SessionManager) -> SessionPickerEntry:
         session=session,
         title=_format_session_date(session),
         preview=_first_user_prompt(entries),
+        search_text=_transcript_text(entries),
         message_count=sum(1 for entry in entries if entry["type"] == "message"),
     )
 
@@ -67,6 +69,11 @@ def _first_user_prompt(entries: list[SessionEntry]) -> str:
         if entry["type"] == "message" and entry["role"] == "user" and entry["content"].strip():
             return _truncate_preview(entry["content"])
     return "No prompt recorded"
+
+
+def _transcript_text(entries: list[SessionEntry]) -> str:
+    """Return all persisted text that should be discoverable in picker search."""
+    return "\n".join(entry["content"] for entry in entries if entry["type"] == "message")
 
 
 def _truncate_preview(text: str) -> str:
@@ -112,6 +119,7 @@ class SessionPickerScreen(ModalScreen[SessionManager | None]):
             lambda entry: (
                 PickerSearchField(entry.session.name or entry.preview, primary=True),
                 PickerSearchField(entry.preview),
+                PickerSearchField(entry.search_text),
                 PickerSearchField(entry.title),
                 PickerSearchField(str(entry.session.path)),
             ),
