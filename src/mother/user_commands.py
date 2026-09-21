@@ -12,6 +12,9 @@ _REASONING_COMMAND = "/reasoning"
 _COUNCIL_COMMAND = "/council"
 _HELP_COMMAND = "/help"
 _NEW_COMMAND = "/new"
+_SESSION_COMMAND = "/session"
+_NAME_COMMAND = "/name"
+_RESUME_COMMAND = "/resume"
 
 
 @dataclass
@@ -33,6 +36,22 @@ class SaveSessionCommand:
 @dataclass
 class NewSessionCommand:
     command: str = "/new"
+
+
+@dataclass
+class SessionInfoCommand:
+    command: str = _SESSION_COMMAND
+
+
+@dataclass
+class ResumeSessionCommand:
+    command: str = _RESUME_COMMAND
+
+
+@dataclass
+class NameSessionCommand:
+    name: str | None = None
+    command: str = _NAME_COMMAND
 
 
 @dataclass
@@ -106,6 +125,9 @@ def should_submit_on_enter(text: str) -> bool:
     return isinstance(
         parsed,
         NewSessionCommand
+        | SessionInfoCommand
+        | NameSessionCommand
+        | ResumeSessionCommand
         | SaveSessionCommand
         | QuitAppCommand
         | AgentModeCommand
@@ -134,6 +156,9 @@ def parse_user_input(
     NormalPrompt
     | SaveSessionCommand
     | NewSessionCommand
+    | SessionInfoCommand
+    | NameSessionCommand
+    | ResumeSessionCommand
     | QuitAppCommand
     | AgentModeCommand
     | ModelsCommand
@@ -172,6 +197,14 @@ def parse_user_input(
         return SaveSessionCommand(command=normalized)
     if normalized == _NEW_COMMAND:
         return NewSessionCommand()
+    if normalized == _SESSION_COMMAND:
+        return SessionInfoCommand()
+    if normalized == _RESUME_COMMAND:
+        return ResumeSessionCommand()
+    if normalized == _NAME_COMMAND:
+        return NameSessionCommand()
+    if normalized.startswith(f"{_NAME_COMMAND} "):
+        return NameSessionCommand(name=candidate[len(_NAME_COMMAND) :].strip() or None)
     if normalized in {"/quit", "/exit"}:
         return QuitAppCommand(command=normalized)
     if normalized == _AGENT_COMMAND:

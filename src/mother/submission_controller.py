@@ -19,10 +19,13 @@ from mother.user_commands import (
     CouncilCommand,
     HelpCommand,
     ModelsCommand,
+    NameSessionCommand,
     NewSessionCommand,
     QuitAppCommand,
     ReasoningCommand,
+    ResumeSessionCommand,
     SaveSessionCommand,
+    SessionInfoCommand,
     ShellCommand,
     parse_user_input,
 )
@@ -46,6 +49,9 @@ class SubmissionControllerCallbacks:
     set_active_shell_worker: Callable[[object | None], None]
     action_save_session: Callable[[], None]
     action_new_session: Callable[[], None]
+    action_show_session_info: Callable[[], None]
+    action_name_session: Callable[[str | None], None]
+    action_resume: Callable[[], None]
     action_quit_app: Callable[[], None]
     action_toggle_agent_mode: Callable[[], None]
     action_set_agent_profile: Callable[[AgentProfile], None]
@@ -74,6 +80,15 @@ class SubmissionController:
             return True
         if isinstance(parsed, NewSessionCommand):
             self.callbacks.action_new_session()
+            return True
+        if isinstance(parsed, SessionInfoCommand):
+            self.callbacks.action_show_session_info()
+            return True
+        if isinstance(parsed, NameSessionCommand):
+            self.callbacks.action_name_session(parsed.name)
+            return True
+        if isinstance(parsed, ResumeSessionCommand):
+            self.callbacks.action_resume()
             return True
         if isinstance(parsed, QuitAppCommand):
             self.callbacks.action_quit_app()

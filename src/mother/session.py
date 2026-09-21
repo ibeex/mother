@@ -106,6 +106,13 @@ class ToolResultEntry(TypedDict):
     is_error: bool
 
 
+class SessionInfoEntry(TypedDict):
+    type: Literal["session_info"]
+    id: str
+    ts: str
+    name: str
+
+
 class EventEntry(TypedDict):
     type: Literal["event"]
     id: str
@@ -114,7 +121,9 @@ class EventEntry(TypedDict):
     details: dict[str, JsonValue]
 
 
-SessionEntry = MessageEntry | PromptEntry | ToolCallEntry | ToolResultEntry | EventEntry
+SessionEntry = (
+    MessageEntry | PromptEntry | ToolCallEntry | ToolResultEntry | SessionInfoEntry | EventEntry
+)
 
 
 def default_markdown_export_dir() -> Path:
@@ -384,6 +393,106 @@ class SessionManager:
         return manager
 
     @classmethod
+    def load_last(
+        cls,
+        *,
+        sessions_dir: Path | None = None,
+        markdown_dir: Path | None = None,
+        cwd: Path | None = None,
+    ) -> SessionManager | None:
+        """Load the current working directory's last active session for resuming."""
+        sessions_root = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        resolved_sessions_dir = sessions_dir_for_cwd(sessions_root, cwd)
+        last_file = resolved_sessions_dir / LAST_SESSION_FILE_NAME
+        if not last_file.exists():
+            return None
+
+        raw_path = last_file.read_text(encoding="utf-8").strip()
+        if not raw_path:
+            return None
+        path = Path(raw_path).expanduser()
+        header = _read_session_header(path)
+        if header is None or header.get("version") != SESSION_VERSION:
+            return None
+        if _session_has_live_foreign_process(header):
+            raise RuntimeError(
+                "Last session is still active in another Mother instance. Use /save there instead."
+            )
+
+        manager = cls(
+            path=path,
+            header=header,
+            sessions_dir=resolved_sessions_dir,
+            markdown_dir=(markdown_dir or default_markdown_export_dir()).expanduser(),
+            _flushed=True,
+        )
+        manager.counter = len(manager._load_entries())
+        return manager
+
+    @classmethod
+    def load_path(
+        cls,
+        path: Path,
+        *,
+        markdown_dir: Path | None = None,
+    ) -> SessionManager:
+        """Load a specific persisted session after validating its header."""
+        resolved_path = path.expanduser().resolve()
+        header = _read_session_header(resolved_path)
+        if header is None or header.get("version") != SESSION_VERSION:
+            raise ValueError("Session is missing or uses an unsupported version.")
+        if _session_has_live_foreign_process(header):
+            raise RuntimeError("Session is still active in another Mother instance.")
+        manager = cls(
+            path=resolved_path,
+            header=header,
+            sessions_dir=resolved_path.parent,
+            markdown_dir=(markdown_dir or default_markdown_export_dir()).expanduser(),
+            _flushed=True,
+        )
+        manager.counter = len(manager._load_entries())
+        return manager
+
+    @classmethod
+    def list_sessions(
+        cls,
+        *,
+        sessions_dir: Path | None = None,
+        markdown_dir: Path | None = None,
+        cwd: Path | None = None,
+    ) -> list[SessionManager]:
+        """Return valid sessions for a working directory, newest file first."""
+        sessions_root = (sessions_dir or DEFAULT_SESSIONS_DIR).expanduser()
+        resolved_cwd = (cwd or Path.cwd()).expanduser().resolve()
+        resolved_sessions_dir = sessions_dir_for_cwd(sessions_root, resolved_cwd)
+        if not resolved_sessions_dir.exists():
+            return []
+
+        managers: list[SessionManager] = []
+        for path in sorted(
+            resolved_sessions_dir.glob("*.jsonl"),
+            key=lambda candidate: candidate.stat().st_mtime,
+            reverse=True,
+        ):
+            header = _read_session_header(path)
+            if (
+                header is None
+                or header.get("version") != SESSION_VERSION
+                or header.get("cwd") != str(resolved_cwd)
+            ):
+                continue
+            manager = cls(
+                path=path,
+                header=header,
+                sessions_dir=resolved_sessions_dir,
+                markdown_dir=(markdown_dir or default_markdown_export_dir()).expanduser(),
+                _flushed=True,
+            )
+            manager.counter = len(manager._load_entries())
+            managers.append(manager)
+        return managers
+
+    @classmethod
     def save_last(
         cls,
         *,
@@ -519,6 +628,38 @@ class SessionManager:
         with self._lock:
             self._write(entry)
 
+    @property
+    def name(self) -> str | None:
+        """Return the latest user-assigned name for this session."""
+        for entry in reversed(self._load_entries()):
+            if entry["type"] == "session_info" and entry["name"]:
+                return entry["name"]
+        return None
+
+    def set_name(self, name: str) -> None:
+        """Persist a human-readable name used by session pickers."""
+        cleaned = name.strip()
+        if not cleaned:
+            raise ValueError("Session name cannot be empty.")
+        entry: SessionInfoEntry = {
+            "type": "session_info",
+            "id": self._next_entry_id(),
+            "ts": datetime.now(UTC).isoformat(),
+            "name": cleaned,
+        }
+        with self._lock:
+            self._write(entry)
+
+    def delete(self) -> None:
+        """Trash this log when supported, otherwise remove it permanently."""
+        with self._lock:
+            self._clear_last_pointer()
+            trash = shutil.which("trash")
+            if trash is not None and self.path.exists():
+                _ = subprocess.run([trash, str(self.path)], check=False)
+                return
+            self.path.unlink(missing_ok=True)
+
     def record_event(self, name: str, details: dict[str, object] | None = None) -> None:
         """Record a session lifecycle event such as model or mode changes."""
         entry: EventEntry = {
@@ -564,6 +705,10 @@ class SessionManager:
         with self.path.open("a", encoding="utf-8") as handle:
             _ = handle.write(json.dumps(obj, ensure_ascii=False) + "\n")
 
+    def load_entries(self) -> list[SessionEntry]:
+        """Return the persisted entries in this session's JSONL file."""
+        return self._load_entries()
+
     def _load_entries(self) -> list[SessionEntry]:
         entries: list[SessionEntry] = []
         with self.path.open(encoding="utf-8") as handle:
@@ -581,6 +726,8 @@ class SessionManager:
                     entries.append(cast(ToolCallEntry, cast(object, obj)))
                 elif entry_type == "tool_result":
                     entries.append(cast(ToolResultEntry, cast(object, obj)))
+                elif entry_type == "session_info":
+                    entries.append(cast(SessionInfoEntry, cast(object, obj)))
                 elif entry_type == "event":
                     entries.append(cast(EventEntry, cast(object, obj)))
         return entries
@@ -775,6 +922,8 @@ class SessionManager:
             return self._render_tool_call_entry(entry)
         if entry["type"] == "tool_result":
             return self._render_tool_result_entry(entry)
+        if entry["type"] == "session_info":
+            return [f"### Session Name\n\n{entry['name']}\n\n---\n"]
         return self._render_event_entry(entry)
 
     def _render_message_entry(self, entry: MessageEntry) -> list[str]:

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+
+from mother.session import SessionEntry
 
 ConversationRole = Literal["user", "assistant"]
 
@@ -71,3 +74,23 @@ class ConversationState:
         return "\n\n".join(
             f"{message.role.capitalize()}: {message.content}" for message in messages
         )
+
+
+def restore_conversation(entries: Iterable[SessionEntry]) -> ConversationState:
+    """Rebuild text-only model history from persisted completed message pairs.
+
+    Tool calls are intentionally not restored: they were persisted separately and
+    cannot safely be resumed as an in-flight model request.
+    """
+    state = ConversationState()
+    pending_user: str | None = None
+    for entry in entries:
+        if entry["type"] != "message":
+            continue
+        if entry["role"] == "user":
+            pending_user = entry["content"]
+        elif entry["role"] == "assistant" and pending_user is not None:
+            content = entry["content"]
+            state.append_synthetic_turn(pending_user, content)
+            pending_user = None
+    return state

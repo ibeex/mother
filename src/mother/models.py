@@ -83,9 +83,12 @@ def _optional_bool(raw_entry: dict[str, object], key: str) -> bool:
 
 def _optional_model_settings(raw_entry: dict[str, object]) -> dict[str, object]:
     value = raw_entry.get("model_settings", {})
-    if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
+    if not isinstance(value, dict):
         raise ValueError("Model config field 'model_settings' must be a table.")
-    return dict(value)
+    raw_settings = cast(dict[object, object], value)
+    if not all(isinstance(key, str) for key in raw_settings):
+        raise ValueError("Model config field 'model_settings' must be a table.")
+    return {key: setting for key, setting in raw_settings.items() if isinstance(key, str)}
 
 
 def load_model_entries(toml_data: dict[str, object]) -> list[ModelEntry]:

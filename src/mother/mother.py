@@ -54,6 +54,7 @@ from mother.runtime_coordinator import RuntimeCoordinator
 from mother.runtime_presentation import RuntimePresentationController, RuntimePresentationHost
 from mother.runtime_tool_events import handle_runtime_tool_event
 from mother.session import SessionManager, format_markdown_export, parse_session_cleanup_age
+from mother.session_picker import SessionPickerScreen
 from mother.session_save import save_session_markdown
 from mother.settings_controller import SettingsController
 from mother.shell_controller import ShellCommandController, ShellControllerHost
@@ -135,6 +136,7 @@ class MotherApp(App[None]):
         model_name: str | None = None,
         system: str | None = None,
         session_manager: SessionManager | None = None,
+        loaded_session: bool = False,
         prompt_history: PromptHistory | None = None,
     ) -> None:
         super().__init__()
@@ -144,6 +146,7 @@ class MotherApp(App[None]):
         self.app_session: AppSession = AppSession(
             resolved_config,
             session_manager=session_manager,
+            loaded_session=loaded_session,
         )
         self.bind(normalize_key_binding(resolved_config.submit_key), "submit", description="Send")
         self.theme = self.config.theme  # pyright: ignore[reportUnannotatedClassAttribute]
@@ -244,9 +247,31 @@ class MotherApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        self.current_model_entry = resolve_model_entry(self.config.model, self.config.models)
-        self.conversation_state = ConversationState()
-        _ = self.query_one("#chat-view").anchor()
+        if not self.app_session.loaded_session:
+            self.current_model_entry = resolve_model_entry(self.config.model, self.config.models)
+            self.conversation_state = ConversationState()
+        chat_view = self.query_one("#chat-view", VerticalScroll)
+        _ = chat_view.anchor()
+        if self.app_session.loaded_session and self.conversation_state.transcript_messages:
+            welcome_banner = next(
+                (child for child in chat_view.children if isinstance(child, WelcomeBanner)),
+                None,
+            )
+            if welcome_banner is not None:
+                _ = chat_view.remove_children([welcome_banner])
+            messages = self.conversation_state.transcript_messages
+            turns = [
+                ConversationTurn(
+                    prompt_text=messages[index].content,
+                    response_text=messages[index + 1].content,
+                    include_thinking=False,
+                )
+                for index in range(0, len(messages) - 1, 2)
+            ]
+            if turns:
+                _ = chat_view.mount(*turns)
+                self._scroll_chat_to_end(force=True)
+        _ = self.set_interval(0.12, self._tick_response_waiting_animations)
         _ = self.set_interval(0.12, self._tick_response_waiting_animations)
         self._update_subtitle()
         self._update_statusline()
@@ -375,6 +400,31 @@ class MotherApp(App[None]):
             or self._active_turn is not None
             or self._conversation_has_visible_turns()
         )
+
+    def action_resume(self) -> None:
+        """Choose and load a previous session for this working directory."""
+
+        def selected(manager: SessionManager | None) -> None:
+            if manager is None:
+                return
+            self.app_session.resume_session(manager)
+            chat_view = self.query_one("#chat-view", VerticalScroll)
+            _ = chat_view.remove_children()
+            messages = self.conversation_state.transcript_messages
+            _ = chat_view.mount(
+                *[
+                    ConversationTurn(
+                        prompt_text=messages[i].content,
+                        response_text=messages[i + 1].content,
+                        include_thinking=False,
+                    )
+                    for i in range(0, len(messages) - 1, 2)
+                ]
+            )
+            self._update_subtitle()
+            self._update_statusline()
+
+        _ = self.push_screen(SessionPickerScreen(), selected)
 
     def action_show_models(self) -> None:
         """Open the model picker."""
@@ -522,6 +572,35 @@ class MotherApp(App[None]):
                 title="Session",
                 severity=notification.severity,
             )
+
+    def action_name_session(self, name: str | None) -> None:
+        """Set a human-readable name for the active session."""
+        if name is None:
+            self.notify("Usage: /name <name>", title="Session", severity="warning")
+            return
+        if self.session_manager is None:
+            self.notify("No persisted session is active.", title="Session", severity="warning")
+            return
+        try:
+            self.session_manager.set_name(name)
+        except ValueError as exc:
+            self.notify(str(exc), title="Session", severity="warning")
+            return
+        self.notify(f"Named session: {name.strip()}", title="Session")
+
+    def action_show_session_info(self) -> None:
+        """Show identifying information for the active persisted session."""
+        manager = self.session_manager
+        if manager is None:
+            self.notify("No persisted session is active.", title="Session", severity="warning")
+            return
+        session_id = manager.header.get("id", "unknown")
+        message_count = sum(1 for entry in manager.load_entries() if entry["type"] == "message")
+        self.notify(
+            f"ID: {session_id}\nPath: {manager.path}\nMessages: {message_count}",
+            title="Session",
+            timeout=10,
+        )
 
     def action_new_session(self) -> None:
         """Clear chat/output state and start a fresh in-memory and persisted session."""
@@ -850,6 +929,29 @@ class MotherApp(App[None]):
 @click.option("--system", "-s", default=None, help="System prompt.")
 @click.option("--save", "save_last", is_flag=True, help="Save the last unsaved session and exit.")
 @click.option(
+    "--continue",
+    "continue_last",
+    "-c",
+    is_flag=True,
+    help="Resume the last session for this directory.",
+)
+@click.option("--name", "session_name", default=None, help="Name the new or resumed session.")
+@click.option("--resume", "resume_picker", "-r", is_flag=True, help="Choose a session to resume.")
+@click.option(
+    "--session",
+    "session_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Resume a session JSONL path.",
+)
+@click.option(
+    "--fork",
+    "fork_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Fork a session into a new log.",
+)
+@click.option(
     "--cleanup-sessions",
     "--session-cleanup",
     "session_cleanup_age",
@@ -871,6 +973,11 @@ def cli(
     model: str | None,
     system: str | None,
     save_last: bool,
+    continue_last: bool,
+    session_name: str | None,
+    resume_picker: bool,
+    session_path: Path | None,
+    fork_path: Path | None,
     session_cleanup_age: str | None,
     init_config: bool,
     print_config_path: bool,
@@ -926,6 +1033,32 @@ def cli(
             click.echo(notice.message)
         return
 
+    session_manager: SessionManager | None = None
+    source_path = fork_path or session_path
+    if source_path is not None:
+        try:
+            session_manager = SessionManager.load_path(
+                source_path, markdown_dir=Path(config.session_markdown_dir)
+            )
+        except (RuntimeError, ValueError) as exc:
+            click.echo(str(exc))
+            return
+    if continue_last and session_manager is None:
+        try:
+            session_manager = SessionManager.load_last(
+                markdown_dir=Path(config.session_markdown_dir)
+            )
+        except RuntimeError as exc:
+            click.echo(str(exc))
+            return
+        if session_manager is None:
+            click.echo("No unsaved session found.")
+            return
+    if session_manager is not None:
+        saved_model = session_manager.header.get("model")
+        if model is None and isinstance(saved_model, str) and saved_model:
+            config.model = saved_model
+
     if not config.models:
         click.echo(
             f'No models configured. Edit {CONFIG_FILE}, add at least one [[models]] entry, and set model = "...".'
@@ -942,9 +1075,36 @@ def cli(
         click.echo(f"Configured default model {config.model!r} was not found in {CONFIG_FILE}.")
         return
 
-    session_manager = SessionManager.create(
-        markdown_dir=Path(config.session_markdown_dir),
-        model_name=config.model,
+    if fork_path is not None:
+        source = session_manager
+        if source is None:
+            raise AssertionError("Fork source must be loaded")
+        session_manager = SessionManager.create(
+            markdown_dir=Path(config.session_markdown_dir),
+            model_name=config.model,
+        )
+        for entry in source.load_entries():
+            if entry["type"] == "message":
+                session_manager.append(entry["role"], entry["content"])
+        session_manager.record_event(
+            "forked_from", {"path": str(source.path), "id": source.header.get("id", "")}
+        )
+    elif session_manager is None:
+        session_manager = SessionManager.create(
+            markdown_dir=Path(config.session_markdown_dir),
+            model_name=config.model,
+        )
+    if session_name is not None:
+        try:
+            session_manager.set_name(session_name)
+        except ValueError as exc:
+            click.echo(str(exc))
+            return
+    app = MotherApp(
+        config=config,
+        session_manager=session_manager,
+        loaded_session=continue_last or session_path is not None or fork_path is not None,
     )
-    app = MotherApp(config=config, session_manager=session_manager)
+    if resume_picker:
+        _ = app.call_after_refresh(app.action_resume)
     app.run()

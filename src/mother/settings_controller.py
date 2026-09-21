@@ -94,6 +94,7 @@ class SettingsController:
             return
 
         previous = session.config.reasoning_effort
+        session.restored_system_prompt = None
         session.config = replace(
             session.config,
             reasoning_effort=normalized,
@@ -169,6 +170,7 @@ class SettingsController:
         if profile is not None:
             session.agent_profile = profile
         session.agent_mode = enabled
+        session.restored_system_prompt = None
         if not session.agent_mode or session.agent_profile != "deep_research":
             session.pending_deep_research = None
             session.deep_research_completed = False

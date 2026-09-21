@@ -17,7 +17,7 @@ from mother.agent_modes import (
 )
 from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig
-from mother.conversation import ConversationState
+from mother.conversation import ConversationState, restore_conversation
 from mother.conversation_handoff import portable_history
 from mother.deep_research import PendingDeepResearch
 from mother.models import ModelEntry, find_model_entry, resolve_model_entry
@@ -47,12 +47,24 @@ class AppSession:
         config: MotherConfig,
         *,
         session_manager: SessionManager | None = None,
+        loaded_session: bool = False,
     ) -> None:
         self.config: MotherConfig = config
         self.current_model_entry: ModelEntry = resolve_model_entry(config.model, config.models)
-        self.conversation_state: ConversationState = ConversationState()
         self.session_manager: SessionManager | None = session_manager
-        self.agent_mode: bool = config.tools_enabled
+        self.loaded_session: bool = loaded_session
+        entries = session_manager.load_entries() if loaded_session and session_manager else []
+        self.conversation_state: ConversationState = restore_conversation(entries)
+        latest_prompt = next(
+            (entry for entry in reversed(entries) if entry["type"] == "prompt"),
+            None,
+        )
+        self.agent_mode: bool = (
+            latest_prompt["agent_mode"] if latest_prompt is not None else config.tools_enabled
+        )
+        self.restored_system_prompt: str | None = (
+            latest_prompt["system_prompt"] if latest_prompt is not None else None
+        )
         self.agent_profile: AgentProfile = DEFAULT_AGENT_PROFILE
         self.pending_executions: list[BashExecution] = []
         self.pending_image_attachments: dict[str, Path] = {}
@@ -69,6 +81,29 @@ class AppSession:
         # discussion of that report until the user explicitly starts a new run.
         self.deep_research_completed: bool = False
 
+    def resume_session(self, manager: SessionManager) -> None:
+        """Replace this session's persisted conversation with a selected session."""
+        saved_model = manager.header.get("model")
+        if (
+            isinstance(saved_model, str)
+            and find_model_entry(saved_model, self.config.models) is not None
+        ):
+            self.config = replace(self.config, model=saved_model)
+            self.current_model_entry = resolve_model_entry(saved_model, self.config.models)
+        entries = manager.load_entries()
+        self.session_manager = manager
+        self.loaded_session = True
+        self.conversation_state = restore_conversation(entries)
+        latest_prompt = next(
+            (entry for entry in reversed(entries) if entry["type"] == "prompt"), None
+        )
+        self.agent_mode = (
+            latest_prompt["agent_mode"] if latest_prompt is not None else self.config.tools_enabled
+        )
+        self.restored_system_prompt = (
+            latest_prompt["system_prompt"] if latest_prompt is not None else None
+        )
+
     @property
     def has_history(self) -> bool:
         """Return whether the current conversation already has visible history."""
@@ -83,6 +118,7 @@ class AppSession:
         )
         self.last_context_tokens = None
         self.last_response_time_seconds = None
+        self.restored_system_prompt = None
         self.last_response_model_name = None
 
     def runtime_mode(self) -> RuntimeMode:
@@ -282,6 +318,7 @@ class AppSession:
         self.last_response_model_name = None
         self.pending_deep_research = None
         self.deep_research_completed = False
+        self.restored_system_prompt = None
 
     def start_new_session(self) -> None:
         """Rotate to a fresh transient session and reset in-memory chat state."""
@@ -353,6 +390,8 @@ class AppSession:
         """Build the runtime system prompt for the current model turn."""
         effective_agent_mode = self.agent_mode if agent_mode is None else agent_mode
         effective_mode = self.runtime_mode() if effective_agent_mode else "chat"
+        if self.restored_system_prompt is not None:
+            return self.restored_system_prompt
         return build_system_prompt(
             self.config.system_prompt,
             mode=effective_mode,
