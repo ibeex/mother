@@ -23,6 +23,10 @@ supports_images = true
 # Optional per-model PydanticAI request settings. For ds4-server with DSpark:
 # model_settings = { temperature = 0, top_p = 1 }
 
+# Optional per-model reasoning-effort mapping for providers that do not accept
+# every level Mother exposes (Mother's equivalent of Pi's thinkingLevelMap):
+# reasoning_effort_map = { low = "low", medium = "high", high = "high", xhigh = "xhigh" }
+
 # Optional: council setup
 # [council]
 # members = ["gpt-5"]

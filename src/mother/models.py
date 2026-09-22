@@ -37,11 +37,17 @@ class ModelEntry:
     # is cached and uses ModelEntry as a cache key, so hashing this field raises
     # ``TypeError: unhashable type: 'dict'`` on every request.
     model_settings: dict[str, object] = field(default_factory=dict, hash=False)
+    # Per-model remapping of Mother's canonical reasoning-effort levels to the
+    # provider's own values.  Like ``model_settings`` this is a mutable mapping,
+    # so it must stay out of the generated hash used by ``create_pydantic_model``.
+    reasoning_effort_map: dict[str, str] = field(default_factory=dict, hash=False)
 
 
 _DEFAULT_MODEL_ENTRIES: tuple[ModelEntry, ...] = ()
 
 _VALID_API_TYPES: frozenset[str] = frozenset({"openai-responses", "openai-chat", "anthropic"})
+_REASONING_EFFORT_LEVELS: frozenset[str] = frozenset({"none", "low", "medium", "high", "xhigh"})
+_REASONING_EFFORT_MAP_ALIASES: dict[str, str] = {"off": "none"}
 _DEFAULT_CONFIG_FILE = Path.home() / ".config" / "mother" / "config.toml"
 _DEFAULT_KEYS_FILE = Path.home() / ".config" / "mother" / "keys.json"
 
@@ -91,6 +97,35 @@ def _optional_model_settings(raw_entry: dict[str, object]) -> dict[str, object]:
     return {key: setting for key, setting in raw_settings.items() if isinstance(key, str)}
 
 
+def _optional_reasoning_effort_map(raw_entry: dict[str, object], model_id: str) -> dict[str, str]:
+    """Parse a model's ``reasoning_effort_map`` inline table.
+
+    Keys are Mother's canonical reasoning-effort levels (``off`` is accepted as
+    an alias for ``none``) and values are the provider's own effort strings. An
+    empty value marks a level as having no provider equivalent, so the effort
+    option is omitted from the request.
+    """
+    value = raw_entry.get("reasoning_effort_map", {})
+    if not isinstance(value, dict):
+        raise ValueError("Model config field 'reasoning_effort_map' must be a table.")
+    raw_mapping = cast(dict[object, object], value)
+    mapping: dict[str, str] = {}
+    for raw_key, raw_value in raw_mapping.items():
+        if not isinstance(raw_key, str) or not isinstance(raw_value, str):
+            raise ValueError(
+                "Model config field 'reasoning_effort_map' must map strings to strings."
+            )
+        normalized_key = raw_key.strip().lower()
+        key = _REASONING_EFFORT_MAP_ALIASES.get(normalized_key, normalized_key)
+        if key not in _REASONING_EFFORT_LEVELS:
+            valid_values = ", ".join(sorted(_REASONING_EFFORT_LEVELS))
+            detail = f"Invalid reasoning_effort_map key {raw_key!r} for model {model_id!r}."
+            expected = f"Expected one of: {valid_values}"
+            raise ValueError(f"{detail} {expected}")
+        mapping[key] = raw_value.strip()
+    return mapping
+
+
 def load_model_entries(toml_data: dict[str, object]) -> list[ModelEntry]:
     """Parse ``[[models]]`` entries from TOML data."""
     raw_models = toml_data.get("models")
@@ -132,6 +167,7 @@ def load_model_entries(toml_data: dict[str, object]) -> list[ModelEntry]:
                 supports_images=_optional_bool(raw_entry, "supports_images"),
                 response_model_name=_optional_bool(raw_entry, "response_model_name"),
                 model_settings=_optional_model_settings(raw_entry),
+                reasoning_effort_map=_optional_reasoning_effort_map(raw_entry, model_id),
             )
         )
     return entries

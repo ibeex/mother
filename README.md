@@ -158,6 +158,32 @@ which allows DSpark speculative decoding to run. `top_p = 1` is explicit but has
 no effect when temperature is zero. Settings are combined with Mother's reasoning
 settings; reasoning-specific options take precedence if a key overlaps.
 
+#### Per-model reasoning-effort mapping
+
+Some providers do not accept every reasoning level Mother exposes. Use an optional
+inline `reasoning_effort_map` table to translate Mother's canonical levels
+(`off`/`none`, `low`, `medium`, `high`, `xhigh`) into the values the provider
+expects. This is Mother's equivalent of Pi's `thinkingLevelMap`:
+
+```toml
+[[models]]
+id = "ds4-ib"
+name = "infobip-deepseek-v4-flash-nf"
+api_type = "openai-chat"
+base_url = "https://cody.ib-inet.com/"
+api_key = "CODY_KEY"
+supports_tools = true
+supports_reasoning = true
+supports_images = true
+# DeepSeek has no "medium" effort: map it to "high".
+reasoning_effort_map = { low = "low", medium = "high", high = "high", xhigh = "xhigh" }
+```
+
+Levels present in the map are the ones Mother reports as supported for that
+model. An empty value (for example `off = ""`) marks a level as having no
+provider equivalent, so Mother omits the reasoning-effort option for that
+request. Levels absent from the map are passed through unchanged.
+
 Example `~/.config/mother/keys.json`:
 
 ```json

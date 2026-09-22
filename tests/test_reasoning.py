@@ -4,6 +4,7 @@ from mother.models import ModelEntry
 from mother.reasoning import (
     build_reasoning_options,
     format_reasoning_effort,
+    map_reasoning_effort,
     normalize_openai_reasoning_summary,
     normalize_reasoning_effort,
     parse_openai_reasoning_summary,
@@ -11,6 +12,27 @@ from mother.reasoning import (
     supported_reasoning_efforts,
     supports_openai_reasoning_summary,
     supports_reasoning_effort,
+)
+
+_MAPPED_REASONING_MODEL = ModelEntry(
+    id="deepseek",
+    name="infobip-deepseek-v4-flash-nf",
+    api_type="openai-chat",
+    supports_reasoning=True,
+    reasoning_effort_map={
+        "low": "low",
+        "medium": "high",
+        "high": "high",
+        "xhigh": "xhigh",
+    },
+)
+
+_EMPTY_MAPPING_REASONING_MODEL = ModelEntry(
+    id="no-reasoning",
+    name="no-reasoning",
+    api_type="openai-chat",
+    supports_reasoning=True,
+    reasoning_effort_map={"none": "", "low": "low"},
 )
 
 _REASONING_MODEL = ModelEntry(
@@ -81,6 +103,25 @@ def test_supported_reasoning_efforts_returns_mother_supported_values() -> None:
     )
 
 
+def test_supported_reasoning_efforts_respects_reasoning_effort_map() -> None:
+    assert supported_reasoning_efforts(_MAPPED_REASONING_MODEL) == (
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+    )
+    assert supported_reasoning_efforts(_EMPTY_MAPPING_REASONING_MODEL) == ("none", "low")
+
+
+def test_map_reasoning_effort_translates_provider_values() -> None:
+    assert map_reasoning_effort(_REASONING_MODEL, "medium") == "medium"
+    assert map_reasoning_effort(_MAPPED_REASONING_MODEL, "medium") == "high"
+    assert map_reasoning_effort(_MAPPED_REASONING_MODEL, "low") == "low"
+    assert map_reasoning_effort(_MAPPED_REASONING_MODEL, "none") == "none"
+    assert map_reasoning_effort(_EMPTY_MAPPING_REASONING_MODEL, "none") is None
+    assert map_reasoning_effort(None, "medium") == "medium"
+
+
 def test_supports_openai_reasoning_summary_checks_model_capability() -> None:
     assert supports_openai_reasoning_summary(_REASONING_MODEL) is True
     assert supports_openai_reasoning_summary(_ANTHROPIC_REASONING_MODEL) is False
@@ -105,6 +146,20 @@ def test_build_reasoning_options_for_openai_models() -> None:
         "openai_reasoning_summary": "concise",
     }
     assert build_reasoning_options(_PLAIN_MODEL, "medium", "detailed") == {}
+
+
+def test_build_reasoning_options_applies_reasoning_effort_map() -> None:
+    assert build_reasoning_options(_MAPPED_REASONING_MODEL, "medium") == {
+        "openai_reasoning_effort": "high"
+    }
+    assert build_reasoning_options(_MAPPED_REASONING_MODEL, "low") == {
+        "openai_reasoning_effort": "low"
+    }
+    assert build_reasoning_options(_MAPPED_REASONING_MODEL, "auto") == {}
+    assert build_reasoning_options(_MAPPED_REASONING_MODEL, "off") == {
+        "openai_reasoning_effort": "none"
+    }
+    assert build_reasoning_options(_EMPTY_MAPPING_REASONING_MODEL, "off") == {}
 
 
 def test_build_reasoning_options_for_anthropic_models() -> None:

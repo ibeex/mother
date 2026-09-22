@@ -103,6 +103,7 @@ model = ""
 # supports_reasoning = true
 # supports_images = true
 # response_model_name = false
+# reasoning_effort_map = { low = "low", medium = "high", high = "high", xhigh = "xhigh" }
 """
 
 

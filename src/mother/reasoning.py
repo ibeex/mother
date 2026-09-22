@@ -94,7 +94,25 @@ def supported_reasoning_efforts(model: ModelEntry | None) -> tuple[str, ...]:
     """Return the reasoning-effort values Mother supports for reasoning models."""
     if not supports_reasoning_effort(model):
         return ()
+    if model is not None and model.reasoning_effort_map:
+        return tuple(
+            level for level in _SUPPORTED_REASONING_EFFORTS if level in model.reasoning_effort_map
+        )
     return _SUPPORTED_REASONING_EFFORTS
+
+
+def map_reasoning_effort(model: ModelEntry | None, effort: str) -> str | None:
+    """Translate a canonical effort level through the model's optional map.
+
+    Returns ``None`` when the level has no provider equivalent, telling callers
+    to omit the reasoning-effort option for that request.
+    """
+    if model is None or not model.reasoning_effort_map:
+        return effort
+    if effort not in model.reasoning_effort_map:
+        return effort
+    mapped = model.reasoning_effort_map[effort].strip()
+    return mapped or None
 
 
 def build_reasoning_options(
@@ -126,7 +144,9 @@ def build_reasoning_options(
         return options
 
     if normalized_effort is not None and normalized_effort != "auto":
-        options["openai_reasoning_effort"] = normalized_effort
+        mapped_effort = map_reasoning_effort(model, normalized_effort)
+        if mapped_effort is not None:
+            options["openai_reasoning_effort"] = mapped_effort
 
     if supports_openai_reasoning_summary(model) and normalized_summary not in (None, "auto"):
         options["openai_reasoning_summary"] = normalized_summary

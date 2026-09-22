@@ -42,6 +42,7 @@ def test_load_config_from_file(tmp_path: Path) -> None:
                 'api_type = "openai-chat"',
                 "response_model_name = true",
                 "model_settings = { temperature = 0, top_p = 1 }",
+                'reasoning_effort_map = { off = "", low = "low", medium = "high" }',
                 "",
                 "[council]",
                 'members = ["gpt-5", "g3", "opus"]',
@@ -64,6 +65,7 @@ def test_load_config_from_file(tmp_path: Path) -> None:
     assert len(config.models) == 1
     assert config.models[0].response_model_name is True
     assert config.models[0].model_settings == {"temperature": 0, "top_p": 1}
+    assert config.models[0].reasoning_effort_map == {"none": "", "low": "low", "medium": "high"}
     assert config.system_prompt == DEFAULT_SYSTEM
     assert config.council == CouncilConfig(
         members=("gpt-5", "g3", "opus"),
@@ -95,6 +97,53 @@ def test_load_config_rejects_invalid_openai_reasoning_summary(tmp_path: Path) ->
         assert "openai_reasoning_summary" in str(exc)
     else:
         raise AssertionError("Expected invalid openai_reasoning_summary to raise ValueError")
+
+
+def test_load_config_rejects_invalid_reasoning_effort_map(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text(
+        "\n".join(
+            [
+                "[[models]]",
+                'id = "deepseek"',
+                'name = "deepseek"',
+                'api_type = "openai-chat"',
+                'reasoning_effort_map = { turbo = "high" }',
+                "",
+            ]
+        )
+    )
+
+    try:
+        _ = load_config(config_file)
+    except ValueError as exc:
+        assert "reasoning_effort_map" in str(exc)
+        assert "turbo" in str(exc)
+    else:
+        raise AssertionError("Expected invalid reasoning_effort_map key to raise ValueError")
+
+
+def test_load_config_rejects_non_table_reasoning_effort_map(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text(
+        "\n".join(
+            [
+                "[[models]]",
+                'id = "deepseek"',
+                'name = "deepseek"',
+                'api_type = "openai-chat"',
+                'reasoning_effort_map = "high"',
+                "",
+            ]
+        )
+    )
+
+    try:
+        _ = load_config(config_file)
+    except ValueError as exc:
+        assert "reasoning_effort_map" in str(exc)
+    else:
+        raise AssertionError("Expected non-table reasoning_effort_map to raise ValueError")
 
 
 def test_apply_cli_overrides() -> None:
