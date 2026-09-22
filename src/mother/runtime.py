@@ -49,6 +49,15 @@ _TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT = (
     "whether the user wants to continue in another turn."
 )
 
+_TEXT_ONLY_TOOL_LIMIT_BATCH_RECOVERY_PROMPT = (
+    "You attempted to call more tools than the allowed limit of one tool call for this turn, "
+    "so no tool calls were executed. Write the final reply to the user's previous request in "
+    "plain text using only the conversation so far. Do not call tools. Do not say you will "
+    "inspect, look further, or continue later. If you cannot fully answer without running a "
+    "tool, state exactly what you know, explain what is missing, and ask whether the user "
+    "wants to continue in another turn."
+)
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeToolEvent:
@@ -372,12 +381,10 @@ class ChatRuntime:
         return any(isinstance(part, ToolReturnPart) for part in message.parts)
 
     @staticmethod
-    def _preserve_partial_messages(
-        messages: list[ModelMessage], error: Exception
+    def _truncate_blocked_tool_batch(
+        messages: list[ModelMessage],
     ) -> list[ModelMessage] | None:
-        if not isinstance(error, UsageLimitExceeded):
-            return None
-
+        """Drop trailing model responses that requested tools which never ran."""
         preserved = list(messages)
         while preserved:
             last_message = preserved[-1]
@@ -388,7 +395,20 @@ class ChatRuntime:
 
         if not preserved:
             return None
+        if not isinstance(preserved[-1], ModelRequest):
+            return None
+        return preserved
 
+    @staticmethod
+    def _preserve_partial_messages(
+        messages: list[ModelMessage], error: Exception
+    ) -> list[ModelMessage] | None:
+        if not isinstance(error, UsageLimitExceeded):
+            return None
+
+        preserved = ChatRuntime._truncate_blocked_tool_batch(messages)
+        if preserved is None:
+            return None
         last_message = preserved[-1]
         if not isinstance(last_message, ModelRequest):
             return None
@@ -397,22 +417,25 @@ class ChatRuntime:
         return preserved
 
     @staticmethod
+    def _tool_limit_recovery_messages(
+        messages: list[ModelMessage],
+    ) -> list[ModelMessage] | None:
+        """Return the conversation up to the blocked tool batch, if usable for recovery."""
+        return ChatRuntime._truncate_blocked_tool_batch(messages)
+
+    @staticmethod
     def _should_retry_text_only_after_tool_limit(
         error: Exception,
         *,
-        partial_messages: list[ModelMessage] | None,
+        recovery_messages: list[ModelMessage] | None,
         wrapped_tools: list[Tool[None]],
         tool_call_limit: int | None,
     ) -> bool:
         if not isinstance(error, UsageLimitExceeded):
             return False
-        if not wrapped_tools or tool_call_limit != 1 or not partial_messages:
+        if not wrapped_tools or tool_call_limit != 1 or not recovery_messages:
             return False
-
-        last_message = partial_messages[-1]
-        if not isinstance(last_message, ModelRequest):
-            return False
-        return ChatRuntime._has_tool_return(last_message)
+        return isinstance(recovery_messages[-1], ModelRequest)
 
     @staticmethod
     def _process_part_start(
@@ -686,6 +709,7 @@ class ChatRuntime:
         error: Exception,
         *,
         partial_messages: list[ModelMessage] | None,
+        recovery_messages: list[ModelMessage] | None,
         system_prompt: str,
         wrapped_tools: list[Tool[None]],
         model_settings: dict[str, object],
@@ -697,13 +721,25 @@ class ChatRuntime:
     ) -> RuntimeResponse | None:
         if not self._should_retry_text_only_after_tool_limit(
             error,
-            partial_messages=partial_messages,
+            recovery_messages=recovery_messages,
             wrapped_tools=wrapped_tools,
             tool_call_limit=tool_call_limit,
         ):
             return None
 
-        assert partial_messages is not None
+        assert recovery_messages is not None
+        last_message = recovery_messages[-1]
+        has_completed_tool_result = isinstance(
+            last_message, ModelRequest
+        ) and ChatRuntime._has_tool_return(last_message)
+        if has_completed_tool_result:
+            messages_for_recovery = (
+                partial_messages if partial_messages is not None else recovery_messages
+            )
+            recovery_prompt = _TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT
+        else:
+            messages_for_recovery = recovery_messages
+            recovery_prompt = _TEXT_ONLY_TOOL_LIMIT_BATCH_RECOVERY_PROMPT
         if on_recovery_event is not None:
             on_recovery_event(
                 RuntimeRecoveryEvent(
@@ -712,9 +748,9 @@ class ChatRuntime:
                 )
             )
         recovery_response = await self._rerun_without_tools(
-            prompt_text=_TEXT_ONLY_TOOL_LIMIT_RECOVERY_PROMPT,
+            prompt_text=recovery_prompt,
             system_prompt=system_prompt,
-            message_history=partial_messages,
+            message_history=messages_for_recovery,
             attachments=[],
             model_settings=model_settings,
             on_text_update=on_text_update,
@@ -837,9 +873,13 @@ class ChatRuntime:
                 captured_messages_ref.messages,
                 exc,
             )
+            recovery_messages = self._tool_limit_recovery_messages(
+                captured_messages_ref.messages,
+            )
             recovery_response = await self._maybe_retry_text_only_after_tool_limit(
                 exc,
                 partial_messages=partial_messages,
+                recovery_messages=recovery_messages,
                 system_prompt=system_prompt,
                 wrapped_tools=wrapped_tools,
                 model_settings=model_settings,

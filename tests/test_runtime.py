@@ -458,6 +458,7 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
         patch("mother.runtime.Agent", _FakeAgent),
         patch("mother.runtime.create_pydantic_model", return_value=object()),
         patch.object(ChatRuntime, "_preserve_partial_messages", return_value=preserved_messages),
+        patch.object(ChatRuntime, "_tool_limit_recovery_messages", return_value=preserved_messages),
     ):
         runtime_response = asyncio.run(
             runtime.run_stream(
@@ -488,6 +489,91 @@ def test_run_stream_recovers_with_text_only_retry_after_tool_limit() -> None:
         "will inspect, look further, or continue later. If the completed tool result is not enough "
         "to fully answer, state exactly what you learned, explain what is still missing, and ask "
         "whether the user wants to continue in another turn."
+    )
+
+
+def test_tool_limit_recovery_messages_keeps_request_for_unresolved_batch() -> None:
+    request = ModelRequest(parts=[UserPromptPart("do two things")])
+    blocked_response = ModelResponse(
+        parts=[
+            ToolCallPart(tool_name="bash", args={"command": "ls"}, tool_call_id="call-1"),
+            ToolCallPart(tool_name="read", args={"path": "README.md"}, tool_call_id="call-2"),
+        ]
+    )
+    messages = [request, blocked_response]
+
+    assert ChatRuntime._tool_limit_recovery_messages(messages) == [request]  # pyright: ignore[reportPrivateUsage]
+    assert (
+        ChatRuntime._preserve_partial_messages(  # pyright: ignore[reportPrivateUsage]
+            messages, UsageLimitExceeded("tool limit reached")
+        )
+        is None
+    )
+
+
+def test_run_stream_recovers_from_unresolved_tool_batch() -> None:
+    entry = ModelEntry(
+        id="local_3",
+        name="local_3",
+        api_type="openai-chat",
+        supports_reasoning=True,
+    )
+    recovery_messages = [ModelRequest(parts=[UserPromptPart("do two things")])]
+    final_text = "I could not run any tools; would you like me to proceed one at a time?"
+    final_response = ModelResponse(parts=[TextPart(content=final_text)])
+    usage = RunUsage(input_tokens=12, output_tokens=9)
+    result = AgentRunResult(
+        final_text,
+        _state=GraphAgentState(
+            message_history=[*recovery_messages, cast(ModelMessage, final_response)],
+            usage=usage,
+        ),
+    )
+
+    async def sample_tool() -> str:
+        return "ok"
+
+    _FakeAgent.events = ()
+    _FakeAgent.event_batches = [
+        (UsageLimitExceeded("The next tool call(s) would exceed the tool_calls_limit of 1"),),
+        (AgentRunResultEvent(result=result),),
+    ]
+    _FakeAgent.init_calls = []
+    _FakeAgent.run_calls = []
+
+    runtime = ChatRuntime(entry)
+    recovery_events: list[RuntimeRecoveryEvent] = []
+
+    with (
+        patch("mother.runtime.Agent", _FakeAgent),
+        patch("mother.runtime.create_pydantic_model", return_value=object()),
+        patch.object(ChatRuntime, "_tool_limit_recovery_messages", return_value=recovery_messages),
+    ):
+        runtime_response = asyncio.run(
+            runtime.run_stream(
+                prompt_text="do two things",
+                system_prompt="system",
+                message_history=[],
+                attachments=[],
+                tools=[Tool(sample_tool, name="bash")],
+                model_settings={},
+                tool_call_limit=1,
+                allow_tool_fallback=False,
+                on_recovery_event=recovery_events.append,
+            )
+        )
+
+    assert runtime_response.text == final_text
+    assert runtime_response.tool_limit_recovery_used is True
+    assert recovery_events == [RuntimeRecoveryEvent(kind="tool_limit_text_only", tool_call_limit=1)]
+    assert _FakeAgent.run_calls[1]["message_history"] == recovery_messages
+    assert _FakeAgent.run_calls[1]["user_prompt"] == (
+        "You attempted to call more tools than the allowed limit of one tool call for this turn, "
+        "so no tool calls were executed. Write the final reply to the user's previous request in "
+        "plain text using only the conversation so far. Do not call tools. Do not say you will "
+        "inspect, look further, or continue later. If you cannot fully answer without running a "
+        "tool, state exactly what you know, explain what is missing, and ask whether the user "
+        "wants to continue in another turn."
     )
 
 
