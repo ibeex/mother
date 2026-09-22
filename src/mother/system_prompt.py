@@ -70,7 +70,7 @@ def _standard_agent_section() -> str:
             "In agent mode, you may use tools to inspect the system, gather information, and perform requested actions.",
             "Stay conversational.",
             "Do not work autonomously in a loop until the task is complete.",
-            "Use at most one tool call per turn.",
+            "One tool call per user message, then answer.",
             "If you need several read-only shell checks, combine them into a single bash command.",
             "After the first tool result, answer from what you have. Do not call another tool in the same turn.",
             "After using a tool, report what you found, suggest sensible next steps, and wait for the user's input.",
