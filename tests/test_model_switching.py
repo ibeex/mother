@@ -9,6 +9,7 @@ from textual.containers import VerticalScroll
 
 from mother import MotherApp
 from mother.config import MotherConfig
+from mother.model_picker import ModelPickerScreen
 from mother.widgets import ConversationTurn, OutputSection, ShellOutput
 
 
@@ -43,6 +44,19 @@ def test_model_switch_syncs_tools_enabled_to_runtime_state() -> None:
     app.agent_mode = False
     app.action_switch_model("gpt-5")
     assert app.config.tools_enabled is False
+
+
+def test_ctrl_n_opens_model_picker() -> None:
+    """Ctrl+N should open the model picker directly."""
+
+    async def run() -> None:
+        app = MotherApp()
+        async with app.run_test() as pilot:
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert isinstance(app.screen, ModelPickerScreen)
+
+    asyncio.run(run())
 
 
 def test_show_models_selection_calls_switch_model() -> None:

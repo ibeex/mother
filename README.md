@@ -38,7 +38,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 
 - terminal-first chat UI
 - README-backed `/help` quick cheatsheet and follow-up help context
-- model switching
+- model switching via `/models` or `Ctrl+N`
 - anonymous multi-model `/council` synthesis across configurable members and a configurable judge
 - optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
@@ -277,6 +277,14 @@ By default, the prompt input uses:
 The footer shows `Ctrl+E Input size` along with other available shortcuts such as `Expand` and
 `Autoscroll`. Press `Ctrl+E` once to expand the input to half the available screen, again to
 use the full available screen, and a third time to return to the normal layout.
+
+Beyond the prompt input, these app shortcuts are always available:
+
+- `Ctrl+N` opens the model picker (same as `/models`)
+- `Ctrl+O` expands a collapsed output block
+- `Ctrl+G` toggles autoscroll
+- `Ctrl+S` saves the session
+- `Ctrl+P` opens the command palette, which also lists these actions
 
 If your terminal supports `Ctrl+Enter` and you prefer `Enter` for newline, you can change
 both prompt keys in `~/.config/mother/config.toml`:

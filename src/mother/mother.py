@@ -122,6 +122,7 @@ class MotherApp(App[None]):
         Binding("ctrl+o", "toggle_thinking_widget", "Expand", priority=True),
         Binding("ctrl+e", "cycle_prompt_size", "Input size", priority=True),
         ("ctrl+g", "toggle_auto_scroll", "Autoscroll"),
+        ("ctrl+n", "show_models", "Models"),
         ("end", "scroll_to_bottom", "Bottom"),
         ("shift+g", "scroll_to_bottom_from_chat", "Bottom"),
         ("ctrl+s", "save_session", "Save"),
