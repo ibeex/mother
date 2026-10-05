@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from mother import MotherConfig, cli
 from mother.models import ModelEntry
+from mother.mother import MotherApp
 from mother.session import SessionManager
 
 
@@ -93,6 +94,32 @@ def test_cli_default_wiring() -> None:
         _ = runner.invoke(cli, [])
         mock_app_cls.assert_called_once()
         mock_app.run.assert_called_once()  # pyright: ignore[reportAny]
+        mock_app.print_exit_transcript.assert_called_once()  # pyright: ignore[reportAny]
+        assert [call[0] for call in mock_app.method_calls] == ["run", "print_exit_transcript"]
+
+
+def test_cli_replays_current_session_after_tui_closes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = MotherConfig(model="gpt-5", models=[_test_model_entry()])
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.setattr("mother.session.DEFAULT_SESSIONS_DIR", sessions_dir)
+    current_session = SessionManager.create(sessions_dir=sessions_dir, model_name="gpt-5")
+
+    def fake_run(app: MotherApp) -> None:
+        app.session_manager = current_session
+        app.conversation_state.append_transcript_turn("hi", "Hello from Mother!")
+
+    with (
+        patch("mother.mother.load_config", return_value=config),
+        patch.object(MotherApp, "run", fake_run),
+    ):
+        result = CliRunner().invoke(cli, [])
+
+    assert result.exit_code == 0
+    assert "> hi" in result.output
+    assert "Hello from Mother!" in result.output
+    assert f"mother --session {current_session.header.get('id')}" in result.output
 
 
 def test_cli_custom_model() -> None:

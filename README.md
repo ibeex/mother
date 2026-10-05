@@ -42,6 +42,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 - anonymous multi-model `/council` synthesis across configurable members and a configurable judge
 - optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
+- completed prompts and replies remain in terminal scrollback on exit, with a `mother --session …` resume command
 - `/new` to start a fresh session and clear chat/output context
 - clipboard image paste in the prompt via `Ctrl+V` (with `Cmd+V` still working for normal paste on macOS)
 - explicit `[[fetch https://...]]` prompt expansion in any chat or agent turn

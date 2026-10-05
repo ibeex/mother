@@ -60,6 +60,7 @@ from mother.settings_controller import SettingsController
 from mother.shell_controller import ShellCommandController, ShellControllerHost
 from mother.stats import TurnUsage
 from mother.submission_controller import SubmissionController
+from mother.terminal_transcript import print_terminal_transcript
 from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.tools.bash_guard import BashGuardDecision
@@ -637,6 +638,14 @@ class MotherApp(App[None]):
         self._scroll_chat_to_end(force=True)
         self.notify("Started a new session", title="Session")
 
+    def print_exit_transcript(self) -> None:
+        """Replay the current session only after the fullscreen UI has closed."""
+        print_terminal_transcript(
+            self.conversation_state,
+            model_name=self.app_session.display_model_name(),
+            session_manager=self.session_manager,
+        )
+
     def action_quit_app(self) -> None:
         """Close the application immediately."""
         self.exit()
@@ -1109,3 +1118,4 @@ def cli(
     if resume_picker:
         _ = app.call_after_refresh(app.action_resume)
     app.run()
+    app.print_exit_transcript()
