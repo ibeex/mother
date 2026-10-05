@@ -168,10 +168,10 @@ expects. This is Mother's equivalent of Pi's `thinkingLevelMap`:
 
 ```toml
 [[models]]
-id = "ds4-ib"
-name = "infobip-deepseek-v4-flash-nf"
+id = "ds4"
+name = "deepseek-v4-flash-nf"
 api_type = "openai-chat"
-base_url = "https://cody.ib-inet.com/"
+base_url = "https://your.url.com/"
 api_key = "CODY_KEY"
 supports_tools = true
 supports_reasoning = true
