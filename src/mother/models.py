@@ -16,6 +16,7 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.settings import ModelSettings
 
 ApiType = Literal["openai-responses", "openai-chat", "anthropic"]
 
@@ -50,6 +51,17 @@ _REASONING_EFFORT_LEVELS: frozenset[str] = frozenset({"none", "low", "medium", "
 _REASONING_EFFORT_MAP_ALIASES: dict[str, str] = {"off": "none"}
 _DEFAULT_CONFIG_FILE = Path.home() / ".config" / "mother" / "config.toml"
 _DEFAULT_KEYS_FILE = Path.home() / ".config" / "mother" / "keys.json"
+
+# pydantic-ai 2.56+ requests OpenAI prompt-cache diagnostics by default for models it
+# detects as GPT-5.6 or later, forwarding the previous response id as
+# ``prompt_cache_options.comparison_response_id``. OpenAI-compatible gateways are not
+# required to accept that field: Azure caps it at 64 characters and OpenRouter rejects it
+# outright, so a gateway that returns longer response ids fails the request. Opt out by
+# default for Responses models; a per-model ``model_settings`` override can turn it back
+# on for endpoints that support it.
+_OPENAI_RESPONSES_DEFAULT_SETTINGS: ModelSettings = cast(
+    ModelSettings, cast(object, {"openai_prompt_cache_diagnostics": False})
+)
 
 
 def default_model_entries() -> list[ModelEntry]:
@@ -218,7 +230,11 @@ def create_pydantic_model(entry: ModelEntry, ca_bundle_path: str = "") -> Pydant
 
     if entry.api_type == "openai-responses":
         provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)
-        return OpenAIResponsesModel(entry.name, provider=provider)
+        return OpenAIResponsesModel(
+            entry.name,
+            provider=provider,
+            settings=_OPENAI_RESPONSES_DEFAULT_SETTINGS,
+        )
     if entry.api_type == "openai-chat":
         provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)
         return OpenAIChatModel(entry.name, provider=provider)
