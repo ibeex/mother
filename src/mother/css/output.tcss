@@ -5,9 +5,33 @@ ThinkingOutput {
     height: auto;
     border: none;
     background: transparent;
-    color: $text;
+    color: $foreground;
     margin: 0;
     padding: 0 1;
+}
+
+ThinkingOutput {
+    color: $text-muted;
+}
+
+.turn-section.tool-section {
+    background: $surface 30%;
+    border-left: solid $accent 60%;
+}
+
+.turn-section.shell-section {
+    background: $surface 30%;
+    border-left: solid $warning 60%;
+}
+
+.turn-section.council-section {
+    background: $surface 22%;
+    border-left: solid $secondary 50%;
+}
+
+.turn-section.recovery-section {
+    background: $error 12%;
+    border-left: solid $error 60%;
 }
 
 ShellOutput:focus,

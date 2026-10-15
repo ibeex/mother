@@ -1,6 +1,6 @@
 #prompt-area {
     height: auto;
-    border-top: solid $surface 30%;
+    border-top: solid $primary 40%;
     padding: 0 1;
     background: $background;
 }
@@ -11,7 +11,7 @@
 }
 
 #prompt-row:focus-within {
-    background: $surface 18%;
+    background: $surface 25%;
 }
 
 #prompt-input {
@@ -19,6 +19,7 @@
     height: 4;
     border: none;
     background: transparent;
+    color: $foreground;
     padding: 0;
 }
 

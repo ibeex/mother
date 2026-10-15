@@ -1374,10 +1374,13 @@ class OutputSection(Vertical):
 
     def __init__(self, label: str, label_class: str, widget: CopyableOutput) -> None:
         _ = widget.add_class("grouped")
+        # Derive a section class from the title class (tool-title -> tool-section)
+        # so each trace kind can carry its own background and accent in CSS.
+        section_class = f"{label_class.removesuffix('-title')}-section"
         super().__init__(
             TurnLabel(label, classes=f"turn-title {label_class}"),
             widget,
-            classes="turn-section grouped",
+            classes=f"turn-section grouped {section_class}",
         )
         self._output = widget
 

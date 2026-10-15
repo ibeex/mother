@@ -69,6 +69,40 @@ def test_ctrl_e_cycles_prompt_area_size() -> None:
     asyncio.run(run())
 
 
+def test_turn_sections_are_visually_distinct() -> None:
+    async def run() -> None:
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        async with app.run_test() as pilot:
+            chat = app.query_one("#chat-view", VerticalScroll)
+            turn = ConversationTurn(
+                prompt_text="prompt",
+                response_text="reply",
+                include_thinking=True,
+            )
+            await chat.mount(turn)
+            turn.tool_trace_stack.display = True
+            await turn.tool_trace_stack.mount(
+                OutputSection("Tool", "tool-title", ToolOutput("pwd"))
+            )
+            await pilot.pause()
+
+            sections = {
+                "prompt": turn.query_one(".prompt-section"),
+                "thinking": turn.query_one(".thinking-section"),
+                "response": turn.query_one(".response-section"),
+                "tool": turn.query_one(".tool-section"),
+            }
+            border_colors = {
+                name: section.styles.border_left[1].hex for name, section in sections.items()
+            }
+            assert len(set(border_colors.values())) == len(sections)
+            assert all(section.styles.border_left[0] == "solid" for section in sections.values())
+            assert sections["tool"].styles.background.a > sections["thinking"].styles.background.a
+
+    asyncio.run(run())
+
+
 def test_tool_output_is_nested_above_response_within_turn() -> None:
     async def run() -> None:
         app = MotherApp(config=MotherConfig(model="test-model"))

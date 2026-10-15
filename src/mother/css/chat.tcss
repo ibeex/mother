@@ -38,17 +38,18 @@ ConversationTurn {
 }
 
 .prompt-section {
-    border-left: solid $primary 10%;
+    border-left: solid $primary 80%;
     background: $surface;
 }
 
 .thinking-section {
-    border-left: solid $secondary 10%;
-    background: $surface 8%;
+    border-left: solid $secondary 60%;
+    background: $surface 18%;
+    color: $text-muted;
 }
 
 .response-section {
-    border: none;
+    border-left: solid $success 55%;
     background: transparent;
 }
 
@@ -87,27 +88,33 @@ TurnLabel {
 }
 
 .shell-title {
-    color: $accent;
+    color: $warning;
+    text-style: bold;
 }
 
 .tool-title {
-    color: $secondary;
+    color: $accent;
+    text-style: bold;
 }
 
-.recovery-title,
+.recovery-title {
+    color: $error;
+    text-style: bold;
+}
+
 .council-title {
-    color: $warning;
+    color: $secondary;
+    text-style: bold;
 }
 
 Prompt.grouped,
 Response.grouped,
-ThinkingOutput.grouped,
 Prompt,
 Response {
     width: 1fr;
     border: none;
     background: transparent;
-    color: $text;
+    color: $foreground;
     margin: 0;
 }
 
@@ -154,5 +161,19 @@ Response > MarkdownBlock:last-child {
 }
 
 MarkdownBlock.highlight {
-    background: $primary 10%;
+    background: $primary 12%;
+}
+
+Prompt MarkdownFence,
+Response MarkdownFence {
+    background: $surface 55%;
+    color: $foreground;
+    border-left: solid $accent 60%;
+}
+
+Prompt MarkdownBlock > .code_inline,
+Response MarkdownBlock > .code_inline {
+    color: $warning;
+    background: $surface 65%;
+    text-style: bold;
 }
