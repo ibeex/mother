@@ -1,5 +1,6 @@
 ShellOutput,
 ToolOutput,
+TraceOutput,
 CouncilOutput,
 ThinkingOutput {
     height: auto;
@@ -17,11 +18,39 @@ ThinkingOutput {
 .turn-section.tool-section {
     background: $surface 30%;
     border-left: solid $accent 60%;
+    padding: 1 0;
+}
+
+.execution-trace {
+    margin-bottom: 1;
+}
+
+.execution-trace:last-child {
+    margin-bottom: 0;
+}
+
+.trace-label {
+    height: 1;
+    width: 100%;
+    padding: 0 1;
+    margin-top: 1;
+    color: $text-muted;
+}
+
+TraceCommand {
+    background: $background 35%;
+    color: $foreground;
+}
+
+TraceOutput:focus {
+    background: $primary 12%;
 }
 
 .turn-section.shell-section {
     background: $surface 30%;
     border-left: solid $warning 60%;
+    padding: 1 0;
+    margin: 1 0;
 }
 
 .turn-section.council-section {

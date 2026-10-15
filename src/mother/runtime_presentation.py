@@ -11,7 +11,7 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 
 from mother.council import CouncilResult
-from mother.tool_trace import format_tool_event, format_tool_limit_recovery
+from mother.tool_trace import format_tool_limit_recovery
 from mother.widgets import (
     ConversationTurn,
     CouncilOutput,
@@ -19,6 +19,7 @@ from mother.widgets import (
     Response,
     ThinkingOutput,
     ToolOutput,
+    ToolTrace,
 )
 
 
@@ -55,7 +56,7 @@ class RuntimePresentationController:
         self.host: RuntimePresentationHost = host
         self.waiting_messages: tuple[str, ...] = waiting_messages
         self.active_turn: ConversationTurn | None = None
-        self._tool_outputs: dict[str, ToolOutput] = {}
+        self._tool_outputs: dict[str, ToolTrace] = {}
         self._response_waiting_animations: dict[int, ResponseWaitingAnimation] = {}
 
     def _chat_view(self) -> VerticalScroll:
@@ -96,7 +97,7 @@ class RuntimePresentationController:
             return f"{tool_name}:{command}"
         return tool_name
 
-    def _mount_trace_section(self, section: OutputSection) -> None:
+    def _mount_trace_section(self, section: OutputSection | ToolTrace) -> None:
         active_turn = self.active_turn
         if active_turn is not None:
             active_turn.tool_trace_stack.display = True
@@ -113,13 +114,9 @@ class RuntimePresentationController:
         """Mount a widget showing that a tool call has started."""
         should_follow = self.host.should_follow_chat_updates()
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
-        command = arguments.get("command")
-        widget = ToolOutput(
-            format_tool_event(tool_name, arguments, status="started"),
-            bash_command=command if tool_name == "bash" and isinstance(command, str) else None,
-        )
+        widget = ToolTrace(tool_name, arguments)
         self._tool_outputs[key] = widget
-        self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
+        self._mount_trace_section(widget)
         if should_follow:
             self.host.scroll_chat_to_end(force=True)
 
@@ -135,12 +132,9 @@ class RuntimePresentationController:
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = self._tool_outputs.pop(key, None)
         if widget is None:
-            command = arguments.get("command")
-            widget = ToolOutput(
-                bash_command=command if tool_name == "bash" and isinstance(command, str) else None,
-            )
-            self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
-        widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
+            widget = ToolTrace(tool_name, arguments)
+            self._mount_trace_section(widget)
+        widget.finish(output)
         if should_follow:
             self.host.scroll_chat_to_end(force=True)
 

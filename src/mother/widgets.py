@@ -27,6 +27,7 @@ from mother.slash_commands import (
     filter_slash_commands,
     should_expand_slash_argument,
 )
+from mother.tool_trace import format_tool_arguments, format_tool_event, format_tool_output
 from mother.user_commands import should_submit_on_enter
 
 
@@ -1352,16 +1353,92 @@ class ToolOutput(CopyableOutput):
         self._original_text = text
         rendered = text
         if self._bash_command is not None and self._formatted_command is not None:
-            rendered = text.replace(
-                f"Command:\n{self._bash_command}",
-                f"Command:\n{self._formatted_command}",
-                1,
-            )
+            if text == self._bash_command:
+                rendered = self._formatted_command
+            else:
+                rendered = text.replace(
+                    f"Command:\n{self._bash_command}",
+                    f"Command:\n{self._formatted_command}",
+                    1,
+                )
         super().set_text(rendered)
 
     @override
     def _text_for_copy(self) -> str:
         return self._original_text
+
+
+class TraceOutput(ToolOutput):
+    """An independently expandable trace region that keeps the full trace copyable."""
+
+    MIN_VISIBLE_LINES: ClassVar[int] = 1
+
+    @override
+    def _text_for_copy(self) -> str:
+        if isinstance(self.parent, ToolTrace):
+            return self.parent.raw_text
+        return super()._text_for_copy()
+
+
+class TraceCommand(TraceOutput):
+    """A compact command or argument preview, independent of the result preview."""
+
+    MAX_VISIBLE_LINES: ClassVar[int] = 6
+
+
+@final
+class ToolTrace(Vertical):
+    """Structured tool execution with separate command, arguments, and output regions."""
+
+    def __init__(self, tool_name: str, arguments: dict[str, object]) -> None:
+        self._tool_name = tool_name
+        self._arguments = arguments.copy()
+        self._output: str | None = None
+        self._title = TurnLabel(f"{tool_name} · Running", classes="turn-title tool-title")
+        children: list[TurnLabel | TraceOutput] = [self._title]
+        command = arguments.get("command")
+        has_command = isinstance(command, str) and bool(command.strip())
+        if isinstance(command, str) and has_command:
+            children.extend(
+                [
+                    TurnLabel("Command", classes="trace-label"),
+                    TraceCommand(command, bash_command=command if tool_name == "bash" else None),
+                ]
+            )
+        extras = {key: value for key, value in arguments.items() if key != "command"}
+        rendered_arguments = format_tool_arguments(extras if has_command else arguments)
+        if rendered_arguments:
+            children.extend(
+                [
+                    TurnLabel("Arguments", classes="trace-label"),
+                    TraceCommand(rendered_arguments.removeprefix("Arguments:\n")),
+                ]
+            )
+        self._output_label = TurnLabel("Output", classes="trace-label trace-output-label")
+        self.output = TraceOutput()
+        _ = self.output.add_class("trace-result")
+        self._output_label.display = False
+        self.output.display = False
+        children.extend([self._output_label, self.output])
+        super().__init__(*children, classes="turn-section tool-section execution-trace")
+
+    @property
+    def raw_text(self) -> str:
+        """Return the original trace, unaffected by formatting or UI collapse."""
+        return format_tool_event(
+            self._tool_name,
+            self._arguments,
+            status="started" if self._output is None else "finished",
+            output=self._output,
+        )
+
+    def finish(self, output: str) -> None:
+        """Reveal results without letting a long command consume their preview budget."""
+        self._output = output
+        self._title.update(f"{self._tool_name} · Finished")
+        self.output.set_text(format_tool_output(output))
+        self._output_label.display = True
+        self.output.display = True
 
 
 class CouncilOutput(CopyableOutput):

@@ -24,7 +24,7 @@ WelcomeBanner {
 
 ConversationTurn {
     height: auto;
-    margin: 0;
+    margin: 0 0 1 0;
     border: none;
     background: transparent;
 }
@@ -39,24 +39,27 @@ ConversationTurn {
 
 .prompt-section {
     border-left: solid $primary 80%;
-    background: $surface;
+    background: $primary 12%;
+    padding: 1 0;
 }
 
 .thinking-section {
-    border-left: solid $secondary 60%;
-    background: $surface 18%;
+    border-left: solid $secondary 35%;
+    background: transparent;
     color: $text-muted;
+    margin-top: 1;
 }
 
 .response-section {
-    border-left: solid $success 55%;
+    border-left: solid $success 40%;
     background: transparent;
+    margin-top: 1;
 }
 
 .tool-trace-stack {
     height: auto;
     width: 100%;
-    margin: 0;
+    margin: 1 0 0 0;
     background: transparent;
 }
 

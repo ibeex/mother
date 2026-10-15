@@ -1,13 +1,14 @@
 #prompt-area {
     height: auto;
-    border-top: solid $primary 40%;
+    border-top: solid $primary 65%;
     padding: 0 1;
     background: $background;
 }
 
 #prompt-row {
     height: auto;
-    background: transparent;
+    padding: 1 0 0 0;
+    background: $surface 12%;
 }
 
 #prompt-row:focus-within {
