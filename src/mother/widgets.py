@@ -13,6 +13,7 @@ from textual import events
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
 from textual.message import Message
+from textual.timer import Timer
 from textual.widgets import Label, Markdown, OptionList, Static, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
 from textual.widgets.option_list import Option
@@ -751,11 +752,14 @@ class ThinkingOutput(CopyableOutput):
     """Plain-text widget for structured model reasoning from pydantic-ai thinking parts."""
 
     PREVIEW_LINES: ClassVar[int] = 10
+    MIN_VISIBLE_LINES: ClassVar[int] = 5
+    COLLAPSE_DELAY: ClassVar[float] = 0.4
     BORDER_TITLE: ClassVar[str] = "Mother · thinking"
 
     def __init__(self, text: str = "") -> None:
         self._expanded: bool = False
         self._streaming: bool = False
+        self._collapse_timer: Timer | None = None
         super().__init__("")
         self.soft_wrap = True
         self.set_text(text)
@@ -766,14 +770,49 @@ class ThinkingOutput(CopyableOutput):
 
     def start_streaming(self) -> None:
         """Show the full structured thinking text while it is still streaming in."""
+        self._cancel_pending_collapse()
         self._streaming = True
+        self._expanded = False
         self._refresh_rendered_text()
 
     def finish_streaming(self) -> None:
-        """Collapse streamed structured thinking back to the preview once it is complete."""
+        """Leave a short reading pause before shrinking completed thinking."""
         self._streaming = False
+        self._cancel_pending_collapse()
+        if self.is_mounted:
+            self._expanded = True
+            self._collapse_timer = self.set_timer(self.COLLAPSE_DELAY, self._collapse_preview)
+        else:
+            self._collapse_preview()
+
+    def _cancel_pending_collapse(self) -> None:
+        if self._collapse_timer is not None:
+            self._collapse_timer.stop()
+            self._collapse_timer = None
+
+    def _collapse_preview(self) -> None:
+        self._collapse_timer = None
         self._expanded = False
         self._refresh_rendered_text()
+        self.move_cursor((0, 0), record_width=False)
+        if self.is_mounted:
+            self.scroll_home(animate=False)
+
+    def on_unmount(self) -> None:
+        self._cancel_pending_collapse()
+
+    def on_resize(self) -> None:
+        # TextArea rewraps during resize; measure after its layout has settled.
+        _ = self.call_after_refresh(self._sync_height, self.text)
+
+    @override
+    def _sync_height(self, text: str) -> None:
+        # Logical newlines miss paragraphs that occupy many soft-wrapped rows.
+        rows = max(self.wrapped_document.height, text.count("\n") + 1)
+        visible_rows = max(rows, self.MIN_VISIBLE_LINES)
+        if not (self._streaming or self._expanded):
+            visible_rows = min(visible_rows, self.PREVIEW_LINES + 1)
+        self.styles.height = visible_rows
 
     @override
     def _preview_text(self) -> str:
@@ -820,7 +859,10 @@ class ThinkingOutput(CopyableOutput):
         return (
             not self._streaming
             and self.has_content()
-            and len(self._raw.splitlines()) > self.PREVIEW_LINES
+            and (
+                len(self._raw.splitlines()) > self.PREVIEW_LINES
+                or self.wrapped_document.height > self.PREVIEW_LINES + 1
+            )
         )
 
     @override
@@ -828,6 +870,7 @@ class ThinkingOutput(CopyableOutput):
         """Toggle between the preview and the full structured reasoning text."""
         if not self.can_toggle_expanded():
             return
+        self._cancel_pending_collapse()
         self._expanded = not self._expanded
         self._refresh_rendered_text()
 
