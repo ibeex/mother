@@ -18,7 +18,7 @@ from mother.council import CouncilProgressUpdate, CouncilResult, CouncilRunner
 from mother.deep_research import DeepResearchRunner, PendingDeepResearch, is_research_approval
 from mother.help import build_help_prompt
 from mother.interrupts import UserInterruptedError
-from mother.models import ModelEntry
+from mother.models import ModelEntry, close_cached_models_for_current_loop
 from mother.runtime import (
     TUI_STREAM_UPDATE_INTERVAL_SECONDS,
     ChatRuntime,
@@ -614,6 +614,10 @@ class RuntimeCoordinator:
         finally:
             self._active_runtime_task = None
             self._active_runtime_loop = None
+            try:
+                loop.run_until_complete(close_cached_models_for_current_loop())
+            except Exception:
+                logger.exception("Failed to close model clients for completed runtime loop")
             loop.close()
             asyncio.set_event_loop(None)
 

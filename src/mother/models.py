@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import os
 import tomllib
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from functools import cache
+from inspect import isawaitable
 from pathlib import Path
+from threading import RLock
 from typing import Literal, cast
+from weakref import WeakKeyDictionary
 
 import httpx2
 from pydantic_ai.models import Model as PydanticModel
@@ -62,6 +68,12 @@ _DEFAULT_KEYS_FILE = Path.home() / ".config" / "mother" / "keys.json"
 _OPENAI_RESPONSES_DEFAULT_SETTINGS: ModelSettings = cast(
     ModelSettings, cast(object, {"openai_prompt_cache_diagnostics": False})
 )
+
+logger = logging.getLogger(__name__)
+_MODEL_CACHE_LOCK = RLock()
+_MODEL_CACHE: WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[tuple[ModelEntry, str], PydanticModel]
+] = WeakKeyDictionary()
 
 
 def default_model_entries() -> list[ModelEntry]:
@@ -215,9 +227,8 @@ def resolve_api_key(entry: ModelEntry) -> str:
     return ""
 
 
-@cache
-def create_pydantic_model(entry: ModelEntry, ca_bundle_path: str = "") -> PydanticModel:
-    """Create and cache a pydantic-ai model instance for a registry entry."""
+def _build_pydantic_model(entry: ModelEntry, ca_bundle_path: str) -> PydanticModel:
+    """Create a pydantic-ai model instance for a registry entry."""
     api_key = resolve_api_key(entry) or None
     base_url = entry.base_url or None
     http_client: httpx2.AsyncClient | None = None
@@ -241,6 +252,51 @@ def create_pydantic_model(entry: ModelEntry, ca_bundle_path: str = "") -> Pydant
 
     provider = AnthropicProvider(base_url=base_url, api_key=api_key, http_client=http_client)
     return AnthropicModel(entry.name, provider=provider)
+
+
+def create_pydantic_model(entry: ModelEntry, ca_bundle_path: str = "") -> PydanticModel:
+    """Return a model cached only for the currently running event loop.
+
+    Async provider clients retain loop-bound transport state, so sharing a cached
+    model between Mother's per-request event loops can make a later request use a
+    transport whose loop has already closed. Calls made outside an event loop are
+    intentionally uncached.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return _build_pydantic_model(entry, ca_bundle_path)
+
+    key = (entry, ca_bundle_path)
+    with _MODEL_CACHE_LOCK:
+        models = _MODEL_CACHE.setdefault(loop, {})
+        model = models.get(key)
+        if model is None:
+            model = _build_pydantic_model(entry, ca_bundle_path)
+            models[key] = model
+        return model
+
+
+async def close_cached_models_for_current_loop() -> None:
+    """Close provider clients cached for this request's event loop."""
+    loop = asyncio.get_running_loop()
+    with _MODEL_CACHE_LOCK:
+        models = _MODEL_CACHE.pop(loop, {})
+
+    closed_clients: set[int] = set()
+    for model in models.values():
+        provider = getattr(model, "provider", None)
+        client = getattr(provider, "client", None)
+        close = getattr(client, "close", None)
+        if not callable(close) or id(client) in closed_clients:
+            continue
+        closed_clients.add(id(client))
+        try:
+            result = close()
+            if isawaitable(result):
+                _ = await cast(Awaitable[object], result)
+        except Exception:
+            logger.exception("Failed to close model HTTP client")
 
 
 def find_model_entry(model_id: str, entries: list[ModelEntry]) -> ModelEntry | None:

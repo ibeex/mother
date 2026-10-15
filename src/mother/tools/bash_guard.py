@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from functools import cache
 from typing import Literal, Protocol, cast
 
 from pydantic_ai import Agent
@@ -108,8 +107,8 @@ class BashGuardDecision:
         return self.label == "OK" and self.error is None
 
 
-@cache
 def _get_guard_agent(model_name: str) -> GuardAgent:
+    # Only the underlying model is cached, scoped to the running event loop.
     entry = get_model_entry(model_name)
     if entry is None:
         entry = fallback_model_entry(model_name)
@@ -117,7 +116,7 @@ def _get_guard_agent(model_name: str) -> GuardAgent:
 
 
 def get_guard_agent(model_name: str) -> GuardAgent:
-    """Return the cached guard agent for a configured model id."""
+    """Build a guard agent using the current loop's model cache."""
     return _get_guard_agent(model_name)
 
 

@@ -1,9 +1,14 @@
 """Tests for the LLM-based bash guard."""
 
-from typing import final
+import asyncio
+from typing import cast, final
 from unittest.mock import patch
 
-from mother.tools.bash_guard import classify_command, parse_label
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIResponsesModel
+
+from mother.models import ModelEntry, close_cached_models_for_current_loop
+from mother.tools.bash_guard import classify_command, get_guard_agent, parse_label
 
 
 @final
@@ -28,6 +33,38 @@ class _FakeAgent:
         _ = instructions
         _ = model_settings
         return _FakeResult(self.output)
+
+
+def test_guard_agent_does_not_reuse_closed_clients_across_request_loops() -> None:
+    entry = ModelEntry(
+        id="guard-loop-regression",
+        name="guard-loop-regression",
+        api_type="openai-responses",
+        base_url="https://gateway.example.test/",
+        api_key="test-key",
+    )
+
+    async def create_and_close_guard() -> Agent[None, str]:
+        agent = cast(Agent[None, str], cast(object, get_guard_agent(entry.id)))
+        model = agent.model
+        assert isinstance(model, OpenAIResponsesModel)
+        provider = model.provider
+        assert provider is not None
+        try:
+            assert not provider.client.is_closed()
+            other_agent = cast(Agent[None, str], cast(object, get_guard_agent(entry.id)))
+            assert other_agent.model is model
+        finally:
+            await close_cached_models_for_current_loop()
+        assert provider.client.is_closed()
+        return agent
+
+    with patch("mother.tools.bash_guard.get_model_entry", return_value=entry):
+        first_agent = asyncio.run(create_and_close_guard())
+        second_agent = asyncio.run(create_and_close_guard())
+
+    assert first_agent is not second_agent
+    assert first_agent.model is not second_agent.model
 
 
 def test_parse_label_prefers_final_label_line():
