@@ -113,7 +113,11 @@ class RuntimePresentationController:
         """Mount a widget showing that a tool call has started."""
         should_follow = self.host.should_follow_chat_updates()
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
-        widget = ToolOutput(format_tool_event(tool_name, arguments, status="started"))
+        command = arguments.get("command")
+        widget = ToolOutput(
+            format_tool_event(tool_name, arguments, status="started"),
+            bash_command=command if tool_name == "bash" and isinstance(command, str) else None,
+        )
         self._tool_outputs[key] = widget
         self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
         if should_follow:
@@ -131,7 +135,10 @@ class RuntimePresentationController:
         key = self._tool_output_key(tool_name, tool_call_id, arguments)
         widget = self._tool_outputs.pop(key, None)
         if widget is None:
-            widget = ToolOutput()
+            command = arguments.get("command")
+            widget = ToolOutput(
+                bash_command=command if tool_name == "bash" and isinstance(command, str) else None,
+            )
             self._mount_trace_section(OutputSection("Tool", "tool-title", widget))
         widget.set_text(format_tool_event(tool_name, arguments, status="finished", output=output))
         if should_follow:

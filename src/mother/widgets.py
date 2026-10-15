@@ -17,6 +17,7 @@ from textual.widgets import Label, Markdown, OptionList, Static, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
 from textual.widgets.option_list import Option
 
+from mother.bash_formatting import format_bash_for_display
 from mother.clipboard import read_clipboard_text
 from mother.config import DEFAULT_NEWLINE_KEY, DEFAULT_SUBMIT_KEY, normalize_key_binding
 from mother.history import PromptHistoryMatch
@@ -731,8 +732,12 @@ class CopyableOutput(TextArea):
         self._expanded = not self._expanded
         self._refresh_rendered_text()
 
+    def _text_for_copy(self) -> str:
+        """Return the full original text, independent of the visible preview."""
+        return self._raw
+
     def action_copy_output(self) -> None:
-        text = self.selected_text or self._raw
+        text = self.selected_text or self._text_for_copy()
         try:
             pyperclip.copy(text)
         except Exception:
@@ -1318,7 +1323,45 @@ class ShellOutput(CopyableOutput):
 
 
 class ToolOutput(CopyableOutput):
-    """Plain-text widget for agent tool execution traces."""
+    """Tool traces with optional display-only formatting of Bash commands."""
+
+    def __init__(self, text: str = "", *, bash_command: str | None = None) -> None:
+        self._bash_command: str | None = bash_command
+        self._formatted_command: str | None = None
+        self._original_text: str = text
+        super().__init__(text)
+
+    @override
+    def on_mount(self) -> None:
+        if self._bash_command:
+            _ = self.run_worker(self._format_command(), exclusive=True)
+
+    async def _format_command(self) -> None:
+        command = self._bash_command
+        if command is None:
+            return
+        formatted = await asyncio.to_thread(format_bash_for_display, command)
+        if formatted != command:
+            self._formatted_command = formatted
+            # A finished event may have arrived while the formatter was running.
+            self.set_text(self._original_text)
+
+    @override
+    def set_text(self, text: str) -> None:
+        """Keep the original trace copyable while formatting only its command section."""
+        self._original_text = text
+        rendered = text
+        if self._bash_command is not None and self._formatted_command is not None:
+            rendered = text.replace(
+                f"Command:\n{self._bash_command}",
+                f"Command:\n{self._formatted_command}",
+                1,
+            )
+        super().set_text(rendered)
+
+    @override
+    def _text_for_copy(self) -> str:
+        return self._original_text
 
 
 class CouncilOutput(CopyableOutput):

@@ -85,6 +85,11 @@ Alternatively, install Mother with `pipx`:
 pipx install git+https://github.com/ibeex/mother.git
 ```
 
+If `shfmt` is available on `PATH`, Mother automatically formats Bash commands in
+agent tool traces for readability. It is optional: if unavailable or formatting
+fails, commands are displayed unchanged. Execution and full-trace copying retain
+the original command; copying a selection copies the selected display text.
+
 ### Create your config
 
 Mother can scaffold the config file for you:
