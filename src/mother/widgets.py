@@ -10,11 +10,14 @@ from typing import ClassVar, Protocol, cast, final, override
 import pyperclip
 from markdown_it import MarkdownIt
 from markdown_it.rules_core import StateCore
+from markdown_it.token import Token
 from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, Vertical
+from textual.content import Content, Span
 from textual.message import Message
+from textual.style import Style
 from textual.timer import Timer
 from textual.widgets import Label, Markdown, OptionList, Static, TextArea
 from textual.widgets.markdown import MarkdownBlock, MarkdownFence, MarkdownStream
@@ -71,6 +74,7 @@ class _PromptHistoryApp(Protocol):
 
 
 _DISPLAY_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_NON_BREAKING_SPACE = "\u00a0"
 
 
 def _convert_softbreaks_to_hardbreaks(state: StateCore) -> None:
@@ -83,11 +87,137 @@ def _convert_softbreaks_to_hardbreaks(state: StateCore) -> None:
                 child.type = "hardbreak"
 
 
-def _markdown_with_preserved_newlines() -> MarkdownIt:
-    """Build a MarkdownIt parser whose single newlines render as real line breaks."""
+def _protect_leading_whitespace_rule(state: StateCore) -> None:
+    """Preserve plain-text indentation without rewriting Markdown structure.
+
+    CommonMark consumes paragraph indentation and treats four spaces as code.
+    Protect that whitespace with NBSPs, but let the block parser identify ranges
+    where indentation is structural (lists, quotes, fences, tables, etc.). Using
+    its source maps also handles nested fences without a second fence grammar.
+    """
+    lines = state.src.split("\n")
+    if not any(line.startswith((" ", "\t")) and line.strip() for line in lines):
+        return
+
+    structural_tokens: list[Token] = []
+    # The survey must not register link definitions twice in the real parse environment.
+    _ = state.md.block.parse(state.src, state.md, {}, structural_tokens)
+    structural_lines: set[int] = set()
+    plain_lines: set[int] = set()
+    for token in structural_tokens:
+        if token.map is None:
+            continue
+        if token.type in {"paragraph_open", "code_block"}:
+            plain_lines.update(range(*token.map))
+        elif token.type != "inline":
+            structural_lines.update(range(*token.map))
+
+    for index, line in enumerate(lines):
+        if index not in plain_lines or index in structural_lines or not line.strip():
+            continue
+        indentation_length = len(line) - len(line.lstrip(" \t"))
+        if indentation_length:
+            # Match Textual Content's eight-column tab stops, including mixed
+            # spaces/tabs, rather than counting a tab as a single column.
+            indentation = line[:indentation_length].expandtabs(8)
+            lines[index] = _NON_BREAKING_SPACE * len(indentation) + line[indentation_length:]
+
+    state.src = "\n".join(lines)
+
+
+def _markdown_with_preserved_layout() -> MarkdownIt:
+    """Build a parser that keeps typed newlines and indentation in the rendered output."""
     parser = MarkdownIt("gfm-like")
+    parser.core.ruler.before("block", "mother_protect_whitespace", _protect_leading_whitespace_rule)
     parser.core.ruler.push("mother_preserve_newlines", _convert_softbreaks_to_hardbreaks)
     return parser
+
+
+class _WhitespacePreservingBlock:
+    """Renders inline Markdown without collapsing runs of whitespace."""
+
+    def _token_to_content(self, token: Token) -> Content:
+        """Convert an inline token to Content, preserving significant whitespace."""
+        if token.children is None:
+            return Content("")
+
+        segments: list[str] = []
+        spans: list[Span] = []
+        style_stack: list[tuple[Style | str, int]] = []
+        position: int = 0
+
+        def add_content(text: str) -> None:
+            """Add text to the content segments and advance the position."""
+            nonlocal position
+            segments.append(text)
+            position += len(text)
+
+        def add_style(style: Style | str) -> None:
+            """Add a style to the stack."""
+            style_stack.append((style, position))
+
+        def close_tag() -> None:
+            """Close the most recently opened style."""
+            style, start = style_stack.pop()
+            spans.append(Span(start, position, style))
+
+        for child in token.children:
+            child_type = child.type
+            if child_type == "text":
+                add_content(child.content)
+            if child_type == "hardbreak":
+                add_content("\n")
+            elif child_type == "code_inline":
+                add_style(".code_inline")
+                add_content(child.content)
+                close_tag()
+            elif child_type == "em_open":
+                add_style(".em")
+            elif child_type == "strong_open":
+                add_style(".strong")
+            elif child_type == "s_open":
+                add_style(".s")
+            elif child_type == "link_open":
+                href = child.attrs.get("href", "")
+                action = f"link({href!r})"
+                add_style(Style.from_meta({"@click": action}))
+            elif child_type == "image":
+                href = child.attrs.get("src", "")
+                alt = child.attrs.get("alt", "")
+                action = f"link({href!r})"
+                add_style(Style.from_meta({"@click": action}))
+                add_content("🖼  ")
+                if alt:
+                    add_content(f"({alt})")
+                if child.children is not None:
+                    for grandchild in child.children:
+                        add_content(grandchild.content)
+                close_tag()
+            elif child_type.endswith("_close"):
+                close_tag()
+
+        return Content("".join(segments), spans=spans)
+
+
+def _build_preserving_blocks() -> dict[str, type[MarkdownBlock]]:
+    """Build Markdown block classes that render inline whitespace verbatim."""
+    return {
+        block_name: type(
+            f"Mother{block_class.__name__}",
+            (_WhitespacePreservingBlock, block_class),
+            {"__module__": __name__},
+        )
+        for block_name, block_class in Markdown.BLOCKS.items()
+    }
+
+
+class _MotherMarkdown(Markdown):
+    """Markdown widget that preserves typed newlines and indentation on screen."""
+
+    BLOCKS: dict[str, type[MarkdownBlock]] = _build_preserving_blocks()
+
+    def __init__(self, markdown: str = "") -> None:
+        super().__init__(markdown, parser_factory=_markdown_with_preserved_layout)
 
 
 def sanitize_markdown_for_display(markdown: str) -> str:
@@ -103,16 +233,13 @@ def sanitize_markdown_for_display(markdown: str) -> str:
     return _DISPLAY_CONTROL_CHAR_RE.sub(replace_control, normalized)
 
 
-class Prompt(Markdown):
+class Prompt(_MotherMarkdown):
     """Markdown for the user prompt."""
 
     BORDER_TITLE: ClassVar[str] = "You"
 
     def __init__(self, markdown: str = "") -> None:
-        super().__init__(
-            sanitize_markdown_for_display(markdown),
-            parser_factory=_markdown_with_preserved_newlines,
-        )
+        super().__init__(sanitize_markdown_for_display(markdown))
 
 
 class PromptTextArea(TextArea):
@@ -928,7 +1055,7 @@ def _ends_inside_fenced_block(markdown: str) -> bool:
     return active_fence_char is not None
 
 
-class CopyableMarkdown(Markdown):
+class CopyableMarkdown(_MotherMarkdown):
     """Markdown widget with focus and block-level copy support."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -942,10 +1069,7 @@ class CopyableMarkdown(Markdown):
 
     def __init__(self, markdown: str = "") -> None:
         rendered_markdown = sanitize_markdown_for_display(markdown)
-        super().__init__(
-            rendered_markdown,
-            parser_factory=_markdown_with_preserved_newlines,
-        )
+        super().__init__(rendered_markdown)
         self._cursor: int = 0
         self._raw: str = markdown
         self._rendered_markdown: str = rendered_markdown
