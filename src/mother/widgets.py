@@ -8,6 +8,8 @@ from time import perf_counter
 from typing import ClassVar, Protocol, cast, final, override
 
 import pyperclip
+from markdown_it import MarkdownIt
+from markdown_it.rules_core import StateCore
 from rich.text import Text
 from textual import events
 from textual.binding import Binding, BindingType
@@ -71,6 +73,23 @@ class _PromptHistoryApp(Protocol):
 _DISPLAY_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
+def _convert_softbreaks_to_hardbreaks(state: StateCore) -> None:
+    """Rewrite soft line breaks as hard breaks so typed newlines survive rendering."""
+    for token in state.tokens:
+        if token.type != "inline" or token.children is None:
+            continue
+        for child in token.children:
+            if child.type == "softbreak":
+                child.type = "hardbreak"
+
+
+def _markdown_with_preserved_newlines() -> MarkdownIt:
+    """Build a MarkdownIt parser whose single newlines render as real line breaks."""
+    parser = MarkdownIt("gfm-like")
+    parser.core.ruler.push("mother_preserve_newlines", _convert_softbreaks_to_hardbreaks)
+    return parser
+
+
 def sanitize_markdown_for_display(markdown: str) -> str:
     """Render terminal control characters visibly before handing text to Textual Markdown."""
     normalized = markdown.replace("\r\n", "\n").replace("\r", "\n")
@@ -90,7 +109,10 @@ class Prompt(Markdown):
     BORDER_TITLE: ClassVar[str] = "You"
 
     def __init__(self, markdown: str = "") -> None:
-        super().__init__(sanitize_markdown_for_display(markdown))
+        super().__init__(
+            sanitize_markdown_for_display(markdown),
+            parser_factory=_markdown_with_preserved_newlines,
+        )
 
 
 class PromptTextArea(TextArea):
@@ -920,7 +942,10 @@ class CopyableMarkdown(Markdown):
 
     def __init__(self, markdown: str = "") -> None:
         rendered_markdown = sanitize_markdown_for_display(markdown)
-        super().__init__(rendered_markdown)
+        super().__init__(
+            rendered_markdown,
+            parser_factory=_markdown_with_preserved_newlines,
+        )
         self._cursor: int = 0
         self._raw: str = markdown
         self._rendered_markdown: str = rendered_markdown
