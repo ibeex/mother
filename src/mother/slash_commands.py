@@ -46,7 +46,7 @@ class SlashArgumentSpec:
 
 
 SLASH_COMMANDS: tuple[SlashCommand, ...] = (
-    SlashCommand("/help", "Ask about Mother using the bundled README", "question"),
+    SlashCommand("/help", "Ask about Mother using the bundled docs", "question"),
     SlashCommand("/save", "Save the current session to markdown"),
     SlashCommand("/session", "Show the current session id, path, and message count"),
     SlashCommand("/name", "Name the current session", "name"),

@@ -25,8 +25,9 @@ from textual.widgets.option_list import Option
 
 from mother.bash_formatting import format_bash_for_display
 from mother.clipboard import read_clipboard_text
-from mother.config import DEFAULT_NEWLINE_KEY, DEFAULT_SUBMIT_KEY, normalize_key_binding
+from mother.config import normalize_key_binding
 from mother.history import PromptHistoryMatch
+from mother.keybindings import DEFAULT_KEYBINDINGS
 from mother.slash_commands import (
     SlashArgumentChoice,
     SlashCommand,
@@ -246,7 +247,7 @@ class PromptTextArea(TextArea):
     """Main prompt input with slash-complete key handling."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+r", "history_search", show=False),
+        Binding("ctrl+r", "history_search", show=False, id="history_search"),
     ]
 
     slash_complete_active: bool = False
@@ -392,10 +393,16 @@ class PromptTextArea(TextArea):
         self.move_cursor((0, len(self.text)), record_width=False)
         return True
 
-    def _configured_key(self, field_name: str, default: str) -> str:
+    def _configured_key(self, binding_id: str, default: str) -> str:
         app = cast(object, self.app)
         config = getattr(app, "config", None)
-        value = getattr(config, field_name, default)
+        keybindings = getattr(config, "keybindings", None)
+        if isinstance(keybindings, dict):
+            configured = cast(dict[str, object], keybindings).get(binding_id)
+            if isinstance(configured, str):
+                return normalize_key_binding(configured)
+        legacy_field = {"submit": "submit_key", "newline": "newline_key"}.get(binding_id)
+        value = getattr(config, legacy_field, default) if legacy_field is not None else default
         if not isinstance(value, str):
             return default
         return normalize_key_binding(value)
@@ -462,17 +469,19 @@ class PromptTextArea(TextArea):
     async def _on_key(self, event: events.Key) -> None:
         """Handle configured prompt keys and Escape before TextArea inserts characters."""
         event_key = normalize_key_binding(event.key)
-        if event_key == "ctrl+e":
+        if event_key == self._configured_key(
+            "cycle_prompt_size", DEFAULT_KEYBINDINGS["cycle_prompt_size"]
+        ):
             _ = event.stop()
             _ = event.prevent_default()
             self.action_cycle_prompt_size()
             return
-        if event_key == self._configured_key("submit_key", DEFAULT_SUBMIT_KEY):
+        if event_key == self._configured_key("submit", DEFAULT_KEYBINDINGS["submit"]):
             _ = event.stop()
             _ = event.prevent_default()
             await self.handle_submit_key()
             return
-        if event_key == self._configured_key("newline_key", DEFAULT_NEWLINE_KEY):
+        if event_key == self._configured_key("newline", DEFAULT_KEYBINDINGS["newline"]):
             _ = event.stop()
             _ = event.prevent_default()
             await self.handle_newline_key()
@@ -796,8 +805,8 @@ class CopyableOutput(TextArea):
     MAX_VISIBLE_LINES: ClassVar[int] = 12
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        ("c", "copy_output", "Copy"),
-        ("ctrl+o", "toggle_expanded", "Expand"),
+        Binding("c", "copy_output", "Copy", id="copy_output"),
+        Binding("ctrl+o", "toggle_expanded", "Expand", id="toggle_expanded"),
     ]
     can_focus: bool = True
 
@@ -1059,9 +1068,9 @@ class CopyableMarkdown(_MotherMarkdown):
     """Markdown widget with focus and block-level copy support."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        ("j", "cursor_down", "Next block"),
-        ("k", "cursor_up", "Prev block"),
-        ("c", "copy_block", "Copy"),
+        Binding("j", "cursor_down", "Next block", id="markdown_cursor_down"),
+        Binding("k", "cursor_up", "Prev block", id="markdown_cursor_up"),
+        Binding("c", "copy_block", "Copy", id="markdown_copy_block"),
     ]
     FENCED_REPARSE_INTERVAL_SECONDS: ClassVar[float] = 0.3
     FENCED_REPARSE_THROTTLE_MIN_CHARS: ClassVar[int] = 1_000

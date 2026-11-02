@@ -121,13 +121,30 @@ class MotherApp(App[None]):
     DOUBLE_ESCAPE_WINDOW_SECONDS: ClassVar[float] = 0.4
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("ctrl+o", "toggle_thinking_widget", "Expand", priority=True),
-        Binding("ctrl+e", "cycle_prompt_size", "Input size", priority=True),
-        ("ctrl+g", "toggle_auto_scroll", "Autoscroll"),
-        ("ctrl+n", "show_models", "Models"),
-        ("end", "scroll_to_bottom", "Bottom"),
-        ("shift+g", "scroll_to_bottom_from_chat", "Bottom"),
-        ("ctrl+s", "save_session", "Save"),
+        Binding(
+            "ctrl+o",
+            "toggle_thinking_widget",
+            "Expand",
+            priority=True,
+            id="toggle_thinking_widget",
+        ),
+        Binding(
+            "ctrl+e",
+            "cycle_prompt_size",
+            "Input size",
+            priority=True,
+            id="cycle_prompt_size",
+        ),
+        Binding("ctrl+g", "toggle_auto_scroll", "Autoscroll", id="toggle_auto_scroll"),
+        Binding("ctrl+n", "show_models", "Models", id="show_models"),
+        Binding("end", "scroll_to_bottom", "Bottom", id="scroll_to_bottom"),
+        Binding(
+            "shift+g",
+            "scroll_to_bottom_from_chat",
+            "Bottom",
+            id="scroll_to_bottom_from_chat",
+        ),
+        Binding("ctrl+s", "save_session", "Save", id="save_session"),
     ]
 
     COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}  # pyright: ignore[reportUnannotatedClassAttribute]
@@ -153,7 +170,10 @@ class MotherApp(App[None]):
             session_manager=session_manager,
             loaded_session=loaded_session,
         )
-        self.bind(normalize_key_binding(resolved_config.submit_key), "submit", description="Send")
+        submit_key = resolved_config.keybindings.get("submit", resolved_config.submit_key)
+        self.bind(normalize_key_binding(submit_key), "submit", description="Send")
+        if resolved_config.keybindings:
+            self.set_keymap(resolved_config.keybindings)
         self.theme = resolve_theme(resolved_config)  # pyright: ignore[reportUnannotatedClassAttribute]
         self.prompt_history: PromptHistory = prompt_history or PromptHistory()
         self.prompt_controller: PromptController = PromptController(
@@ -1025,7 +1045,9 @@ def cli(
             return
         save_default_config(CONFIG_FILE)
         click.echo(f"Created config: {CONFIG_FILE}")
-        click.echo('Next: add at least one [[models]] entry. Set model = "..." or leave it empty to use the first one.')
+        click.echo(
+            'Next: add at least one [[models]] entry. Set model = "..." or leave it empty to use the first one.'
+        )
         return
 
     config = load_config()
@@ -1082,7 +1104,7 @@ def cli(
     if not config.model:
         config.model = config.models[0].id
         startup_notice = (
-            f'No default model set; using the first configured model {config.model!r}. '
+            f"No default model set; using the first configured model {config.model!r}. "
             f'Set model = "..." in {CONFIG_FILE} to change it.'
         )
 

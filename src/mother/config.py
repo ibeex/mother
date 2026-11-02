@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import cast
 
+from mother.keybindings import DEFAULT_KEYBINDINGS
 from mother.models import ModelEntry, default_model_entries, load_model_entries
 from mother.reasoning import (
     DEFAULT_OPENAI_REASONING_SUMMARY,
@@ -21,8 +22,8 @@ CONFIG_DIR = Path.home() / ".config" / "mother"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
 LEGACY_CONFIG_FILE = Path.home() / ".mother" / "config.toml"
 
-DEFAULT_SUBMIT_KEY = "enter"
-DEFAULT_NEWLINE_KEY = "shift+enter"
+DEFAULT_SUBMIT_KEY = DEFAULT_KEYBINDINGS["submit"]
+DEFAULT_NEWLINE_KEY = DEFAULT_KEYBINDINGS["newline"]
 
 AUTO_THEME = "auto"
 DEFAULT_DARK_THEME = "catppuccin-mocha"
@@ -68,14 +69,14 @@ model = ""
 # Directory used by /save, Ctrl+S, and `mother --save` markdown exports.
 # session_markdown_dir = "~/Documents/mother"
 
-# Prompt key bindings.
+# Key bindings. Every Mother action can be remapped under [keybindings].
 # Defaults: Enter submits the prompt; Shift+Enter inserts a newline.
-# If your terminal supports Ctrl+Enter and you prefer Enter for newline, you can swap these:
-# submit_key = "ctrl+enter"
-# newline_key = "enter"
-# Key names use Textual-style syntax such as "enter", "ctrl+enter", or "shift+enter".
-# submit_key = "enter"
-# newline_key = "shift+enter"
+# The legacy top-level submit_key/newline_key fields still work.
+# See KEYBINDINGS.md in the Mother repository for every binding id and default.
+# [keybindings]
+# submit = "ctrl+enter"
+# newline = "enter"
+# toggle_auto_scroll = "ctrl+g"
 
 # Legacy allowlist from the old regex-based bash guard.
 # Retained for backwards compatibility but ignored by the current
@@ -139,6 +140,7 @@ class MotherConfig:
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
     submit_key: str = DEFAULT_SUBMIT_KEY
     newline_key: str = DEFAULT_NEWLINE_KEY
+    keybindings: dict[str, str] = field(default_factory=dict)
     allowlist: frozenset[str] = field(default_factory=lambda: frozenset({"ls", "cat"}))
     models: list[ModelEntry] = field(default_factory=default_model_entries)
     council: CouncilConfig = field(default_factory=CouncilConfig)
@@ -167,6 +169,29 @@ def _parse_key_binding(value: object, *, field_name: str, default: str) -> str:
     if not normalized or any(part == "" for part in normalized.split("+")):
         raise ValueError(f"Config field {field_name!r} must be a non-empty key binding string.")
     return normalized
+
+
+def _parse_keybindings(value: object) -> dict[str, str]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError("Config field 'keybindings' must be a table.")
+
+    overrides: dict[str, str] = {}
+    for raw_key, raw_value in cast(dict[object, object], value).items():
+        if not isinstance(raw_key, str):
+            raise ValueError("Config field 'keybindings' must use string binding ids.")
+        if raw_key not in DEFAULT_KEYBINDINGS:
+            allowed = ", ".join(sorted(DEFAULT_KEYBINDINGS))
+            raise ValueError(
+                f"Config field 'keybindings.{raw_key}' is not a known binding id. Known ids: {allowed}"
+            )
+        overrides[raw_key] = _parse_key_binding(
+            raw_value,
+            field_name=f"keybindings.{raw_key}",
+            default=DEFAULT_KEYBINDINGS[raw_key],
+        )
+    return overrides
 
 
 def _parse_council_members(value: object, *, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -254,18 +279,27 @@ def load_config(path: Path | None = None) -> MotherConfig:
         if raw_openai_reasoning_summary is None
         else parse_openai_reasoning_summary(raw_openai_reasoning_summary)
     )
-    submit_key = _parse_key_binding(
-        data.get("submit_key"),
-        field_name="submit_key",
-        default=DEFAULT_SUBMIT_KEY,
-    )
-    newline_key = _parse_key_binding(
-        data.get("newline_key"),
-        field_name="newline_key",
-        default=DEFAULT_NEWLINE_KEY,
-    )
+    keybindings = _parse_keybindings(data.get("keybindings"))
+    if "submit" in keybindings:
+        submit_key = keybindings["submit"]
+    else:
+        submit_key = _parse_key_binding(
+            data.get("submit_key"),
+            field_name="submit_key",
+            default=DEFAULT_SUBMIT_KEY,
+        )
+    if "newline" in keybindings:
+        newline_key = keybindings["newline"]
+    else:
+        newline_key = _parse_key_binding(
+            data.get("newline_key"),
+            field_name="newline_key",
+            default=DEFAULT_NEWLINE_KEY,
+        )
     if submit_key == newline_key:
-        raise ValueError("Config fields 'submit_key' and 'newline_key' must be different.")
+        raise ValueError(
+            "Config fields 'submit_key'/'keybindings.submit' and 'newline_key'/'keybindings.newline' must be different."
+        )
 
     return MotherConfig(
         model=cast(str, data.get("model", MotherConfig.model)),
@@ -283,6 +317,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
         ),
         submit_key=submit_key,
         newline_key=newline_key,
+        keybindings=keybindings,
         allowlist=allowlist,
         models=load_model_entries(cast(dict[str, object], data)),
         council=_load_council_config(cast(dict[str, object], data)),
@@ -307,6 +342,7 @@ def apply_cli_overrides(
         session_markdown_dir=config.session_markdown_dir,
         submit_key=config.submit_key,
         newline_key=config.newline_key,
+        keybindings=dict(config.keybindings),
         allowlist=config.allowlist,
         models=list(config.models),
         council=config.council,

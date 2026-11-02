@@ -9,6 +9,7 @@ from typing import ClassVar, override
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.binding import Binding, BindingType
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, OptionList
@@ -87,10 +88,10 @@ class SessionPickerScreen(ModalScreen[SessionManager | None]):
     CSS_PATH: ClassVar[str | PurePath | list[str | PurePath] | None] = (
         Path(__file__).resolve().parent / "css" / "model_picker.tcss"
     )
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
-        ("escape", "dismiss", "Close"),
-        ("delete", "delete", "Delete"),
-        ("r", "rename", "Rename"),
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "dismiss", "Close", id="session_picker_dismiss"),
+        Binding("delete", "delete", "Delete", id="session_picker_delete"),
+        Binding("r", "rename", "Rename", id="session_picker_rename"),
     ]
 
     def __init__(self) -> None:

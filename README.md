@@ -37,7 +37,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 ## Features
 
 - terminal-first chat UI
-- README-backed `/help` quick cheatsheet and follow-up help context
+- bundled-docs-backed `/help` quick cheatsheet and follow-up help context
 - model switching via `/models` or `Ctrl+N`
 - anonymous multi-model `/council` synthesis across configurable members and a configurable judge
 - optional thinking display from structured model reasoning when the provider exposes it
@@ -272,42 +272,25 @@ mother
 
 If you skip `--init-config`, Mother will still create a starter config automatically on first launch.
 
-## Prompt keys
+## Key bindings
 
-By default, the prompt input uses:
+Mother ships with Vim-friendly defaults for reading output (`j`/`k`, `c` to copy)
+and shortcuts such as `Ctrl+N` (models), `Ctrl+O` (expand), `Ctrl+G`
+(autoscroll), and `Ctrl+S` (save). The prompt submits with `Enter` and inserts a
+newline with `Shift+Enter`.
 
-- `Enter` to submit/send the prompt
-- `Shift+Enter` to insert a newline
-- `Ctrl+E` to cycle the input area through normal size, half-screen, and full-screen modes
-
-The footer shows `Ctrl+E Input size` along with other available shortcuts such as `Expand` and
-`Autoscroll`. Press `Ctrl+E` once to expand the input to half the available screen, again to
-use the full available screen, and a third time to return to the normal layout.
-
-Beyond the prompt input, these app shortcuts are always available:
-
-- `Ctrl+N` opens the model picker (same as `/models`)
-- `Ctrl+O` expands a collapsed output block
-- `Ctrl+G` toggles autoscroll
-- `Ctrl+S` saves the session
-- `Ctrl+P` opens the command palette, which also lists these actions
-
-If your terminal supports `Ctrl+Enter` and you prefer `Enter` for newline, you can change
-both prompt keys in `~/.config/mother/config.toml`:
+Every Mother binding can be remapped under `[keybindings]` in
+`~/.config/mother/config.toml`:
 
 ```toml
-# Default behavior:
-submit_key = "enter"
-newline_key = "shift+enter"
-
-# Alternative for terminals where Ctrl+Enter works:
-# submit_key = "ctrl+enter"
-# newline_key = "enter"
+[keybindings]
+submit = "ctrl+enter"
+newline = "enter"
+toggle_auto_scroll = "ctrl+t"
 ```
 
-Key names use Textual-style syntax such as `enter`, `ctrl+enter`, and `shift+enter`.
-The two keys must be different. Whether combinations like `shift+enter` work depends on
-what your terminal sends to terminal applications.
+See [KEYBINDINGS.md](KEYBINDINGS.md) for the full list of binding ids, defaults,
+and terminal caveats.
 
 ## Theme
 
@@ -344,10 +327,10 @@ Your selected model must support image attachments for multimodal prompts to wor
 
 ## Built-in help
 
-Use `/help` for a short README-backed cheatsheet of Mother's main commands and workflows.
-Mother sends the bundled README to the model for that help turn and keeps it in the conversation context, so after plain `/help` you can ask normal follow-up questions without repeating the command.
+Use `/help` for a short cheatsheet of Mother's main commands, key bindings, and workflows.
+Mother sends the bundled README and keybinding reference to the model for that help turn and keeps them in the conversation context, so after plain `/help` you can ask normal follow-up questions without repeating the command.
 
-Use `/help [question]` for a one-off README-grounded answer to a specific question.
+Use `/help [question]` for a one-off docs-grounded answer to a specific question, including how to remap keys.
 
 Examples:
 
@@ -355,6 +338,7 @@ Examples:
 /help
 how do I configure web search?
 /help how does council mode work?
+/help how do I remap the autoscroll key?
 ```
 
 ## Inline web fetch expansion

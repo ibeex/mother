@@ -25,6 +25,7 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.ca_bundle_path == ""
     assert config.submit_key == "enter"
     assert config.newline_key == "shift+enter"
+    assert config.keybindings == {}
     assert config.council == CouncilConfig()
     assert config_file.exists()
 
@@ -165,6 +166,7 @@ def test_apply_cli_overrides() -> None:
         reasoning_effort="high",
         openai_reasoning_summary="detailed",
         ca_bundle_path="/etc/ssl/certs/ib_cert.pem",
+        keybindings={"toggle_auto_scroll": "ctrl+t"},
         council=CouncilConfig(members=("gpt-5",), judge="gpt-5"),
     )
     result = apply_cli_overrides(base, model="gpt-4o-mini", system=None)
@@ -176,6 +178,7 @@ def test_apply_cli_overrides() -> None:
     assert result.ca_bundle_path == "/etc/ssl/certs/ib_cert.pem"
     assert result.submit_key == "enter"
     assert result.newline_key == "shift+enter"
+    assert result.keybindings == {"toggle_auto_scroll": "ctrl+t"}
     assert result.council == CouncilConfig(members=("gpt-5",), judge="gpt-5")
 
 
@@ -210,6 +213,76 @@ def test_load_config_rejects_same_submit_and_newline_keys(tmp_path: Path) -> Non
         assert "newline_key" in str(exc)
     else:
         raise AssertionError("Expected duplicate prompt keys to raise ValueError")
+
+
+def test_load_config_keybinding_overrides(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text(
+        "\n".join(
+            [
+                "[keybindings]",
+                'submit = "Ctrl+Enter"',
+                'newline = "Enter"',
+                'toggle_auto_scroll = "Ctrl+T"',
+                'markdown_cursor_down = "n,down"',
+                "",
+            ]
+        )
+    )
+
+    config = load_config(config_file)
+
+    assert config.submit_key == "ctrl+enter"
+    assert config.newline_key == "enter"
+    assert config.keybindings["toggle_auto_scroll"] == "ctrl+t"
+    assert config.keybindings["markdown_cursor_down"] == "n,down"
+
+
+def test_keybindings_take_precedence_over_legacy_prompt_keys(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text(
+        "\n".join(
+            [
+                'submit_key = "ctrl+x"',
+                'newline_key = "ctrl+y"',
+                "[keybindings]",
+                'submit = "ctrl+enter"',
+                'newline = "enter"',
+                "",
+            ]
+        )
+    )
+
+    config = load_config(config_file)
+
+    assert config.submit_key == "ctrl+enter"
+    assert config.newline_key == "enter"
+
+
+def test_load_config_rejects_unknown_keybinding_id(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text('[keybindings]\nnot_a_binding = "ctrl+t"\n')
+
+    try:
+        _ = load_config(config_file)
+    except ValueError as exc:
+        assert "keybindings.not_a_binding" in str(exc)
+        assert "toggle_auto_scroll" in str(exc)
+    else:
+        raise AssertionError("Expected unknown keybinding id to raise ValueError")
+
+
+def test_load_config_rejects_same_keybinding_submit_and_newline(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    _ = config_file.write_text('[keybindings]\nsubmit = "enter"\nnewline = "Enter"\n')
+
+    try:
+        _ = load_config(config_file)
+    except ValueError as exc:
+        assert "keybindings.submit" in str(exc)
+        assert "keybindings.newline" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate prompt keybindings to raise ValueError")
 
 
 def test_config_allowlist_from_toml(tmp_path: Path) -> None:

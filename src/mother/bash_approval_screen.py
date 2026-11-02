@@ -24,10 +24,10 @@ class BashApprovalScreen(ModalScreen[bool]):
     )
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("y", "approve", "Run"),
-        Binding("enter", "approve", show=False),
-        Binding("n", "deny", "Copy command"),
-        Binding("escape", "deny", show=False),
+        Binding("y", "approve", "Run", id="bash_approval_approve"),
+        Binding("enter", "approve", show=False, id="bash_approval_approve_enter"),
+        Binding("n", "deny", "Copy command", id="bash_approval_deny"),
+        Binding("escape", "deny", show=False, id="bash_approval_deny_escape"),
     ]
 
     def __init__(self, decision: BashGuardDecision) -> None:

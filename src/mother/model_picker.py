@@ -7,7 +7,7 @@ from pathlib import Path, PurePath
 from typing import ClassVar, Protocol, cast, override
 
 from textual.app import ComposeResult
-from textual.binding import BindingType
+from textual.binding import Binding, BindingType
 from textual.command import Hit, Provider
 from textual.containers import Container, Vertical
 from textual.screen import ModalScreen
@@ -97,7 +97,9 @@ class ModelPickerScreen(ModalScreen[str | None]):
         _CSS_DIR / "model_picker.tcss"
     )
 
-    BINDINGS: ClassVar[list[BindingType]] = [("escape", "dismiss", "Close")]
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "dismiss", "Close", id="model_picker_dismiss")
+    ]
 
     def __init__(self, current_model: str) -> None:
         super().__init__()

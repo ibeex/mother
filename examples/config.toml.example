@@ -11,10 +11,13 @@ openai_reasoning_summary = "auto"
 # theme_dark = "catppuccin-mocha"
 # theme_light = "catppuccin-latte"
 
-# Prompt keys. Defaults are Enter to submit and Shift+Enter for newline.
-# If your terminal supports Ctrl+Enter and you prefer Enter for newline, use:
-# submit_key = "ctrl+enter"
-# newline_key = "enter"
+# Key bindings. Every Mother action can be remapped under [keybindings].
+# Defaults are Enter to submit and Shift+Enter for newline. See KEYBINDINGS.md
+# for the full list of binding ids.
+# [keybindings]
+# submit = "ctrl+enter"
+# newline = "enter"
+# toggle_auto_scroll = "ctrl+g"
 
 [[models]]
 id = "gpt-5"
