@@ -309,6 +309,24 @@ Key names use Textual-style syntax such as `enter`, `ctrl+enter`, and `shift+ent
 The two keys must be different. Whether combinations like `shift+enter` work depends on
 what your terminal sends to terminal applications.
 
+## Theme
+
+Mother follows your light or dark appearance by default:
+
+```toml
+# ~/.config/mother/config.toml
+theme = "auto"
+theme_dark = "catppuccin-mocha"
+theme_light = "catppuccin-latte"
+```
+
+With `theme = "auto"`, Mother checks the terminal background first (OSC 11,
+when supported), then the operating system appearance, and falls back to the
+dark theme when detection is unavailable. Set `theme` to a specific built-in
+Textual theme name, such as `textual-dark`, `textual-light`, or `nord`, to
+disable detection. You can customize the auto-selected pair with `theme_dark`
+and `theme_light`.
+
 ## Clipboard images
 
 When the prompt input is focused, `Ctrl+V` still behaves like paste, but Mother now

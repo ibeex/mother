@@ -6,7 +6,7 @@ from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherApp, MotherConfig
 def test_mother_app_defaults() -> None:
     app = MotherApp()
     assert app.config.model == DEFAULT_MODEL
-    assert app.config.theme == "catppuccin-mocha"
+    assert app.config.theme == "auto"
     assert app.theme == "catppuccin-mocha"
     assert app.config.system_prompt == DEFAULT_SYSTEM
     assert app.config.reasoning_effort == "medium"

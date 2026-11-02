@@ -6,6 +6,11 @@ tools_enabled = true
 reasoning_effort = "medium"
 openai_reasoning_summary = "auto"
 
+# Theme selection. "auto" follows your terminal/system light or dark appearance.
+# theme = "auto"
+# theme_dark = "catppuccin-mocha"
+# theme_light = "catppuccin-latte"
+
 # Prompt keys. Defaults are Enter to submit and Shift+Enter for newline.
 # If your terminal supports Ctrl+Enter and you prefer Enter for newline, use:
 # submit_key = "ctrl+enter"

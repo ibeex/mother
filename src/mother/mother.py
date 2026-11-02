@@ -61,6 +61,7 @@ from mother.shell_controller import ShellCommandController, ShellControllerHost
 from mother.stats import TurnUsage
 from mother.submission_controller import SubmissionController
 from mother.terminal_transcript import print_terminal_transcript
+from mother.theme import resolve_theme
 from mother.tools.bash_capture import BashResult
 from mother.tools.bash_executor import execute_bash
 from mother.tools.bash_guard import BashGuardDecision
@@ -151,7 +152,7 @@ class MotherApp(App[None]):
             loaded_session=loaded_session,
         )
         self.bind(normalize_key_binding(resolved_config.submit_key), "submit", description="Send")
-        self.theme = self.config.theme  # pyright: ignore[reportUnannotatedClassAttribute]
+        self.theme = resolve_theme(resolved_config)  # pyright: ignore[reportUnannotatedClassAttribute]
         self.prompt_history: PromptHistory = prompt_history or PromptHistory()
         self.prompt_controller: PromptController = PromptController(
             cast(PromptControllerHost, cast(object, self)),

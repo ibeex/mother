@@ -24,6 +24,10 @@ LEGACY_CONFIG_FILE = Path.home() / ".mother" / "config.toml"
 DEFAULT_SUBMIT_KEY = "enter"
 DEFAULT_NEWLINE_KEY = "shift+enter"
 
+AUTO_THEME = "auto"
+DEFAULT_DARK_THEME = "catppuccin-mocha"
+DEFAULT_LIGHT_THEME = "catppuccin-latte"
+
 _DEFAULT_SYSTEM = DEFAULT_BASE_SYSTEM
 
 _DEFAULT_CONFIG_TEMPLATE = """\
@@ -33,8 +37,12 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Leave empty until you configure your models.
 model = ""
 
-# Built-in Textual theme.
-# theme = "catppuccin-mocha"
+# Theme selection.
+# "auto" follows your terminal/system light or dark appearance.
+# Set a specific built-in Textual theme name to disable detection.
+# theme = "auto"
+# theme_dark = "catppuccin-mocha"
+# theme_light = "catppuccin-latte"
 
 # Base system prompt sent with every conversation.
 # Mother appends runtime context such as date, OS, current directory, mode, and tools.
@@ -120,7 +128,9 @@ class CouncilConfig:
 @dataclass
 class MotherConfig:
     model: str = ""
-    theme: str = "catppuccin-mocha"
+    theme: str = AUTO_THEME
+    theme_dark: str = DEFAULT_DARK_THEME
+    theme_light: str = DEFAULT_LIGHT_THEME
     system_prompt: str = field(default=_DEFAULT_SYSTEM)
     reasoning_effort: str = DEFAULT_REASONING_EFFORT
     openai_reasoning_summary: str = DEFAULT_OPENAI_REASONING_SUMMARY
@@ -260,6 +270,8 @@ def load_config(path: Path | None = None) -> MotherConfig:
     return MotherConfig(
         model=cast(str, data.get("model", MotherConfig.model)),
         theme=cast(str, data.get("theme", MotherConfig.theme)),
+        theme_dark=cast(str, data.get("theme_dark", MotherConfig.theme_dark)),
+        theme_light=cast(str, data.get("theme_light", MotherConfig.theme_light)),
         system_prompt=cast(str, data.get("system_prompt", MotherConfig.system_prompt)),
         reasoning_effort=reasoning_effort,
         openai_reasoning_summary=openai_reasoning_summary,
@@ -285,6 +297,8 @@ def apply_cli_overrides(
     return MotherConfig(
         model=model if model is not None else config.model,
         theme=config.theme,
+        theme_dark=config.theme_dark,
+        theme_light=config.theme_light,
         system_prompt=system if system is not None else config.system_prompt,
         reasoning_effort=config.reasoning_effort,
         openai_reasoning_summary=config.openai_reasoning_summary,

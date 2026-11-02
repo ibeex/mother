@@ -3,14 +3,21 @@
 from pathlib import Path
 
 from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherConfig, load_config
-from mother.config import CouncilConfig, apply_cli_overrides
+from mother.config import (
+    DEFAULT_DARK_THEME,
+    DEFAULT_LIGHT_THEME,
+    CouncilConfig,
+    apply_cli_overrides,
+)
 
 
 def test_load_config_defaults(tmp_path: Path) -> None:
     config_file = tmp_path / "config.toml"
     config = load_config(config_file)
     assert config.model == DEFAULT_MODEL
-    assert config.theme == "catppuccin-mocha"
+    assert config.theme == "auto"
+    assert config.theme_dark == DEFAULT_DARK_THEME
+    assert config.theme_light == DEFAULT_LIGHT_THEME
     assert config.system_prompt == DEFAULT_SYSTEM
     assert config.reasoning_effort == "medium"
     assert config.openai_reasoning_summary == "auto"
@@ -29,6 +36,8 @@ def test_load_config_from_file(tmp_path: Path) -> None:
             [
                 'model = "gpt-4o"',
                 'theme = "textual-dark"',
+                'theme_dark = "nord"',
+                'theme_light = "textual-light"',
                 'reasoning_effort = "high"',
                 'openai_reasoning_summary = "detailed"',
                 "tools_enabled = true",
@@ -56,6 +65,8 @@ def test_load_config_from_file(tmp_path: Path) -> None:
     config = load_config(config_file)
     assert config.model == "gpt-4o"
     assert config.theme == "textual-dark"
+    assert config.theme_dark == "nord"
+    assert config.theme_light == "textual-light"
     assert config.reasoning_effort == "high"
     assert config.openai_reasoning_summary == "detailed"
     assert config.tools_enabled is True

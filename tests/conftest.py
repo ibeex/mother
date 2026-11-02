@@ -5,6 +5,19 @@ from pathlib import Path
 import pytest
 
 import mother.history as history_module
+import mother.theme as theme_module
+
+
+@pytest.fixture(autouse=True)
+def isolate_theme_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep theme auto-detection deterministic in tests."""
+
+    def _detect_dark() -> theme_module.Appearance:
+        return "dark"
+
+    monkeypatch.setattr(theme_module, "_detect_colorfgbg", lambda: None)
+    monkeypatch.setattr(theme_module, "_detect_terminal_background", lambda: None)
+    monkeypatch.setattr(theme_module, "_detect_os_appearance", _detect_dark)
 
 
 @pytest.fixture(autouse=True)
