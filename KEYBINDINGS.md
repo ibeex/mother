@@ -42,9 +42,10 @@ typos do not silently do nothing.
 | `scroll_to_bottom` | `end` | Jump to the bottom of the conversation |
 | `scroll_to_bottom_from_chat` | `shift+g` | Jump to the bottom while reading chat blocks |
 | `save_session` | `ctrl+s` | Save the session as Markdown |
+| `quit` | `ctrl+q` | Quit Mother |
 
-`ctrl+p` (the command palette), `ctrl+q` (quit), and other built-in Textual
-bindings are not part of Mother's keybinding table.
+`ctrl+p` (the command palette), `ctrl+c`, and other built-in Textual bindings
+are not part of Mother's keybinding table.
 
 ### Output and Markdown blocks
 

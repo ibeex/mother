@@ -29,6 +29,29 @@ def test_app_keybinding_override_is_applied() -> None:
     asyncio.run(run())
 
 
+def test_quit_keybinding_override_is_applied() -> None:
+    async def run() -> None:
+        app = MotherApp(
+            config=MotherConfig(
+                model="test-model",
+                keybindings={"quit": "ctrl+x"},
+            )
+        )
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            quit_bindings = {
+                key: value.binding
+                for key, value in app.active_bindings.items()
+                if value.binding.action == "quit_app"
+            }
+
+            assert set(quit_bindings) == {"ctrl+x"}
+            assert quit_bindings["ctrl+x"].id == "quit"
+
+    asyncio.run(run())
+
+
 def test_prompt_submit_keybinding_override_is_applied() -> None:
     async def run() -> None:
         app = MotherApp(

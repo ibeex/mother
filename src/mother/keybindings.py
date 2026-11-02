@@ -17,6 +17,7 @@ DEFAULT_KEYBINDINGS: Final[dict[str, str]] = {
     "scroll_to_bottom": "end",
     "scroll_to_bottom_from_chat": "shift+g",
     "save_session": "ctrl+s",
+    "quit": "ctrl+q",
     # Output blocks
     "copy_output": "c",
     "toggle_expanded": "ctrl+o",

@@ -145,6 +145,7 @@ class MotherApp(App[None]):
             id="scroll_to_bottom_from_chat",
         ),
         Binding("ctrl+s", "save_session", "Save", id="save_session"),
+        Binding("ctrl+q", "quit_app", "Quit", show=False, priority=True, id="quit"),
     ]
 
     COMMANDS = App.COMMANDS | {AgentModeProvider, ModelProvider}  # pyright: ignore[reportUnannotatedClassAttribute]
