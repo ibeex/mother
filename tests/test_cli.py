@@ -237,16 +237,29 @@ def test_cli_exits_before_tui_when_no_models_are_configured() -> None:
     mock_app_cls.assert_not_called()
 
 
-def test_cli_exits_before_tui_when_default_model_is_not_set() -> None:
+def test_cli_uses_first_configured_model_when_default_is_not_set(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     runner = CliRunner()
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.chdir(tmp_path)
+    config = MotherConfig(
+        models=[_test_model_entry("first-model"), _test_model_entry("second-model")],
+        session_markdown_dir=str(tmp_path),
+    )
     with (
-        patch(
-            "mother.mother.load_config",
-            return_value=MotherConfig(models=[_test_model_entry()]),
-        ),
+        patch("mother.mother.load_config", return_value=config),
         patch("mother.mother.MotherApp") as mock_app_cls,
+        patch("mother.session.DEFAULT_SESSIONS_DIR", sessions_dir),
     ):
+        mock_app = MagicMock()
+        mock_app_cls.return_value = mock_app
         result = runner.invoke(cli, [])
+
     assert result.exit_code == 0
-    assert "No default model selected" in result.output
-    mock_app_cls.assert_not_called()
+    passed_config = cast(MotherConfig, mock_app_cls.call_args.kwargs["config"])
+    assert passed_config.model == "first-model"
+    notice = cast(str, mock_app_cls.call_args.kwargs["startup_notice"])
+    assert "using the first configured model 'first-model'" in notice
+    mock_app.run.assert_called_once()  # pyright: ignore[reportAny]
+

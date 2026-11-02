@@ -141,9 +141,11 @@ class MotherApp(App[None]):
         session_manager: SessionManager | None = None,
         loaded_session: bool = False,
         prompt_history: PromptHistory | None = None,
+        startup_notice: str | None = None,
     ) -> None:
         super().__init__()
         self._prompt_area_expansion_mode: int = 0
+        self._startup_notice: str | None = startup_notice
         base = config or MotherConfig()
         resolved_config = apply_cli_overrides(base, model_name, system)
         self.app_session: AppSession = AppSession(
@@ -278,6 +280,8 @@ class MotherApp(App[None]):
         _ = self.set_interval(0.12, self._tick_response_waiting_animations)
         self._update_subtitle()
         self._update_statusline()
+        if self._startup_notice is not None:
+            self.notify(self._startup_notice, title="Model", timeout=12)
         _ = self._check_for_updates()
 
     @work(thread=True)
@@ -1021,7 +1025,7 @@ def cli(
             return
         save_default_config(CONFIG_FILE)
         click.echo(f"Created config: {CONFIG_FILE}")
-        click.echo('Next: add at least one [[models]] entry and set model = "...".')
+        click.echo('Next: add at least one [[models]] entry. Set model = "..." or leave it empty to use the first one.')
         return
 
     config = load_config()
@@ -1074,9 +1078,13 @@ def cli(
         )
         return
 
+    startup_notice: str | None = None
     if not config.model:
-        click.echo(f'No default model selected. Set model = "..." in {CONFIG_FILE}.')
-        return
+        config.model = config.models[0].id
+        startup_notice = (
+            f'No default model set; using the first configured model {config.model!r}. '
+            f'Set model = "..." in {CONFIG_FILE} to change it.'
+        )
 
     if resolve_model_entry(config.model, config.models).id != config.model and not any(
         entry.id == config.model for entry in config.models
@@ -1115,6 +1123,7 @@ def cli(
         loaded_session=(
             continue_last or session_reference is not None or fork_reference is not None
         ),
+        startup_notice=startup_notice,
     )
     if resume_picker:
         _ = app.call_after_refresh(app.action_resume)

@@ -1,5 +1,8 @@
 """Tests for MotherApp initialization defaults and constructor wiring."""
 
+import asyncio
+from unittest.mock import patch
+
 from mother import DEFAULT_MODEL, DEFAULT_SYSTEM, MotherApp, MotherConfig
 
 
@@ -26,3 +29,17 @@ def test_mother_app_config_kwarg() -> None:
     assert app.theme == "textual-dark"
     assert app.config.system_prompt == "Be brief."
     assert app.config.reasoning_effort == "medium"
+
+
+def test_mother_app_shows_startup_notice() -> None:
+    async def run() -> None:
+        app = MotherApp(
+            config=MotherConfig(model="test-model"),
+            startup_notice="No default model set.",
+        )
+        with patch.object(app, "notify") as notify:
+            async with app.run_test() as pilot:
+                await pilot.pause()
+        notify.assert_any_call("No default model set.", title="Model", timeout=12)
+
+    asyncio.run(run())

@@ -34,7 +34,7 @@ _DEFAULT_CONFIG_TEMPLATE = """\
 # Mother TUI configuration
 
 # Selected model id from the [[models]] registry below.
-# Leave empty until you configure your models.
+# Leave empty to use the first configured model.
 model = ""
 
 # Theme selection.
