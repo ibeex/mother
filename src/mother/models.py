@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import tomllib
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import cache
 from inspect import isawaitable
@@ -23,6 +23,8 @@ from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
+
+from mother.user_agent import user_agent
 
 ApiType = Literal["openai-responses", "openai-chat", "anthropic"]
 
@@ -227,17 +229,43 @@ def resolve_api_key(entry: ModelEntry) -> str:
     return ""
 
 
+async def _stamp_user_agent(request: httpx2.Request) -> None:
+    """Replace the SDK's own User-Agent with Mother's identification.
+
+    The OpenAI and Anthropic SDKs write ``AsyncOpenAI/Python <version>`` (or the
+    Anthropic equivalent) as a request header, which overrides any header set on
+    the HTTP client itself.  A request event hook is the one place the value can
+    still be rewritten, so gateways see ``mother/<version>`` and can attribute
+    traffic to this harness and release (LiteLLM's ``harness`` label).
+    """
+    request.headers["User-Agent"] = user_agent()
+
+
+# Event hooks are copied by httpx on client construction, so one tuple is shared.
+_REQUEST_HOOKS: dict[str, list[Callable[[httpx2.Request], Awaitable[None]]]] = {
+    "request": [_stamp_user_agent]
+}
+
+
+def _build_http_client(ca_bundle_path: str) -> httpx2.AsyncClient:
+    """Build the HTTP client every provider shares for one model instance."""
+    normalized_ca_bundle_path = ca_bundle_path.strip()
+    if not normalized_ca_bundle_path:
+        return httpx2.AsyncClient(event_hooks=_REQUEST_HOOKS)
+
+    from mother.tools.web_common import build_ssl_context
+
+    return httpx2.AsyncClient(
+        verify=build_ssl_context(normalized_ca_bundle_path),
+        event_hooks=_REQUEST_HOOKS,
+    )
+
+
 def _build_pydantic_model(entry: ModelEntry, ca_bundle_path: str) -> PydanticModel:
     """Create a pydantic-ai model instance for a registry entry."""
     api_key = resolve_api_key(entry) or None
     base_url = entry.base_url or None
-    http_client: httpx2.AsyncClient | None = None
-
-    normalized_ca_bundle_path = ca_bundle_path.strip()
-    if normalized_ca_bundle_path:
-        from mother.tools.web_common import build_ssl_context
-
-        http_client = httpx2.AsyncClient(verify=build_ssl_context(normalized_ca_bundle_path))
+    http_client = _build_http_client(ca_bundle_path)
 
     if entry.api_type == "openai-responses":
         provider = OpenAIProvider(base_url=base_url, api_key=api_key, http_client=http_client)

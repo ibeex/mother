@@ -12,11 +12,15 @@ from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 
+from mother.user_agent import user_agent
+
 DEFAULT_TIMEOUT = 30.0
 DEFAULT_PASS_PATH = "api/jina"
 JINA_SEARCH_URL = "https://s.jina.ai/"
 JINA_READER_URL = "https://r.jina.ai/"
-DEFAULT_USER_AGENT = "mother/1.0"
+# Web tools identify Mother (and its release) when they are allowed to be honest
+# about the calling client; see `web_fetch_tool._build_raw_headers`.
+DEFAULT_USER_AGENT = user_agent()
 
 
 class ReadableResponse(Protocol):

@@ -14,6 +14,7 @@ from urllib.request import Request
 from youtube_transcript_api import FetchedTranscript, FetchedTranscriptSnippet
 
 from mother.tools import get_default_tools
+from mother.tools.web_common import DEFAULT_USER_AGENT
 from mother.tools.web_fetch_tool import MAX_TIMEOUT, make_web_fetch_tool
 
 
@@ -271,7 +272,9 @@ def test_web_fetch_tool_raw_mode_retries_cloudflare_challenge_with_honest_user_a
     first_user_agent = _get_header(captured_requests[0], "User-Agent")
     second_user_agent = _get_header(captured_requests[1], "User-Agent")
     assert first_user_agent is not None
-    assert second_user_agent == "mother/1.0"
+    assert second_user_agent is not None
+    assert second_user_agent == DEFAULT_USER_AGENT
+    assert second_user_agent.startswith("mother/")
     assert second_user_agent != first_user_agent
 
 

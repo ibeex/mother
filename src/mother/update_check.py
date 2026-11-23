@@ -11,17 +11,16 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import cast
 
 from mother.config import CONFIG_DIR
+from mother.user_agent import installed_version, user_agent
 
 GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/ibeex/mother/releases/latest"
 GITHUB_RELEASES_URL = "https://api.github.com/repos/ibeex/mother/releases?per_page=20"
 GITHUB_RELEASES_ATOM_URL = "https://github.com/ibeex/mother/releases.atom"
 STATE_FILE = CONFIG_DIR / "state.json"
-PACKAGE_NAME = "mother"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,13 +44,6 @@ class UpdateCheckResult:
             self.latest is not None
             and _compare_versions(self.latest.version, self.current_version) > 0
         )
-
-
-def installed_version() -> str:
-    try:
-        return version(PACKAGE_NAME)
-    except PackageNotFoundError:
-        return "0.0.0"
 
 
 def check_for_updates() -> UpdateCheckResult | None:
@@ -157,7 +149,7 @@ def _get_json(url: str) -> object:
 
 
 def _get_text(url: str, *, accept: str | None = None) -> str:
-    headers = {"User-Agent": "mother-update-check"}
+    headers = {"User-Agent": f"{user_agent()} update-check"}
     if accept is not None:
         headers["Accept"] = accept
     request = urllib.request.Request(url, headers=headers)
