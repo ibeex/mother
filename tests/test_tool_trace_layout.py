@@ -65,6 +65,40 @@ def test_tool_previews_expand_independently_and_preserve_original_copy() -> None
     asyncio.run(run())
 
 
+def test_overlong_command_and_output_stay_readable_in_the_preview() -> None:
+    async def run() -> None:
+        command = (
+            "find . -maxdepth 3 -type f -name '*.py' " + ("-not -path './.venv/*' " * 4) + "| wc -l"
+        )
+        arguments: dict[str, object] = {"command": command}
+        long_output = "x" * 300
+        app = MotherApp(config=MotherConfig(model="test-model"))
+
+        with patch("mother.widgets.format_bash_for_display", return_value=command):
+            async with app.run_test(size=(100, 40)) as pilot:
+                turn = ConversationTurn(prompt_text="Inspect", response_text="Answer")
+                await app.query_one("#chat-view", VerticalScroll).mount(turn)
+                app.runtime_presentation.active_turn = turn
+                app.runtime_presentation.show_tool_started("bash", "call-1", arguments)
+                await pilot.pause()
+                command_widget = turn.query_one(TraceCommand)
+                # Wrapping replaces the sideways scrollbar that used to cover the command.
+                assert not command_widget.show_horizontal_scrollbar
+                assert command_widget.region.height >= 2
+                assert command_widget.scrollable_content_region.height >= 2
+
+                app.runtime_presentation.show_tool_finished(
+                    "bash", "call-1", arguments, long_output
+                )
+                await pilot.pause()
+                trace = turn.query_one(ToolTrace)
+                # A single overlong result line must still leave a row for its text.
+                assert trace.output.scrollable_content_region.height >= 1
+                assert trace.output.text == long_output
+
+    asyncio.run(run())
+
+
 def test_tool_trace_handles_empty_results_and_missing_started_event() -> None:
     async def run() -> None:
         app = MotherApp(config=MotherConfig(model="test-model"))

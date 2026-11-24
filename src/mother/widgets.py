@@ -1572,7 +1572,9 @@ class ToolOutput(CopyableOutput):
 class TraceOutput(ToolOutput):
     """An independently expandable trace region that keeps the full trace copyable."""
 
-    MIN_VISIBLE_LINES: ClassVar[int] = 1
+    # Two rows keep a single overlong line readable: Textual draws the horizontal
+    # scrollbar inside the widget, so a one-row preview would hide the text itself.
+    MIN_VISIBLE_LINES: ClassVar[int] = 2
 
     @override
     def _text_for_copy(self) -> str:
@@ -1581,10 +1583,39 @@ class TraceOutput(ToolOutput):
         return super()._text_for_copy()
 
 
+@final
 class TraceCommand(TraceOutput):
     """A compact command or argument preview, independent of the result preview."""
 
     MAX_VISIBLE_LINES: ClassVar[int] = 6
+    # Wrapping replaces the horizontal scrollbar, so one row is enough for a short command.
+    MIN_VISIBLE_LINES: ClassVar[int] = 1
+
+    def __init__(self, text: str = "", *, bash_command: str | None = None) -> None:
+        super().__init__(text, bash_command=bash_command)
+        # Wrap so an overlong command stays readable instead of scrolling sideways.
+        self.soft_wrap = True
+
+    @override
+    def _sync_height(self, text: str) -> None:
+        super()._sync_height(text)
+        _ = self.call_after_refresh(self._fit_wrapped_height)
+
+    def on_resize(self) -> None:
+        """Refit the preview after the available width changes."""
+        _ = self.call_after_refresh(self._fit_wrapped_height)
+
+    def _fit_wrapped_height(self) -> None:
+        """Size the preview from wrapped lines once the widget has a real width."""
+        if not self.is_mounted or self.wrap_width <= 0:
+            return
+        wrapped_lines = max(self.wrapped_document.height, self.MIN_VISIBLE_LINES)
+        if self._expanded:
+            visible_lines = wrapped_lines
+        else:
+            visible_lines = min(wrapped_lines, self.MAX_VISIBLE_LINES)
+        if self.styles.height != visible_lines:
+            self.styles.height = visible_lines
 
 
 @final
