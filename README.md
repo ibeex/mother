@@ -401,7 +401,9 @@ Important behavior:
 
 - only the stripped council question and the final synthesized answer are added back into the main chat context
 - intermediate council drafts, rankings, and reviews stay internal and do not pollute future prompts
-- council traces are still inspectable in the TUI and are included in markdown session exports
+- below the synthesis, compare the computed rankings with the judge’s assessment of each draft and any disagreement. Numbered references point to the original peer reviews; when a judge note is unavailable, Mother shows an attributed reviewer excerpt if possible
+- expand **Peer reviews & ballots** for the ballots, citations, and numbered reviews. Focus an answer or review title and press `Enter` (or click) to read its full Markdown. The footer shows the judge and run time
+- full council traces are included in markdown session exports
 - `/council` currently ignores image attachments
 
 Example configuration in `~/.config/mother/config.toml`:

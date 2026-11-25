@@ -11,10 +11,10 @@ from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 
 from mother.council import CouncilResult
+from mother.council_report import build_council_report
 from mother.tool_trace import format_tool_limit_recovery
 from mother.widgets import (
     ConversationTurn,
-    CouncilOutput,
     OutputSection,
     Response,
     ThinkingOutput,
@@ -159,16 +159,10 @@ class RuntimePresentationController:
 
     def show_council_trace(self, result: CouncilResult) -> None:
         """Mount inspectable council stage traces within the active conversation turn."""
-        sections = result.trace_sections()
-        if not sections:
-            return
-
         should_follow = self.host.should_follow_chat_updates()
         try:
-            for trace in sections:
-                self._mount_trace_section(
-                    OutputSection(trace.title, "council-title", CouncilOutput(trace.text))
-                )
+            parent = self.active_turn if self.active_turn is not None else self._chat_view()
+            _ = parent.mount(build_council_report(result))
         except (NoMatches, ScreenStackError):
             return
 

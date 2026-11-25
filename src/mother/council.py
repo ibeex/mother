@@ -119,6 +119,52 @@ class CouncilProgressUpdate:
         return f"{prefix} · {self.completed}/{self.total} complete"
 
 
+_COMPARISON_MARKER = "<!-- council-comparison -->"
+
+
+@dataclass(frozen=True, slots=True)
+class CouncilAssessment:
+    """A qualitative judge note citing the anonymous reviews behind it."""
+
+    subject: str
+    text: str
+    reviews: tuple[int, ...]
+
+    @property
+    def sources(self) -> str:
+        prefix = "Review" if len(self.reviews) == 1 else "Reviews"
+        return f"{prefix} {', '.join(map(str, self.reviews))}"
+
+
+def split_judge_reply(
+    text: str, *, labels: set[str], review_count: int
+) -> tuple[str, tuple[CouncilAssessment, ...]]:
+    """Keep comparison metadata out of chat even when a judge misformats a note."""
+    if not review_count:
+        return text, ()
+    parts = re.split(rf"(?m)^[ \t]*{re.escape(_COMPARISON_MARKER)}[ \t]*\r?$", text, maxsplit=1)
+    if len(parts) == 1:
+        return text, ()
+    notes: dict[str, CouncilAssessment] = {}
+    for line in parts[1].splitlines():
+        match = re.fullmatch(
+            r"(Response [A-Z]+|Disagreement) \[([0-9]{1,4}(?:,\s*[0-9]{1,4})*)\]:\s*(\S.*)",
+            line.strip(),
+        )
+        if not match:
+            continue
+        subject, references, body = match.groups()
+        if subject not in labels and subject != "Disagreement":
+            continue
+        sources = tuple(dict.fromkeys(int(ref) for ref in references.split(",")))
+        if not sources or any(ref < 1 or ref > review_count for ref in sources):
+            continue
+        if subject == "Disagreement" and len(sources) < 2:
+            continue
+        _ = notes.setdefault(subject, CouncilAssessment(subject, body, sources))
+    return parts[0].strip(), tuple(notes.values())
+
+
 @dataclass(frozen=True, slots=True)
 class CouncilResult:
     """Final result and lightweight metadata from a council run."""
@@ -132,6 +178,7 @@ class CouncilResult:
     used_fallback: bool = False
     fallback_reason: str | None = None
     duration_seconds: float | None = None
+    assessments: tuple[CouncilAssessment, ...] = ()
 
     def trace_sections(self) -> tuple[CouncilTraceSection, ...]:
         """Return human-readable trace sections for inspecting council internals."""
@@ -171,6 +218,17 @@ class CouncilResult:
                 CouncilTraceSection(
                     title="Council · Stage 2 · Aggregate rankings",
                     text=aggregate_text,
+                )
+            )
+
+        if self.assessments:
+            sections.append(
+                CouncilTraceSection(
+                    title="Council · Stage 3 · Judge comparison",
+                    text="\n".join(
+                        f"- {self.label_to_model.get(note.subject, note.subject)}: {note.text} ({note.sources})"
+                        for note in self.assessments
+                    ),
                 )
             )
 
@@ -306,7 +364,7 @@ def build_stage3_prompt(
     return "\n".join(
         [
             "You are synthesizing anonymous candidate answers into one final reply for the user.",
-            "Do not mention the council, peer review, response labels, or model identities.",
+            "In the final answer itself, do not mention the council, reviews, labels, or model identities.",
             "Use the supplied context when it is relevant.",
             "",
             "Conversation context:",
@@ -329,6 +387,24 @@ def build_stage3_prompt(
             "",
             "Write the single best final answer to the user.",
             "Resolve disagreements when possible and say plainly when something is uncertain.",
+            *(
+                [
+                    "After the complete final answer, append this exact marker on its own line:",
+                    _COMPARISON_MARKER,
+                    "After the marker, write one plain-text line per candidate with specific review evidence.",
+                    "Format: Response A [1, 2]: One sentence on its distinctive strength and limitation for this request.",
+                    "Replace A with the actual label and cite only the numbered reviews supporting the note.",
+                    "If reviewers materially disagree, add: Disagreement [1, 2]: One sentence explaining the trade-off.",
+                    "Keep review numbers in the bracketed sources only, never in the sentence itself.",
+                    "Describe the difference directly. When counts are supported, use wording like",
+                    "'Two reviewers preferred Response A for breadth; one preferred Response B for brevity.'",
+                    "If the comments do not support counts, describe the trade-off without quantifying it.",
+                    "Use full labels like Response B in comparisons. Do not invent criticisms, consensus or votes.",
+                    "Omit unsupported lines. No bullets, headings, or code fences after the marker.",
+                ]
+                if stage2_reviews
+                else []
+            ),
         ]
     ).strip()
 
@@ -430,9 +506,15 @@ class CouncilRunner:
             prompt_text=stage3_prompt,
             system_prompt=self._judge_system_prompt(),
         )
-        if judge_reply is not None:
+        final_text, assessments = split_judge_reply(
+            judge_reply.text if judge_reply else "",
+            labels=set(label_to_model),
+            review_count=len(stage2_results),
+        )
+        if final_text:
             return CouncilResult(
-                final_text=judge_reply.text,
+                final_text=final_text,
+                assessments=assessments,
                 judge_model_id=self.judge.id,
                 stage1=stage1_results,
                 stage2=stage2_results,
@@ -606,7 +688,8 @@ class CouncilRunner:
                 prompt,
                 "This is an internal council synthesis step.",
                 "You are reviewing anonymous candidate answers and must not mention labels,",
-                "peer review, or model identities in the final user-facing response.",
+                "peer review, or model identities in the final answer itself. When requested,",
+                "append a separate anonymous judge comparison after the specified marker.",
             ]
         )
 

@@ -1,7 +1,6 @@
 ShellOutput,
 ToolOutput,
 TraceOutput,
-CouncilOutput,
 ThinkingOutput {
     height: auto;
     border: none;
@@ -53,11 +52,6 @@ TraceOutput:focus {
     margin: 1 0;
 }
 
-.turn-section.council-section {
-    background: $surface 22%;
-    border-left: solid $secondary 50%;
-}
-
 .turn-section.recovery-section {
     background: $error 12%;
     border-left: solid $error 60%;
@@ -65,7 +59,6 @@ TraceOutput:focus {
 
 ShellOutput:focus,
 ToolOutput:focus,
-CouncilOutput:focus,
 ThinkingOutput:focus {
     background: $surface 18%;
 }

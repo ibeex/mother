@@ -3,10 +3,12 @@
 import asyncio
 
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Collapsible
 
 from mother import MotherApp, MotherConfig
 from mother.council import (
     CouncilAggregateRanking,
+    CouncilAssessment,
     CouncilCandidateResponse,
     CouncilPeerReview,
     CouncilResult,
@@ -15,6 +17,7 @@ from mother.widgets import (
     ConversationTurn,
     OutputSection,
     PromptTextArea,
+    Response,
     ToolOutput,
     TurnLabel,
     WelcomeBanner,
@@ -143,11 +146,12 @@ def test_council_trace_is_nested_within_turn() -> None:
                 CouncilResult(
                     final_text="final reply",
                     judge_model_id="opus",
+                    duration_seconds=28.84,
                     stage1=(
                         CouncilCandidateResponse(
                             label="Response A",
                             model_id="gpt-5",
-                            text="Candidate A",
+                            text="**Candidate A**",
                         ),
                     ),
                     stage2=(
@@ -165,13 +169,39 @@ def test_council_trace_is_nested_within_turn() -> None:
                         ),
                     ),
                     label_to_model={"Response A": "gpt-5"},
+                    assessments=(CouncilAssessment("Response A", "Clear explanation.", (1,)),),
                 )
             )
             await pilot.pause()
 
-            assert turn.tool_trace_stack.display is True
-            assert len(turn.tool_trace_stack.children) == 4
-            assert "response-section" in turn.children[-1].classes
+            report = turn.query_one(".council-report")
+            assert turn.children[-1] is report
+            assert "response-section" in turn.children[-2].classes
+            answers = report.query(Collapsible).first()
+            assert answers.collapsed
+            reviews = next(
+                group
+                for group in report.query(Collapsible)
+                if group.title.startswith("Peer reviews")
+            )
+            table = reviews.query(Response).first().raw_markdown
+            assert reviews.collapsed
+            assert reviews.title == "Peer reviews & ballots (1)"
+            assert "The judge cites Review 1 for the comparison note." in table
+            footer = report.query_one(".council-footer")
+            assert report.children[-1] is footer
+            assert str(footer.render()) == "Judge: opus · 28.84s"
+            assert "| g3 | gpt-5 |" in table
+            assert "Response A" not in table
+            _ = answers.query_one("CollapsibleTitle").focus()
+            await pilot.press("enter")
+            assert not answers.collapsed
+            candidate = answers.query_one(Collapsible)
+            assert candidate.title == "gpt-5"
+            _ = candidate.query_one("CollapsibleTitle").focus()
+            await pilot.press("enter")
+            assert not candidate.collapsed
+            assert candidate.query_one(Response).raw_markdown == "**Candidate A**"
 
     asyncio.run(run())
 

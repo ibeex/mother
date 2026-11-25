@@ -1673,10 +1673,6 @@ class ToolTrace(Vertical):
         self.output.display = True
 
 
-class CouncilOutput(CopyableOutput):
-    """Plain-text widget for council stage traces."""
-
-
 @final
 class OutputSection(Vertical):
     """A labeled wrapper that groups a CopyableOutput with a TurnLabel header."""

@@ -105,9 +105,22 @@ TurnLabel {
     text-style: bold;
 }
 
-.council-title {
-    color: $secondary;
-    text-style: bold;
+.council-report {
+    height: auto;
+    margin-top: 1;
+    border-left: solid $secondary 40%;
+}
+
+.council-footer {
+    height: auto;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+.council-report Collapsible {
+    background: transparent;
+    border: none;
+    padding: 0;
 }
 
 Prompt.grouped,

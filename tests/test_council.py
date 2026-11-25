@@ -16,7 +16,9 @@ from mother.council import (
     build_stage3_prompt,
     calculate_aggregate_rankings,
     parse_ranking_from_text,
+    split_judge_reply,
 )
+from mother.council_report import comparison_markdown
 from mother.models import ModelEntry
 
 
@@ -95,11 +97,27 @@ def test_build_stage3_prompt_keeps_model_ids_out_of_judge_prompt() -> None:
         ),
     )
 
+    assert "review numbers in the bracketed sources only" in prompt
+    assert "without quantifying it" in prompt
     assert "gpt-5" not in prompt
     assert "opus" not in prompt
     assert "g3" not in prompt
     assert "Response A" in prompt
     assert "Response B" in prompt
+
+
+def test_judge_notes_are_optional_and_invalid_citations_do_not_leak_into_answer() -> None:
+    reply = "Answer\n\n<!-- council-comparison -->\n" + "\n".join(
+        [
+            "Response A [4]: Missing review.",
+            "Response Z [1]: Unknown answer.",
+            "Disagreement [2, 2]: One review is not a disagreement.",
+            "Response B [1, x]: Malformed source list.",
+        ]
+    )
+    labels = {"Response A", "Response B"}
+    assert split_judge_reply(reply, labels=labels, review_count=3) == ("Answer", ())
+    assert split_judge_reply("Plain answer", labels=labels, review_count=3) == ("Plain answer", ())
 
 
 def test_council_progress_status_text_reports_stage_and_counts() -> None:
@@ -144,7 +162,14 @@ def test_council_runner_reports_progress_and_preserves_member_order() -> None:
             if "internal council synthesis step" in system_prompt:
                 return council_module._CouncilModelReply(  # pyright: ignore[reportPrivateUsage]
                     model_id=model.id,
-                    text="final answer",
+                    text="\n".join(
+                        [
+                            "final answer",
+                            "<!-- council-comparison -->",
+                            "Response B [2]: Recommends a reversible rollout.",
+                            "Disagreement [1, 3]: Reviewers value speed versus the safeguards in Response B.",
+                        ]
+                    ),
                 )
             raise AssertionError(f"Unexpected system prompt: {system_prompt}")
 
@@ -160,6 +185,15 @@ def test_council_runner_reports_progress_and_preserves_member_order() -> None:
 
     result = asyncio.run(runner.run(user_question="How should we ship this?"))
 
+    assert result.final_text == "final answer"
+    report = comparison_markdown(result)
+    assert "Judge’s comparison · judge" not in report
+    assert "(Review" not in report
+    assert "Recommends a reversible rollout." in report
+    assert "safeguards in fast." in report
+    assert any(
+        "Recommends a reversible rollout." in section.text for section in result.trace_sections()
+    )
     assert [candidate.model_id for candidate in result.stage1] == ["slow", "fast", "mid"]
     assert updates == [
         "Council stage 1/3 · collecting answers · 0/3 complete",
