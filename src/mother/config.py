@@ -84,10 +84,12 @@ model = ""
 # allowlist = ["ls", "cat"]
 
 # Anonymous multi-model council used by /council.
+# No members or judge are configured by default. Run /council once and Mother
+# will read the [[models]] below, suggest a setup, and show a ready-to-paste block.
 # The ids here must match [[models]] entries below.
 # [council]
-# members = ["gpt-5", "g3", "opus"]
-# judge = "opus"
+# members = ["model-a", "model-b", "model-c"]
+# judge = "model-a"
 # max_context_turns = 8
 # max_context_chars = 12000
 
@@ -120,8 +122,8 @@ model = ""
 class CouncilConfig:
     """Configuration for the anonymous /council workflow."""
 
-    members: tuple[str, ...] = ("gpt-5", "g3", "opus")
-    judge: str = "opus"
+    members: tuple[str, ...] = ()
+    judge: str = ""
     max_context_turns: int = 8
     max_context_chars: int = 12000
 
@@ -138,6 +140,8 @@ class MotherConfig:
     tools_enabled: bool = False
     ca_bundle_path: str = ""
     session_markdown_dir: str = field(default_factory=lambda: str(default_markdown_export_dir()))
+    # Path of the config file this instance was loaded from. Empty for ad-hoc configs.
+    config_path: str = ""
     submit_key: str = DEFAULT_SUBMIT_KEY
     newline_key: str = DEFAULT_NEWLINE_KEY
     keybindings: dict[str, str] = field(default_factory=dict)
@@ -260,7 +264,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
         resolved = LEGACY_CONFIG_FILE
     if not resolved.exists():
         save_default_config(CONFIG_FILE if path is None else resolved)
-        return MotherConfig()
+        return MotherConfig(config_path=str(resolved))
 
     with resolved.open("rb") as f:
         data = tomllib.load(f)
@@ -315,6 +319,7 @@ def load_config(path: Path | None = None) -> MotherConfig:
             str,
             data.get("session_markdown_dir", MotherConfig().session_markdown_dir),
         ),
+        config_path=str(resolved),
         submit_key=submit_key,
         newline_key=newline_key,
         keybindings=keybindings,
@@ -340,6 +345,7 @@ def apply_cli_overrides(
         tools_enabled=config.tools_enabled,
         ca_bundle_path=config.ca_bundle_path,
         session_markdown_dir=config.session_markdown_dir,
+        config_path=config.config_path,
         submit_key=config.submit_key,
         newline_key=config.newline_key,
         keybindings=dict(config.keybindings),

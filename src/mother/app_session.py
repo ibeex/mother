@@ -21,6 +21,7 @@ from mother.bash_execution import BashExecution, format_for_context
 from mother.config import MotherConfig
 from mother.conversation import ConversationState, restore_conversation
 from mother.conversation_handoff import portable_history
+from mother.council_setup import build_council_setup_guidance
 from mother.deep_research import PendingDeepResearch
 from mother.models import ModelEntry, find_model_entry, resolve_model_entry
 from mother.prompt_expansion import expand_prompt_fetch_directives
@@ -290,6 +291,10 @@ class AppSession:
             max_turns=self.config.council.max_context_turns,
             max_chars=self.config.council.max_context_chars,
         )
+
+    def council_setup_guidance(self) -> str:
+        """Return chat-ready guidance for configuring /council from the model registry."""
+        return build_council_setup_guidance(self.config)
 
     def resolve_council_models(self) -> tuple[tuple[ModelEntry, ...], ModelEntry]:
         """Resolve configured council members and judge from the model registry."""

@@ -27,6 +27,7 @@ def test_load_config_defaults(tmp_path: Path) -> None:
     assert config.newline_key == "shift+enter"
     assert config.keybindings == {}
     assert config.council == CouncilConfig()
+    assert config.config_path == str(config_file)
     assert config_file.exists()
 
 
@@ -85,6 +86,7 @@ def test_load_config_from_file(tmp_path: Path) -> None:
         max_context_turns=4,
         max_context_chars=6000,
     )
+    assert config.config_path == str(config_file)
 
 
 def test_load_config_rejects_invalid_reasoning_effort(tmp_path: Path) -> None:

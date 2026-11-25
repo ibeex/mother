@@ -147,6 +147,12 @@ class SubmissionController:
 
     async def submit_council_command(self, value: str, command: CouncilCommand) -> None:
         """Submit a /council request after validation and UI setup."""
+        session = self.callbacks.app_session
+        council_models = self.callbacks.resolve_council_models()
+        if council_models is None:
+            await self.show_council_setup_guidance(value, command.prompt or "")
+            return
+
         if command.prompt is None:
             self.callbacks.notify(
                 "Usage: /council [question] — add the question inline or on the next line, then press Enter to submit",
@@ -155,10 +161,6 @@ class SubmissionController:
             )
             return
 
-        session = self.callbacks.app_session
-        council_models = self.callbacks.resolve_council_models()
-        if council_models is None:
-            return
         council_members, council_judge = council_models
 
         self.callbacks.prompt_history.append(value)
@@ -198,6 +200,31 @@ class SubmissionController:
                 council_members=council_members,
                 council_judge=council_judge,
             )
+        )
+
+    async def show_council_setup_guidance(self, value: str, question: str) -> None:
+        """Show chat-ready council setup help when no members or judge are resolvable."""
+        session = self.callbacks.app_session
+        guidance = session.council_setup_guidance()
+        self.callbacks.prompt_history.append(value)
+        session.record_session_event(
+            "council_setup_guidance",
+            {
+                "question": question,
+                "members": list(session.config.council.members),
+                "judge": session.config.council.judge,
+            },
+        )
+        chat_view = cast(VerticalScroll, self.callbacks.query_one("#chat-view"))
+        should_follow = self.callbacks.should_follow_chat_updates()
+        turn = ConversationTurn(prompt_text=value, response_text=guidance)
+        _ = await chat_view.mount(turn)
+        if should_follow:
+            self.callbacks.scroll_chat_to_end(force=True)
+        self.callbacks.notify(
+            "Council is not ready yet — see the setup notes above.",
+            title="Council",
+            severity="warning",
         )
 
     def submit_shell_command(self, value: str, command: ShellCommand) -> None:

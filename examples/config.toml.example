@@ -35,9 +35,11 @@ supports_images = true
 # every level Mother exposes (Mother's equivalent of Pi's thinkingLevelMap):
 # reasoning_effort_map = { low = "low", medium = "high", high = "high", xhigh = "xhigh" }
 
-# Optional: council setup
+# Optional: council setup used by /council.
+# No defaults on purpose. Run /council once without this table and Mother
+# suggests diverse members plus a judge from the [[models]] entries above.
 # [council]
-# members = ["gpt-5"]
-# judge = "gpt-5"
+# members = ["model-a", "model-b", "model-c"]  # ids from your [[models]]
+# judge = "model-a"
 # max_context_turns = 8
 # max_context_chars = 12000

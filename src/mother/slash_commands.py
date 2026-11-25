@@ -57,7 +57,7 @@ SLASH_COMMANDS: tuple[SlashCommand, ...] = (
     SlashCommand("/agent", "Toggle agent mode or choose an agent profile"),
     SlashCommand("/models", "Browse and switch models"),
     SlashCommand("/reasoning", "Set reasoning effort", "auto|off|low|medium|high|xhigh"),
-    SlashCommand("/council", "Ask the configured model council"),
+    SlashCommand("/council", "Ask the model council (setup help if unconfigured)"),
 )
 
 _AGENT_ARGUMENT_CHOICES: tuple[SlashArgumentChoice, ...] = (

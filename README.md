@@ -39,7 +39,7 @@ Mother is not trying to out-autonomize fully agentic coding tools. It is for a d
 - terminal-first chat UI
 - bundled-docs-backed `/help` quick cheatsheet and follow-up help context
 - model switching via `/models` or `Ctrl+N`
-- anonymous multi-model `/council` synthesis across configurable members and a configurable judge
+- anonymous multi-model `/council` synthesis across configurable members and a configurable judge, with guided setup when it is not configured yet
 - optional thinking display from structured model reasoning when the provider exposes it
 - session capture with `/save`, `Ctrl+S`, and `mother --save`
 - completed prompts and replies remain in terminal scrollback on exit, with a `mother --session …` resume command
@@ -406,14 +406,25 @@ Important behavior:
 - full council traces are included in markdown session exports
 - `/council` currently ignores image attachments
 
+### Setup
+
+Council ships without default members or a judge. If `/council` is not configured yet, Mother reads your configured model registry and replies in chat with:
+
+- the models it found, including which ones support reasoning
+- a diverse suggested member set plus a judge, picked from the strongest models you already configured
+- a ready-to-paste `[council]` table for `~/.config/mother/config.toml`
+
+If the registry is empty, the same message explains how to add the first two or three `[[models]]` entries. Mother never invents model ids: every suggestion references models from your own config. If some configured ids are unknown, the guidance reports them and shows a corrected table.
+
 Example configuration in `~/.config/mother/config.toml`:
 
 ```toml
 [council]
-members = ["gpt-5", "g3", "opus"]
-judge = "opus"
-max_context_turns = 8
-max_context_chars = 12000
+members = ["model-a", "model-b", "model-c"]  # ids from your [[models]] entries
+judge = "model-a"
+# Optional limits
+# max_context_turns = 8
+# max_context_chars = 12000
 ```
 
 Notes:
@@ -421,6 +432,8 @@ Notes:
 - `members` and `judge` must reference ids from your configured `[[models]]`
 - the judge may also be one of the members
 - the judge sees anonymous response labels, not model names
+- peer review needs at least two members; with one member the council answers directly and skips cross-checking
+- if you add more models, run `/council` again while it is still unconfigured to get an updated suggestion
 
 ## Tools in agent mode
 

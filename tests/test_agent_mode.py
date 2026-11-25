@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from mother import MotherApp, MotherConfig
 from mother.app_session import AppSession
 from mother.models import ModelEntry
-from mother.widgets import ModelComplete, PromptTextArea
+from mother.widgets import ConversationTurn, ModelComplete, PromptTextArea
 
 
 def _reasoning_entry() -> ModelEntry:
@@ -216,6 +216,47 @@ def test_multiline_council_submit_uses_followup_lines_as_question() -> None:
                 assert send_council.call_args.kwargs["user_question"] == (
                     "Summarize this thread\nand suggest next steps"
                 )
+                assert text_area.text == ""
+
+    asyncio.run(run())
+
+
+def test_council_without_configuration_shows_setup_guidance() -> None:
+    async def run() -> None:
+        app = MotherApp(
+            config=MotherConfig(
+                model="gpt-5",
+                models=[
+                    ModelEntry(
+                        id="gpt-5",
+                        name="gpt-5",
+                        api_type="openai-responses",
+                        supports_reasoning=True,
+                    ),
+                    ModelEntry(
+                        id="claude-opus",
+                        name="claude-opus",
+                        api_type="anthropic",
+                        supports_reasoning=True,
+                    ),
+                ],
+            )
+        )
+
+        with patch.object(app, "send_council", return_value=object()) as send_council:
+            async with app.run_test() as pilot:
+                text_area = app.query_one(PromptTextArea)
+                text_area.load_text("/council Explain this")
+                await pilot.pause()
+
+                await app.action_submit()
+                await pilot.pause()
+
+                send_council.assert_not_called()
+                turn = app.query(ConversationTurn).last()
+                guidance = turn.response_widget.raw_markdown
+                assert "Council is not configured yet." in guidance
+                assert 'members = ["claude-opus", "gpt-5"]' in guidance
                 assert text_area.text == ""
 
     asyncio.run(run())

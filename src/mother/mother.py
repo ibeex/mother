@@ -581,8 +581,8 @@ class MotherApp(App[None]):
         """Resolve configured council members and judge from Mother's model registry."""
         try:
             return self.app_session.resolve_council_models()
-        except CouncilModelResolutionError as exc:
-            self.notify(str(exc), title="Council", severity="warning")
+        except CouncilModelResolutionError:
+            # The submission controller shows the full setup guidance in chat.
             return None
 
     def action_save_session(self) -> None:
